@@ -22,19 +22,28 @@ export class CreateDailyEntryDto {
   @Min(0)
   deaths?: number;
 
-  @ApiPropertyOptional({ description: "Aliments en SAC (ou équivalent)", example: 3 })
+  @ApiPropertyOptional({
+    description: 'Aliments en SAC (ou équivalent)',
+    example: 3,
+  })
   @IsOptional()
   @IsNumber()
   @Min(0)
   feedBags?: number;
 
-  @ApiPropertyOptional({ description: "Aliments en quantité (unité choisie)", example: 3 })
+  @ApiPropertyOptional({
+    description: 'Aliments en quantité (unité choisie)',
+    example: 3,
+  })
   @IsOptional()
   @IsNumber()
   @Min(0)
   feedQuantity?: number;
 
-  @ApiPropertyOptional({ enum: FeedUnit, description: "Unité d'aliment (SAC ou KG)" })
+  @ApiPropertyOptional({
+    enum: FeedUnit,
+    description: "Unité d'aliment (SAC ou KG)",
+  })
   @IsOptional()
   @IsEnum(FeedUnit, { message: "L'unité d'aliment doit être SAC ou KG." })
   feedUnit?: FeedUnit;
@@ -85,7 +94,10 @@ export class CreateDailyEntryDto {
   @Min(0)
   eggsSmall?: number;
 
-  @ApiPropertyOptional({ enum: ConsumptionSource, description: 'Source de la saisie' })
+  @ApiPropertyOptional({
+    enum: ConsumptionSource,
+    description: 'Source de la saisie',
+  })
   @IsOptional()
   @IsEnum(ConsumptionSource)
   source?: ConsumptionSource;

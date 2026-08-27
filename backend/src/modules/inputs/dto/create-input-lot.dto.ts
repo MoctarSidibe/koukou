@@ -12,7 +12,7 @@ import { FeedUnit, FoodType } from '../../../common/enums/food-type.enum.js';
 import { InputKind } from '../../../common/enums/input-kind.enum.js';
 
 export class CreateInputLotDto {
-  @ApiPropertyOptional({ description: "Lot de production lié (optionnel)" })
+  @ApiPropertyOptional({ description: 'Lot de production lié (optionnel)' })
   @IsOptional()
   @IsString()
   batchId?: string;
@@ -21,12 +21,15 @@ export class CreateInputLotDto {
   @IsEnum(InputKind, { message: "Type d'intrant invalide." })
   kind: InputKind;
 
-  @ApiPropertyOptional({ enum: FoodType, description: 'Type d’aliment (si aliment)' })
+  @ApiPropertyOptional({
+    enum: FoodType,
+    description: 'Type d’aliment (si aliment)',
+  })
   @IsOptional()
   @IsEnum(FoodType)
   foodType?: FoodType;
 
-  @ApiProperty({ description: "Nom du produit", example: 'Provende Démarrage' })
+  @ApiProperty({ description: 'Nom du produit', example: 'Provende Démarrage' })
   @IsString()
   @IsNotEmpty({ message: 'Le nom du produit est obligatoire.' })
   productName: string;
@@ -38,7 +41,9 @@ export class CreateInputLotDto {
 
   @ApiProperty({ description: 'Numéro de lot fournisseur (exigence HACCP)' })
   @IsString()
-  @IsNotEmpty({ message: 'Le numéro de lot fournisseur est obligatoire (HACCP).' })
+  @IsNotEmpty({
+    message: 'Le numéro de lot fournisseur est obligatoire (HACCP).',
+  })
   supplierLotNumber: string;
 
   @ApiPropertyOptional({ description: 'Date de péremption' })

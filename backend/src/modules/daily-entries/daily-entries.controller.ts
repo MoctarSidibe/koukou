@@ -5,6 +5,7 @@ import type { AuthUser } from '../../common/decorators/current-user.decorator.js
 import { Roles } from '../../common/decorators/roles.decorator.js';
 import { UserRole } from '../../common/enums/role.enum.js';
 import { BatchesService } from '../batches/batches.service.js';
+import { FeedStockService } from '../feed-stock/feed-stock.service.js';
 import { DailyEntriesService } from './daily-entries.service.js';
 import { CreateDailyEntryDto } from './dto/create-daily-entry.dto.js';
 
@@ -14,12 +15,14 @@ export class DailyEntriesController {
   constructor(
     private readonly entriesService: DailyEntriesService,
     private readonly batchesService: BatchesService,
+    private readonly feedStockService: FeedStockService,
   ) {}
 
   @Post()
   @Roles(UserRole.PROPRIETAIRE, UserRole.ELEVEUR)
   @ApiOperation({
-    summary: 'Saisie journalière (< 1 min) — morts, aliments (sacs/kg), eau, poids, œufs',
+    summary:
+      'Saisie journalière (< 1 min) — morts, aliments (sacs/kg), eau, poids, œufs',
   })
   @ApiParam({ name: 'farmId' })
   @ApiParam({ name: 'batchId' })
@@ -31,6 +34,7 @@ export class DailyEntriesController {
   ) {
     const entry = await this.entriesService.create(user, farmId, batchId, dto);
     await this.batchesService.runAdvisoryForBatch(batchId);
+    await this.feedStockService.evaluateStockAlerts(farmId);
     return entry;
   }
 

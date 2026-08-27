@@ -77,7 +77,11 @@ export class DailyEntry {
   @Column({ name: 'created_by', type: 'uuid', nullable: true })
   createdById: string | null;
 
-  @Column({ type: 'enum', enum: ConsumptionSource, default: ConsumptionSource.MANUELLE })
+  @Column({
+    type: 'enum',
+    enum: ConsumptionSource,
+    default: ConsumptionSource.MANUELLE,
+  })
   source: ConsumptionSource;
 
   @CreateDateColumn()

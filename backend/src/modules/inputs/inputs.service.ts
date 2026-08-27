@@ -41,7 +41,8 @@ export class InputsService {
         supplier: input.supplier,
         supplierLotNumber: input.supplierLotNumber,
         expirationDate: input.expirationDate ?? null,
-        receivedDate: input.receivedDate ?? new Date().toISOString().slice(0, 10),
+        receivedDate:
+          input.receivedDate ?? new Date().toISOString().slice(0, 10),
         quantity: input.quantity,
         unit: input.unit ?? null,
       }),

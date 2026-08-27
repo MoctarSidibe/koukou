@@ -25,8 +25,11 @@ export class DailyEntriesService {
     dto: CreateDailyEntryDto,
   ) {
     await this.farmsService.assertAccessible(user, farmId);
-    const batch = await this.batchRepo.findOne({ where: { id: batchId, farmId } });
-    if (!batch) throw new NotFoundException('Lot introuvable dans cette ferme.');
+    const batch = await this.batchRepo.findOne({
+      where: { id: batchId, farmId },
+    });
+    if (!batch)
+      throw new NotFoundException('Lot introuvable dans cette ferme.');
 
     const feedKg = this.toKg(dto, batch);
     const existing = await this.entryRepo.findOne({
