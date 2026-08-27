@@ -84,3 +84,10 @@ Application mobile de gestion avicole **offline-first** pour le Gabon (SaaS, mob
 - Souches — Chair : Cobb 500, Hubbard, Ross 308 · Pondeuses : ISA Brown, Lohmann Brown (+ ajout custom via `POST /breeds`).
 - Constantes seedées : `standard_module`=3000, densité 15/18, vide sanitaire 14–21 j, écart d'âge 4 sem., `building_density_*`, seuils mortalité/eau/aliment/IPE/GMQ.
 - FinTech / Mobile Money (escrow) : déféré.
+
+## État d'avancement (checkpoint)
+- **Modules 1–4 livrés sur `main`** (GitHub : https://github.com/MoctarSidibe/koukou) — commits `d8e67c2` (M2), `14b0af5` (M3), `7adabea` (M4). Module 1 (lots/advisory/métriques) et la base (auth, fermes, alertes, constantes) faisaient partie des commits antérieurs.
+- **Module 4 « Finance & Rentabilité »** : FAIT et validé — POS espèces (Mobile Money/QR « Bientôt disponible »), ventes avec décrémentation du cheptel/aliment (`POULET_PIECE`/`POULET_KG`/`PROVENDE`/`OEUFS`/`AUTRE`), clients & crédit (solde à recouvrer), caisse journalière (ouverture/clôture/écart/mouvements), dépenses CDCF (`paidByCaisse` → sortie caisse), rentabilité par lot + rapport de période **toute période** avec exports **PDF (pdfmake, QR sur reçus)**, alertes `RENTABILITE` (clôture lot) et `VENTE` (invendus).
+- **Qualité** : `npm run build` OK (sert de typecheck), lint OK (1 warning préexistant dans `test/feed-stock.e2e-spec.ts` : `lotBId` inutilisé), **e2e 58/58 verts** (`npm run test:e2e`, PostgreSQL local) — nouveaux tests dans `test/finance.e2e-spec.ts` (17 tests). 
+- **Enrichissement daté (MVP actuel)** : `InputLot.unitPriceFcfa` et `ProductionBatch.chickUnitPriceFcfa` sont **optionnels** ; le P&L lot les affiche en `enrichment` (coûts poussins/aliments) mais ils ne sont PAS déduits du `netFcfa` — à brancher en v2 selon décision.
+- **Reste à faire (hors MVP finance)** : application mobile (`mobile/`, vide), FinTech/Mobile Money + PostGIS, module abattage/traçabilité (`docs/abattage-tracabilite-plan.md`), déduction automatique des coûts d'achat dans le P&L, rôles Éleveur au POS (comptes `ELEVEUR` non testés en e2e faute d'endpoint de création — le register crée toujours `PROPRIETAIRE`).
