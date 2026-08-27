@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
 import type { AuthUser } from '../../common/decorators/current-user.decorator.js';
@@ -43,5 +43,22 @@ export class AlertsController {
   ) {
     await this.farmsService.assertAccessible(user, farmId);
     return this.alertsService.historyForFarm(farmId);
+  }
+
+  @Post(':alertId/acknowledge')
+  @Roles(UserRole.PROPRIETAIRE, UserRole.ELEVEUR)
+  @ApiOperation({
+    summary:
+      'Acquitter une alerte : le fermier reconnaît l’avoir prise en compte (ACTIVE → ACQUITTEE). Re-levée si le risque persiste.',
+  })
+  @ApiParam({ name: 'farmId' })
+  @ApiParam({ name: 'alertId' })
+  async acknowledge(
+    @CurrentUser() user: AuthUser,
+    @Param('farmId') farmId: string,
+    @Param('alertId') alertId: string,
+  ) {
+    await this.farmsService.assertAccessible(user, farmId);
+    return this.alertsService.acknowledge(farmId, alertId);
   }
 }

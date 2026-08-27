@@ -10,14 +10,18 @@ import {
   Min,
 } from 'class-validator';
 import { BatchType } from '../../../common/enums/batch-type.enum.js';
+import { Species } from '../../../common/enums/species.enum.js';
 
 export class CreateBatchDto {
-  @ApiProperty({ description: "Nom du bâtiment / lot", example: 'Bâtiment A' })
+  @ApiProperty({ description: 'Nom du bâtiment / lot', example: 'Bâtiment A' })
   @IsString()
   @IsNotEmpty({ message: 'Le nom du lot est obligatoire.' })
   batchName: string;
 
-  @ApiProperty({ description: 'Date d’arrivée des poussins', example: '2026-08-30' })
+  @ApiProperty({
+    description: 'Date d’arrivée des poussins',
+    example: '2026-08-30',
+  })
   @IsDateString()
   integrationDate: string;
 
@@ -31,33 +35,58 @@ export class CreateBatchDto {
   @IsString()
   breedId?: string;
 
-  @ApiProperty({ enum: BatchType, description: "Type d'élevage (CHAIR ou PONDEUSE)" })
+  @ApiProperty({
+    enum: BatchType,
+    description: "Type d'élevage (CHAIR ou PONDEUSE)",
+  })
   @IsEnum(BatchType, { message: 'Le type doit être CHAIR ou PONDEUSE.' })
   type: BatchType;
 
-  @ApiPropertyOptional({ description: 'Surface du bâtiment (m²) — pour le calcul de densité' })
+  @ApiPropertyOptional({
+    enum: Species,
+    description: 'Espèce (gallinacé) du lot — défaut POULET',
+    default: Species.POULET,
+  })
+  @IsOptional()
+  @IsEnum(Species, {
+    message:
+      'L’espèce doit être une valeur valide (POULET, DINDE, PINTADE, CAILLE, AUTRE).',
+  })
+  species?: Species;
+
+  @ApiPropertyOptional({
+    description: 'Surface du bâtiment (m²) — pour le calcul de densité',
+  })
   @IsOptional()
   @IsNumber()
   @Min(1)
   buildingAreaM2?: number;
 
-  @ApiPropertyOptional({ description: "Poids d'un sac d'aliment (kg), défaut = celui de la ferme" })
+  @ApiPropertyOptional({
+    description: "Poids d'un sac d'aliment (kg), défaut = celui de la ferme",
+  })
   @IsOptional()
   @IsNumber()
   @Min(1)
   feedUnitSacKg?: number;
 
-  @ApiPropertyOptional({ description: 'Bâtiment (id Building) dans lequel le lot est installé' })
+  @ApiPropertyOptional({
+    description: 'Bâtiment (id Building) dans lequel le lot est installé',
+  })
   @IsOptional()
   @IsString()
   buildingId?: string;
 
-  @ApiPropertyOptional({ description: 'Traçabilité HACCP — fournisseur du couvoir (poussins)' })
+  @ApiPropertyOptional({
+    description: 'Traçabilité HACCP — fournisseur du couvoir (poussins)',
+  })
   @IsOptional()
   @IsString()
   couvoirSupplier?: string;
 
-  @ApiPropertyOptional({ description: 'Traçabilité HACCP — numéro de lot des poussins' })
+  @ApiPropertyOptional({
+    description: 'Traçabilité HACCP — numéro de lot des poussins',
+  })
   @IsOptional()
   @IsString()
   chickLotNumber?: string;

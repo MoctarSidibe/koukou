@@ -56,7 +56,9 @@ export class BuildingsController {
 
   @Patch(':buildingId')
   @Roles(UserRole.PROPRIETAIRE)
-  @ApiOperation({ summary: 'Modifier un bâtiment (ex : valider le vide sanitaire)' })
+  @ApiOperation({
+    summary: 'Modifier un bâtiment (ex : valider le vide sanitaire)',
+  })
   @ApiParam({ name: 'farmId' })
   @ApiParam({ name: 'buildingId' })
   update(

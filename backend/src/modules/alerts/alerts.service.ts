@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, IsNull, Repository } from 'typeorm';
 import {
@@ -46,7 +46,6 @@ export class AlertsService {
     };
     if (ctx.buildingId) {
       where.buildingId = ctx.buildingId;
-      where.batchId = IsNull();
     } else if (ctx.batchId) {
       where.batchId = ctx.batchId;
       where.buildingId = IsNull();
@@ -62,9 +61,12 @@ export class AlertsService {
       existing.context = candidate.context ?? null;
       return this.alertRepo.save(existing);
     }
+    // L'alerte est scoped bâtiment : on stocke batchId null pour que la
+    // déduplication et le clearKind (batchId IsNull) restent cohérents.
+    const rowBatchId = ctx.buildingId ? null : (ctx.batchId ?? null);
     const alert = this.alertRepo.create({
       farmId: ctx.farmId,
-      batchId: ctx.batchId ?? null,
+      batchId: rowBatchId,
       buildingId: ctx.buildingId ?? null,
       ruleId: ctx.ruleId ?? null,
       kind: candidate.kind,
@@ -91,7 +93,6 @@ export class AlertsService {
     };
     if (buildingId) {
       where.buildingId = buildingId;
-      where.batchId = IsNull();
     } else if (batchId) {
       where.batchId = batchId;
       where.buildingId = IsNull();
@@ -103,6 +104,20 @@ export class AlertsService {
       status: AlertStatus.RESOLUE,
       resolvedAt: new Date(),
     });
+  }
+
+  /** Marquage manuel : le fermier reconnaît avoir vu l'alerte (ACQUITTEE). */
+  async acknowledge(farmId: string, alertId: string): Promise<Alert> {
+    const alert = await this.alertRepo.findOne({
+      where: { id: alertId, farmId },
+    });
+    if (!alert)
+      throw new NotFoundException('Alerte introuvable dans cette ferme.');
+    if (alert.status === AlertStatus.ACTIVE) {
+      alert.status = AlertStatus.ACQUITTEE;
+      await this.alertRepo.save(alert);
+    }
+    return alert;
   }
 
   async listForFarm(farmId: string, status?: AlertStatus): Promise<Alert[]> {

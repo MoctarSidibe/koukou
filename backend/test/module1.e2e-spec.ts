@@ -26,7 +26,9 @@ describe('Module 1 — Gestion des Lots (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, transform: true }),
+    );
     await app.init();
     server = app.getHttpServer();
   });
@@ -35,7 +37,12 @@ describe('Module 1 — Gestion des Lots (e2e)', () => {
     // Inscription + connexion Propriétaire
     await request(server)
       .post('/auth/register')
-      .send({ phone: ownerPhone, email: ownerEmail, password: 'secret123', fullName: 'Proprio E2E' })
+      .send({
+        phone: ownerPhone,
+        email: ownerEmail,
+        password: 'secret123',
+        fullName: 'Proprio E2E',
+      })
       .expect(201);
     const login = await request(server)
       .post('/auth/login')
@@ -48,7 +55,11 @@ describe('Module 1 — Gestion des Lots (e2e)', () => {
     const res = await request(server)
       .post('/farms')
       .set('Authorization', `Bearer ${token}`)
-      .send({ name: `Ferme E2E ${Date.now()}`, administrativeCity: 'Libreville', capacityPerBuilding: 1500 })
+      .send({
+        name: `Ferme E2E ${Date.now()}`,
+        administrativeCity: 'Libreville',
+        capacityPerBuilding: 1500,
+      })
       .expect(201);
     farmId = res.body.id;
     expect(farmId).toBeTruthy();
@@ -89,13 +100,28 @@ describe('Module 1 — Gestion des Lots (e2e)', () => {
     await request(server)
       .post(`/farms/${farmId}/batches/${batchId}/daily-entries`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ entryDate: daysAgo(29), deaths: 20, feedBags: 10, feedUnit: 'SAC', feedType: 'DEMARRAGE', waterL: 400 })
+      .send({
+        entryDate: daysAgo(29),
+        deaths: 20,
+        feedBags: 10,
+        feedUnit: 'SAC',
+        feedType: 'DEMARRAGE',
+        waterL: 400,
+      })
       .expect(201);
     // Jour 2 : 30 morts, chute d'eau drastique 400 -> 200 (50%, indicateur n°1), poids moyen 1.2 kg
     await request(server)
       .post(`/farms/${farmId}/batches/${batchId}/daily-entries`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ entryDate: daysAgo(28), deaths: 30, feedBags: 10, feedUnit: 'SAC', feedType: 'DEMARRAGE', waterL: 200, avgWeightKg: 1.2 })
+      .send({
+        entryDate: daysAgo(28),
+        deaths: 30,
+        feedBags: 10,
+        feedUnit: 'SAC',
+        feedType: 'DEMARRAGE',
+        waterL: 200,
+        avgWeightKg: 1.2,
+      })
       .expect(201);
 
     const batch = await request(server)
@@ -106,13 +132,15 @@ describe('Module 1 — Gestion des Lots (e2e)', () => {
     const m = batch.body.metrics;
     expect(m.liveCount).toBe(2400 - 50); // 2350
     expect(m.totalDeaths).toBe(50);
-    expect(m.mortalityPercent).toBeCloseTo(50 / 2400 * 100, 2); // 2.08%
+    expect(m.mortalityPercent).toBeCloseTo((50 / 2400) * 100, 2); // 2.08%
     expect(m.totalFeedKg).toBe(1000); // 10 sacs x 50 kg x 2 jours
     // FCR = aliments kg / gain de poids (1.2 - 0.045) * 2350
     const expectedFcr = 1000 / ((1.2 - 0.045) * 2350);
     expect(m.fcr).toBeCloseTo(expectedFcr, 2);
     // GMQ = (1.2 - 0.045) * 1000 / âge(jours)
-    const ageDays = Math.floor((Date.now() - new Date(daysAgo(30) + 'T00:00:00').getTime()) / 86400000);
+    const ageDays = Math.floor(
+      (Date.now() - new Date(daysAgo(30) + 'T00:00:00').getTime()) / 86400000,
+    );
     expect(m.gmqGramsPerDay).toBeCloseTo(((1.2 - 0.045) * 1000) / ageDays, 2);
 
     const alerts = await request(server)
@@ -143,7 +171,11 @@ describe('Module 1 — Gestion des Lots (e2e)', () => {
     await request(server)
       .patch(`/farms/${farmId}/batches/${batchId}`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ couvoirSupplier: 'Couvoir E2E', chickLotNumber: 'CH-2026-E2E', hatchDate: daysAgo(28) })
+      .send({
+        couvoirSupplier: 'Couvoir E2E',
+        chickLotNumber: 'CH-2026-E2E',
+        hatchDate: daysAgo(28),
+      })
       .expect(200);
     await request(server)
       .post(`/farms/${farmId}/batches/${batchId}/vente`)
@@ -153,7 +185,11 @@ describe('Module 1 — Gestion des Lots (e2e)', () => {
       .get(`/farms/${farmId}/alerts`)
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
-    expect(alerts.body.some((a: any) => a.kind === 'TRACABILITE' && a.status === 'ACTIVE')).toBe(false);
+    expect(
+      alerts.body.some(
+        (a: any) => a.kind === 'TRACABILITE' && a.status === 'ACTIVE',
+      ),
+    ).toBe(false);
   });
 
   it('restreint l’accès d’un Éleveur aux fermes auxquelles il est rattaché', async () => {
@@ -163,7 +199,12 @@ describe('Module 1 — Gestion des Lots (e2e)', () => {
     await request(server)
       .post(`/farms/${farmId}/eleveurs`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ phone: empPhone, email: empEmail, fullName: 'Ouvrier E2E', password: 'secret123' })
+      .send({
+        phone: empPhone,
+        email: empEmail,
+        fullName: 'Ouvrier E2E',
+        password: 'secret123',
+      })
       .expect(201);
     const empLogin = await request(server)
       .post('/auth/login')
@@ -175,7 +216,11 @@ describe('Module 1 — Gestion des Lots (e2e)', () => {
     const otherFarm = await request(server)
       .post('/farms')
       .set('Authorization', `Bearer ${token}`)
-      .send({ name: `Autre Ferme ${Date.now()}`, administrativeCity: 'Oyem', capacityPerBuilding: 1000 })
+      .send({
+        name: `Autre Ferme ${Date.now()}`,
+        administrativeCity: 'Oyem',
+        capacityPerBuilding: 1000,
+      })
       .expect(201);
     await request(server)
       .get(`/farms/${otherFarm.body.id}/batches`)

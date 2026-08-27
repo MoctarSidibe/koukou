@@ -63,7 +63,9 @@ export class BatchesController {
 
   @Patch(':batchId/type')
   @Roles(UserRole.PROPRIETAIRE)
-  @ApiOperation({ summary: 'Changer le type (ex: PONDEUSE -> CHAIR) avec historique' })
+  @ApiOperation({
+    summary: 'Changer le type (ex: PONDEUSE -> CHAIR) avec historique',
+  })
   changeType(
     @CurrentUser() user: AuthUser,
     @Param('farmId') farmId: string,
@@ -75,7 +77,9 @@ export class BatchesController {
 
   @Post(':batchId/vente')
   @Roles(UserRole.PROPRIETAIRE)
-  @ApiOperation({ summary: 'Passer le lot en vente (traçabilité HACCP requise)' })
+  @ApiOperation({
+    summary: 'Passer le lot en vente (traçabilité HACCP requise)',
+  })
   enterSale(
     @CurrentUser() user: AuthUser,
     @Param('farmId') farmId: string,

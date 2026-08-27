@@ -56,7 +56,9 @@ export class AuthService {
     }
     const ok = await bcrypt.compare(dto.password, user.passwordHash);
     if (!ok) {
-      throw new UnauthorizedException('Identifiants invalides : mot de passe incorrect.');
+      throw new UnauthorizedException(
+        'Identifiants invalides : mot de passe incorrect.',
+      );
     }
     return this.buildAuthResponse(user);
   }
@@ -64,7 +66,10 @@ export class AuthService {
   private buildAuthResponse(user: User) {
     const payload = { sub: user.id, role: user.role };
     const accessToken = this.jwtService.sign(payload, {
-      secret: this.config.get('JWT_SECRET', 'koukou_ferme_change_me_in_production'),
+      secret: this.config.get(
+        'JWT_SECRET',
+        'koukou_ferme_change_me_in_production',
+      ),
       expiresIn: this.config.get('JWT_EXPIRES_IN', '7d'),
     });
     return {

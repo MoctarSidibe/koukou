@@ -35,7 +35,10 @@ export class BuildingsService {
     return this.buildingRepo.save(building);
   }
 
-  async findAll(user: AuthUser, farmId: string): Promise<(Building & { stats: BuildingStats })[]> {
+  async findAll(
+    user: AuthUser,
+    farmId: string,
+  ): Promise<(Building & { stats: BuildingStats })[]> {
     await this.farmsService.assertAccessible(user, farmId);
     const buildings = await this.buildingRepo.find({
       where: { farmId },
@@ -49,7 +52,8 @@ export class BuildingsService {
     const building = await this.buildingRepo.findOne({
       where: { id: buildingId, farmId },
     });
-    if (!building) throw new NotFoundException('Bâtiment introuvable dans cette ferme.');
+    if (!building)
+      throw new NotFoundException('Bâtiment introuvable dans cette ferme.');
     return this.withStats(building);
   }
 
@@ -63,9 +67,11 @@ export class BuildingsService {
     const building = await this.buildingRepo.findOne({
       where: { id: buildingId, farmId },
     });
-    if (!building) throw new NotFoundException('Bâtiment introuvable dans cette ferme.');
+    if (!building)
+      throw new NotFoundException('Bâtiment introuvable dans cette ferme.');
     if (dto.name !== undefined) building.name = dto.name;
-    if (dto.buildingAreaM2 !== undefined) building.buildingAreaM2 = dto.buildingAreaM2 ?? null;
+    if (dto.buildingAreaM2 !== undefined)
+      building.buildingAreaM2 = dto.buildingAreaM2 ?? null;
     if (dto.capacity !== undefined) building.capacity = dto.capacity ?? null;
     if (dto.lastVideSanitaireAt !== undefined)
       building.lastVideSanitaireAt = dto.lastVideSanitaireAt ?? null;
@@ -78,7 +84,8 @@ export class BuildingsService {
     const building = await this.buildingRepo.findOne({
       where: { id: buildingId, farmId },
     });
-    if (!building) throw new NotFoundException('Bâtiment introuvable dans cette ferme.');
+    if (!building)
+      throw new NotFoundException('Bâtiment introuvable dans cette ferme.');
     await this.buildingRepo.remove(building);
     return { deleted: true };
   }
@@ -98,12 +105,19 @@ export class BuildingsService {
       .where('b.buildingId = :buildingId', { buildingId })
       .andWhere('b.status != :closed', { closed: BatchStatus.CLOTURE })
       .getRawMany();
-    const activeBirds = rows.reduce((sum, r) => sum + Number(r.quantity_alive ?? 0), 0);
+    const activeBirds = rows.reduce(
+      (sum, r) => sum + Number(r.quantity_alive ?? 0),
+      0,
+    );
     return { activeBirds, activeLots: rows.length };
   }
 
-  async withStats(building: Building): Promise<Building & { stats: BuildingStats }> {
-    const { activeBirds, activeLots } = await this.buildingOccupancy(building.id);
+  async withStats(
+    building: Building,
+  ): Promise<Building & { stats: BuildingStats }> {
+    const { activeBirds, activeLots } = await this.buildingOccupancy(
+      building.id,
+    );
     const area = building.buildingAreaM2;
     return {
       ...building,

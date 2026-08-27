@@ -26,7 +26,9 @@ export class UpdateBuildingDto {
   @Min(1)
   capacity?: number;
 
-  @ApiPropertyOptional({ description: 'Date du dernier vide sanitaire validé (YYYY-MM-DD)' })
+  @ApiPropertyOptional({
+    description: 'Date du dernier vide sanitaire validé (YYYY-MM-DD)',
+  })
   @IsOptional()
   @IsDateString()
   lastVideSanitaireAt?: string;

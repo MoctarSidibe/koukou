@@ -45,14 +45,14 @@ export class MetricsService {
     // Convention : feedQuantity est TOUJOURS stocké en kg (conversion sac->kg faite à la saisie).
     const totalFeedKg = entries.reduce((s, e) => s + e.feedQuantity, 0);
 
-    const latestWeight = [...entries]
-      .reverse()
-      .find((e) => e.avgWeightKg != null && e.avgWeightKg > 0)?.avgWeightKg ?? null;
+    const latestWeight =
+      [...entries]
+        .reverse()
+        .find((e) => e.avgWeightKg != null && e.avgWeightKg > 0)?.avgWeightKg ??
+      null;
 
     const totalWeightGainKg =
-      latestWeight != null
-        ? (latestWeight - DAY1_WEIGHT_KG) * liveCount
-        : null;
+      latestWeight != null ? (latestWeight - DAY1_WEIGHT_KG) * liveCount : null;
 
     const fcr =
       totalWeightGainKg != null && totalWeightGainKg > 0
@@ -128,13 +128,13 @@ export class MetricsService {
     densityWarn: number;
     densityCritical: number;
   }): AlertLevel {
-    if (input.densityPerM2 != null && input.densityPerM2 > input.densityCritical) {
-      return AlertLevel.ROUGE;
-    }
     if (
       input.densityPerM2 != null &&
-      input.densityPerM2 > input.densityWarn
+      input.densityPerM2 > input.densityCritical
     ) {
+      return AlertLevel.ROUGE;
+    }
+    if (input.densityPerM2 != null && input.densityPerM2 > input.densityWarn) {
       return AlertLevel.JAUNE;
     }
     if (input.mortalityPercent > 5) {

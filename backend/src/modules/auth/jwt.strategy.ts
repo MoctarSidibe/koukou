@@ -18,7 +18,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: config.get('JWT_SECRET', 'koukou_ferme_change_me_in_production'),
+      secretOrKey: config.get(
+        'JWT_SECRET',
+        'koukou_ferme_change_me_in_production',
+      ),
     });
   }
 

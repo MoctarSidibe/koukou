@@ -9,9 +9,12 @@ import {
 } from 'class-validator';
 
 export class CreateFarmDto {
-  @ApiProperty({ description: "Nom de l'exploitation", example: 'Ferme d’Essassa' })
+  @ApiProperty({
+    description: "Nom de l'exploitation",
+    example: 'Ferme d’Essassa',
+  })
   @IsString()
-  @IsNotEmpty({ message: "Le nom de la ferme est obligatoire." })
+  @IsNotEmpty({ message: 'Le nom de la ferme est obligatoire.' })
   name: string;
 
   @ApiProperty({ description: 'Ville administrative', example: 'Libreville' })
@@ -25,7 +28,10 @@ export class CreateFarmDto {
   @Min(0)
   buildingCount?: number;
 
-  @ApiPropertyOptional({ description: 'Capacité par bâtiment (oiseaux)', example: 1200 })
+  @ApiPropertyOptional({
+    description: 'Capacité par bâtiment (oiseaux)',
+    example: 1200,
+  })
   @IsOptional()
   @IsInt()
   @Min(1)
@@ -37,7 +43,10 @@ export class CreateFarmDto {
   @Min(1)
   buildingAreaM2?: number;
 
-  @ApiPropertyOptional({ description: "Poids d'un sac d'aliment (kg)", example: 50 })
+  @ApiPropertyOptional({
+    description: "Poids d'un sac d'aliment (kg)",
+    example: 50,
+  })
   @IsOptional()
   @IsNumber()
   @Min(1)

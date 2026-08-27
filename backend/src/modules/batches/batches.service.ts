@@ -7,6 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AuthUser } from '../../common/decorators/current-user.decorator.js';
 import { BatchStatus } from '../../common/enums/batch-type.enum.js';
+import { Species } from '../../common/enums/species.enum.js';
 import { FarmsService } from '../farms/farms.service.js';
 import { BreedsService } from '../breeds/breeds.service.js';
 import { Building } from '../buildings/entities/building.entity.js';
@@ -51,9 +52,11 @@ export class BatchesService {
       const building = await this.buildingRepo.findOne({
         where: { id: dto.buildingId, farmId },
       });
-      if (!building) throw new BadRequestException('Bâtiment introuvable dans cette ferme.');
+      if (!building)
+        throw new BadRequestException('Bâtiment introuvable dans cette ferme.');
       buildingId = building.id;
-      if (building.buildingAreaM2 != null) buildingArea = building.buildingAreaM2;
+      if (building.buildingAreaM2 != null)
+        buildingArea = building.buildingAreaM2;
     }
     const batch = this.batchRepo.create({
       farmId,
@@ -64,6 +67,7 @@ export class BatchesService {
       quantityAtStart: dto.quantityAtStart,
       quantityAlive: dto.quantityAtStart,
       type: dto.type,
+      species: dto.species ?? Species.POULET,
       status: BatchStatus.ACTIF,
       buildingAreaM2: buildingArea,
       feedUnitSacKg: dto.feedUnitSacKg ?? farm.defaultSacKg,
@@ -83,28 +87,45 @@ export class BatchesService {
     dto: UpdateBatchDto,
   ): Promise<BatchWithMetrics> {
     await this.farmsService.assertAccessible(user, farmId);
-    const batch = await this.batchRepo.findOne({ where: { id: batchId, farmId } });
-    if (!batch) throw new NotFoundException('Lot introuvable dans cette ferme.');
+    const batch = await this.batchRepo.findOne({
+      where: { id: batchId, farmId },
+    });
+    if (!batch)
+      throw new NotFoundException('Lot introuvable dans cette ferme.');
+    const prevBuildingId = batch.buildingId;
     if (dto.batchName !== undefined) batch.batchName = dto.batchName ?? null;
-    if (dto.couvoirSupplier !== undefined) batch.couvoirSupplier = dto.couvoirSupplier ?? null;
-    if (dto.chickLotNumber !== undefined) batch.chickLotNumber = dto.chickLotNumber ?? null;
+    if (dto.couvoirSupplier !== undefined)
+      batch.couvoirSupplier = dto.couvoirSupplier ?? null;
+    if (dto.chickLotNumber !== undefined)
+      batch.chickLotNumber = dto.chickLotNumber ?? null;
     if (dto.hatchDate !== undefined) batch.hatchDate = dto.hatchDate ?? null;
-    if (dto.buildingAreaM2 !== undefined) batch.buildingAreaM2 = dto.buildingAreaM2 ?? null;
-    if (dto.feedUnitSacKg !== undefined) batch.feedUnitSacKg = dto.feedUnitSacKg ?? null;
+    if (dto.buildingAreaM2 !== undefined)
+      batch.buildingAreaM2 = dto.buildingAreaM2 ?? null;
+    if (dto.feedUnitSacKg !== undefined)
+      batch.feedUnitSacKg = dto.feedUnitSacKg ?? null;
+    if (dto.species !== undefined && dto.species !== null)
+      batch.species = dto.species;
     if (dto.buildingId !== undefined) {
       if (dto.buildingId) {
         const building = await this.buildingRepo.findOne({
           where: { id: dto.buildingId, farmId },
         });
-        if (!building) throw new BadRequestException('Bâtiment introuvable dans cette ferme.');
+        if (!building)
+          throw new BadRequestException(
+            'Bâtiment introuvable dans cette ferme.',
+          );
         batch.buildingId = building.id;
-        if (building.buildingAreaM2 != null) batch.buildingAreaM2 = building.buildingAreaM2;
+        if (building.buildingAreaM2 != null)
+          batch.buildingAreaM2 = building.buildingAreaM2;
       } else {
         batch.buildingId = null;
       }
     }
     await this.batchRepo.save(batch);
     await this.afterChange(user, farmId, batch);
+    if (prevBuildingId && prevBuildingId !== batch.buildingId) {
+      await this.advisoryEngine.clearBuildingAlerts(farmId, prevBuildingId);
+    }
     return this.findOne(user, farmId, batchId);
   }
 
@@ -126,7 +147,8 @@ export class BatchesService {
     const batch = await this.batchRepo.findOne({
       where: { id: batchId, farmId },
     });
-    if (!batch) throw new NotFoundException('Lot introuvable dans cette ferme.');
+    if (!batch)
+      throw new NotFoundException('Lot introuvable dans cette ferme.');
     return this.withMetrics(batch);
   }
 
@@ -137,8 +159,11 @@ export class BatchesService {
     dto: ChangeTypeDto,
   ): Promise<BatchWithMetrics> {
     await this.farmsService.assertAccessible(user, farmId);
-    const batch = await this.batchRepo.findOne({ where: { id: batchId, farmId } });
-    if (!batch) throw new NotFoundException('Lot introuvable dans cette ferme.');
+    const batch = await this.batchRepo.findOne({
+      where: { id: batchId, farmId },
+    });
+    if (!batch)
+      throw new NotFoundException('Lot introuvable dans cette ferme.');
 
     if (batch.type !== dto.toType) {
       await this.historyRepo.save(
@@ -159,8 +184,11 @@ export class BatchesService {
 
   async enterSale(user: AuthUser, farmId: string, batchId: string) {
     await this.farmsService.assertAccessible(user, farmId);
-    const batch = await this.batchRepo.findOne({ where: { id: batchId, farmId } });
-    if (!batch) throw new NotFoundException('Lot introuvable dans cette ferme.');
+    const batch = await this.batchRepo.findOne({
+      where: { id: batchId, farmId },
+    });
+    if (!batch)
+      throw new NotFoundException('Lot introuvable dans cette ferme.');
     batch.status = BatchStatus.EN_VENTE;
     await this.batchRepo.save(batch);
     await this.afterChange(user, farmId, batch);
@@ -169,10 +197,14 @@ export class BatchesService {
 
   async close(user: AuthUser, farmId: string, batchId: string) {
     await this.farmsService.assertAccessible(user, farmId);
-    const batch = await this.batchRepo.findOne({ where: { id: batchId, farmId } });
-    if (!batch) throw new NotFoundException('Lot introuvable dans cette ferme.');
+    const batch = await this.batchRepo.findOne({
+      where: { id: batchId, farmId },
+    });
+    if (!batch)
+      throw new NotFoundException('Lot introuvable dans cette ferme.');
     batch.status = BatchStatus.CLOTURE;
     await this.batchRepo.save(batch);
+    await this.afterChange(user, farmId, batch);
     return this.findOne(user, farmId, batchId);
   }
 

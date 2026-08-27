@@ -10,7 +10,10 @@ export function green(message?: string): AdvisoryResult {
   return { level: AlertLevel.VERT, message };
 }
 
-export function yellow(message: string, recommendation?: string): AdvisoryResult {
+export function yellow(
+  message: string,
+  recommendation?: string,
+): AdvisoryResult {
   return { level: AlertLevel.JAUNE, message, recommendation };
 }
 

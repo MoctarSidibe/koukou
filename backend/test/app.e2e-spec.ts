@@ -24,7 +24,12 @@ describe('AppController (e2e)', () => {
     const phone = `+24160${Date.now()}`;
     return request(app.getHttpServer())
       .post('/auth/register')
-      .send({ phone, email: `test.${Date.now()}@e2e.ga`, password: 'secret123', fullName: 'Test E2E' })
+      .send({
+        phone,
+        email: `test.${Date.now()}@e2e.ga`,
+        password: 'secret123',
+        fullName: 'Test E2E',
+      })
       .expect(201);
   });
 

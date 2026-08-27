@@ -79,11 +79,7 @@ export class FarmsService {
     );
   }
 
-  async createEmployee(
-    owner: AuthUser,
-    farmId: string,
-    dto: CreateElevageDto,
-  ) {
+  async createEmployee(owner: AuthUser, farmId: string, dto: CreateElevageDto) {
     await this.assertAccessible(owner, farmId);
     const existing = await this.userRepo.findOne({
       where: [{ phone: dto.phone }, { email: dto.email }],
@@ -115,7 +111,8 @@ export class FarmsService {
     const employee = await this.userRepo.findOne({
       where: { id: employeeUserId },
     });
-    if (!employee) throw new NotFoundException('Employé (Éleveur) introuvable.');
+    if (!employee)
+      throw new NotFoundException('Employé (Éleveur) introuvable.');
     const existing = await this.employeeRepo.findOne({
       where: { farmId, userId: employeeUserId },
     });

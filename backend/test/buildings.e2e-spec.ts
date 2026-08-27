@@ -23,7 +23,9 @@ describe('Module 1 — Bâtiments & bandes (e2e)', () => {
       imports: [AppModule],
     }).compile();
     app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, transform: true }),
+    );
     await app.init();
     server = app.getHttpServer();
   });
@@ -33,7 +35,12 @@ describe('Module 1 — Bâtiments & bandes (e2e)', () => {
     const email = `owner.b.${Date.now()}@e2e.ga`;
     await request(server)
       .post('/auth/register')
-      .send({ phone, email, password: 'secret123', fullName: 'Proprio Bâtiments' })
+      .send({
+        phone,
+        email,
+        password: 'secret123',
+        fullName: 'Proprio Bâtiments',
+      })
       .expect(201);
     const login = await request(server)
       .post('/auth/login')
@@ -44,7 +51,11 @@ describe('Module 1 — Bâtiments & bandes (e2e)', () => {
     const farm = await request(server)
       .post('/farms')
       .set('Authorization', `Bearer ${token}`)
-      .send({ name: `Ferme Bât ${Date.now()}`, administrativeCity: 'Libreville', capacityPerBuilding: 1500 })
+      .send({
+        name: `Ferme Bât ${Date.now()}`,
+        administrativeCity: 'Libreville',
+        capacityPerBuilding: 1500,
+      })
       .expect(201);
     farmId = farm.body.id;
   });
@@ -140,7 +151,11 @@ describe('Module 1 — Bâtiments & bandes (e2e)', () => {
     await request(server)
       .patch(`/farms/${farmId}/batches/${b1.body.id}`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ couvoirSupplier: 'Couvoir', chickLotNumber: 'L1', hatchDate: daysAgo(70) })
+      .send({
+        couvoirSupplier: 'Couvoir',
+        chickLotNumber: 'L1',
+        hatchDate: daysAgo(70),
+      })
       .expect(200);
     await request(server)
       .post(`/farms/${farmId}/batches/${b1.body.id}/cloture`)

@@ -1,10 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import {
-  AlertKind,
-  AlertLevel,
-} from '../../common/enums/alert-level.enum.js';
+import { AlertKind, AlertLevel } from '../../common/enums/alert-level.enum.js';
 import { ReferenceKey } from '../../common/enums/reference-key.enum.js';
 import { BatchStatus } from '../../common/enums/batch-type.enum.js';
 import { Building } from '../buildings/entities/building.entity.js';
@@ -14,6 +11,8 @@ import { ReferenceConstantsService } from '../reference-constants/reference-cons
 import { InputLot } from '../inputs/entities/input-lot.entity.js';
 import { ProductionBatch } from './entities/production-batch.entity.js';
 import { BatchMetrics } from './models/batch-metrics.model.js';
+
+const DAY1_WEIGHT_KG = 0.045;
 
 @Injectable()
 export class AdvisoryEngine {
@@ -39,9 +38,38 @@ export class AdvisoryEngine {
       this.evaluateDensity(batch, metrics, farmId, batchId),
       this.evaluateWater(batch, metrics, farmId, batchId),
       this.evaluateIpeGmq(batch, metrics, farmId, batchId),
+      this.evaluateGmq(batch, metrics, farmId, batchId),
       this.evaluateExpiration(batch, farmId, batchId),
       this.evaluateSaleReadiness(batch, metrics, farmId, batchId),
       this.evaluateBuildingContext(batch),
+    ]);
+  }
+
+  /**
+   * Purge les alertes de niveau bâtiment d'un bâtiment (lorsqu'aucun lot ne
+   * l'occupe plus, ou qu'un lot change de bâtiment). Les prochaines évaluations
+   * le re-remonteront si le risque subsiste (philosophie advisory).
+   */
+  async clearBuildingAlerts(farmId: string, buildingId: string) {
+    await Promise.all([
+      this.alertsService.clearKind(
+        farmId,
+        null,
+        AlertKind.DENSITE_BATIMENT,
+        buildingId,
+      ),
+      this.alertsService.clearKind(
+        farmId,
+        null,
+        AlertKind.COHABITATION,
+        buildingId,
+      ),
+      this.alertsService.clearKind(
+        farmId,
+        null,
+        AlertKind.VIDE_SANITAIRE,
+        buildingId,
+      ),
     ]);
   }
 
@@ -74,14 +102,25 @@ export class AdvisoryEngine {
   ) {
     const buildingId = building.id;
     const area = building.buildingAreaM2;
-    if (area == null || area <= 0) return;
-    const activeBirds = activeLots.reduce(
-      (s, l) => s + l.quantityAlive,
-      0,
-    );
+    if (area == null || area <= 0) {
+      await this.alertsService.clearKind(
+        farmId,
+        null,
+        AlertKind.DENSITE_BATIMENT,
+        buildingId,
+      );
+      return;
+    }
+    const activeBirds = activeLots.reduce((s, l) => s + l.quantityAlive, 0);
     const density = activeBirds / area;
-    const warn = await this.constants.get(ReferenceKey.BUILDING_DENSITY_WARN, 15);
-    const crit = await this.constants.get(ReferenceKey.BUILDING_DENSITY_CRITICAL, 18);
+    const warn = await this.constants.get(
+      ReferenceKey.BUILDING_DENSITY_WARN,
+      15,
+    );
+    const crit = await this.constants.get(
+      ReferenceKey.BUILDING_DENSITY_CRITICAL,
+      18,
+    );
     const activeBatch = activeLots[0];
 
     if (density > crit) {
@@ -92,7 +131,11 @@ export class AdvisoryEngine {
           message: `Densité du bâtiment critique : ${density.toFixed(1)} oiseaux/m² (${activeBirds} oiseaux cumulés).`,
           recommendation:
             'Réduire le cheptel total du bâtiment ou augmenter la surface. Risque sanitaire et thermique élevé.',
-          context: { densityBuildingPerM2: density, activeBirds, activeLots: activeLots.length },
+          context: {
+            densityBuildingPerM2: density,
+            activeBirds,
+            activeLots: activeLots.length,
+          },
         },
         { farmId, batchId: activeBatch?.id ?? null, buildingId },
       );
@@ -102,13 +145,23 @@ export class AdvisoryEngine {
           kind: AlertKind.DENSITE_BATIMENT,
           level: AlertLevel.JAUNE,
           message: `Densité du bâtiment élevée : ${density.toFixed(1)} oiseaux/m² (${activeBirds} oiseaux cumulés).`,
-          recommendation: 'Surveiller ventilation et litière ; éviter d’ajouter de nouveaux lots.',
-          context: { densityBuildingPerM2: density, activeBirds, activeLots: activeLots.length },
+          recommendation:
+            'Surveiller ventilation et litière ; éviter d’ajouter de nouveaux lots.',
+          context: {
+            densityBuildingPerM2: density,
+            activeBirds,
+            activeLots: activeLots.length,
+          },
         },
         { farmId, batchId: activeBatch?.id ?? null, buildingId },
       );
     } else {
-      await this.alertsService.clearKind(farmId, null, AlertKind.DENSITE_BATIMENT, buildingId);
+      await this.alertsService.clearKind(
+        farmId,
+        null,
+        AlertKind.DENSITE_BATIMENT,
+        buildingId,
+      );
     }
   }
 
@@ -118,11 +171,21 @@ export class AdvisoryEngine {
     buildingId: string,
   ) {
     if (activeLots.length < 2) {
-      await this.alertsService.clearKind(farmId, null, AlertKind.COHABITATION, buildingId);
+      await this.alertsService.clearKind(
+        farmId,
+        null,
+        AlertKind.COHABITATION,
+        buildingId,
+      );
       return;
     }
-    const maxGapWeeks = await this.constants.get(ReferenceKey.AGE_GAP_MAX_WEEKS, 4);
-    const agesInWeeks = activeLots.map((l) => this.ageInWeeks(l.integrationDate));
+    const maxGapWeeks = await this.constants.get(
+      ReferenceKey.AGE_GAP_MAX_WEEKS,
+      4,
+    );
+    const agesInWeeks = activeLots.map((l) =>
+      this.ageInWeeks(l.integrationDate),
+    );
     const minWeek = Math.min(...agesInWeeks);
     const maxWeek = Math.max(...agesInWeeks);
     const gapWeeks = maxWeek - minWeek;
@@ -138,12 +201,21 @@ export class AdvisoryEngine {
           message: `Cohabitation d'âges : écart de ${gapWeeks.toFixed(0)} semaines entre ${activeLots.length} bandes dans le bâtiment. ${hasChick ? 'Un poussin fragile est exposé à une bande mature — risque élevé de transmission virale.' : ''}`,
           recommendation:
             'Planifier un vide sanitaire et, si possible, séparer les bandes d’âges trop écartés pour limiter la propagation de maladies.',
-          context: { ageGapWeeks: gapWeeks, maxAgeGapWeeks: maxGapWeeks, activeLots: activeLots.length },
+          context: {
+            ageGapWeeks: gapWeeks,
+            maxAgeGapWeeks: maxGapWeeks,
+            activeLots: activeLots.length,
+          },
         },
         { farmId, batchId: activeBatch?.id ?? null, buildingId },
       );
     } else {
-      await this.alertsService.clearKind(farmId, null, AlertKind.COHABITATION, buildingId);
+      await this.alertsService.clearKind(
+        farmId,
+        null,
+        AlertKind.COHABITATION,
+        buildingId,
+      );
     }
   }
 
@@ -156,11 +228,26 @@ export class AdvisoryEngine {
     const lastClosed = lots
       .filter((l) => l.status === BatchStatus.CLOTURE)
       .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())[0];
-    if (!lastClosed) return;
+    if (!lastClosed) {
+      await this.alertsService.clearKind(
+        farmId,
+        null,
+        AlertKind.VIDE_SANITAIRE,
+        buildingId,
+      );
+      return;
+    }
 
-    const minDays = await this.constants.get(ReferenceKey.VIDE_SANITAIRE_MIN_DAYS, 14);
-    const recommendedDays = await this.constants.get(ReferenceKey.VIDE_SANITAIRE_MAX_DAYS, 21);
-    const elapsedDays = (Date.now() - lastClosed.updatedAt.getTime()) / 86400000;
+    const minDays = await this.constants.get(
+      ReferenceKey.VIDE_SANITAIRE_MIN_DAYS,
+      14,
+    );
+    const recommendedDays = await this.constants.get(
+      ReferenceKey.VIDE_SANITAIRE_MAX_DAYS,
+      21,
+    );
+    const elapsedDays =
+      (Date.now() - lastClosed.updatedAt.getTime()) / 86400000;
     const activeBatch = lots.find((l) => l.status !== BatchStatus.CLOTURE);
 
     if (elapsedDays < minDays) {
@@ -186,7 +273,12 @@ export class AdvisoryEngine {
         { farmId, batchId: activeBatch?.id ?? null, buildingId },
       );
     } else {
-      await this.alertsService.clearKind(farmId, null, AlertKind.VIDE_SANITAIRE, buildingId);
+      await this.alertsService.clearKind(
+        farmId,
+        null,
+        AlertKind.VIDE_SANITAIRE,
+        buildingId,
+      );
     }
   }
 
@@ -196,14 +288,26 @@ export class AdvisoryEngine {
     return Math.max(0, (now - start) / (7 * 86400000));
   }
 
+  private ageDaysAt(entryDate: string, integrationDate: string): number {
+    const entry = new Date(entryDate + 'T00:00:00').getTime();
+    const start = new Date(integrationDate + 'T00:00:00').getTime();
+    return Math.max(0, Math.floor((entry - start) / 86400000));
+  }
+
   private async evaluateMortality(
     batch: ProductionBatch,
     metrics: BatchMetrics,
     farmId: string,
     batchId: string,
   ) {
-    const warnPct = await this.constants.get(ReferenceKey.MORTALITY_WARN_PCT, 1);
-    const critPct = await this.constants.get(ReferenceKey.MORTALITY_CRITICAL_PCT, 5);
+    const warnPct = await this.constants.get(
+      ReferenceKey.MORTALITY_WARN_PCT,
+      1,
+    );
+    const critPct = await this.constants.get(
+      ReferenceKey.MORTALITY_CRITICAL_PCT,
+      5,
+    );
     if (metrics.mortalityPercent > critPct) {
       await this.alertsService.raise(
         {
@@ -222,7 +326,8 @@ export class AdvisoryEngine {
           kind: AlertKind.MORTALITE,
           level: AlertLevel.JAUNE,
           message: `Mortalité en hausse : ${metrics.mortalityPercent.toFixed(1)}% sur le lot ${batch.batchName}.`,
-          recommendation: 'Surveiller la consommation d’eau et l’état général du lot.',
+          recommendation:
+            'Surveiller la consommation d’eau et l’état général du lot.',
           context: { mortalityPercent: metrics.mortalityPercent },
         },
         { farmId, batchId },
@@ -238,7 +343,10 @@ export class AdvisoryEngine {
     farmId: string,
     batchId: string,
   ) {
-    if (metrics.densityPerM2 == null) return;
+    if (metrics.densityPerM2 == null) {
+      await this.alertsService.clearKind(farmId, batchId, AlertKind.SURDENSITE);
+      return;
+    }
     const warn = await this.constants.get(ReferenceKey.DENSITY_WARN, 15);
     const crit = await this.constants.get(ReferenceKey.DENSITY_CRITICAL, 18);
     if (metrics.densityPerM2 > crit) {
@@ -280,13 +388,26 @@ export class AdvisoryEngine {
       where: { batchId: batch.id },
       order: { entryDate: 'DESC' },
     });
-    if (entries.length < 2) return;
+    if (entries.length < 2) {
+      await this.alertsService.clearKind(farmId, batchId, AlertKind.EAU);
+      return;
+    }
     const today = entries[0];
     const yesterday = entries[1];
-    if (yesterday.waterL <= 0) return;
-    const dropPct = ((yesterday.waterL - today.waterL) / yesterday.waterL) * 100;
-    const warnPct = await this.constants.get(ReferenceKey.WATER_DROP_WARN_PCT, 10);
-    const critPct = await this.constants.get(ReferenceKey.WATER_DROP_CRITICAL_PCT, 25);
+    if (yesterday.waterL <= 0) {
+      await this.alertsService.clearKind(farmId, batchId, AlertKind.EAU);
+      return;
+    }
+    const dropPct =
+      ((yesterday.waterL - today.waterL) / yesterday.waterL) * 100;
+    const warnPct = await this.constants.get(
+      ReferenceKey.WATER_DROP_WARN_PCT,
+      10,
+    );
+    const critPct = await this.constants.get(
+      ReferenceKey.WATER_DROP_CRITICAL_PCT,
+      25,
+    );
     if (dropPct > critPct) {
       await this.alertsService.raise(
         {
@@ -305,7 +426,8 @@ export class AdvisoryEngine {
           kind: AlertKind.EAU,
           level: AlertLevel.JAUNE,
           message: `Baisse de consommation d’eau de ${dropPct.toFixed(0)}%. Indicateur n°1 à surveiller.`,
-          recommendation: 'Contrôler les abreuvoirs et observer le comportement des volailles.',
+          recommendation:
+            'Contrôler les abreuvoirs et observer le comportement des volailles.',
           context: { waterDropPercent: dropPct },
         },
         { farmId, batchId },
@@ -321,8 +443,14 @@ export class AdvisoryEngine {
     farmId: string,
     batchId: string,
   ) {
-    if (metrics.ipe == null || metrics.ageDays < 14) return;
-    const warnPct = await this.constants.get(ReferenceKey.IPE_DEVIATION_WARN_PCT, 10);
+    if (metrics.ipe == null || metrics.ageDays < 14) {
+      await this.alertsService.clearKind(farmId, batchId, AlertKind.IPE);
+      return;
+    }
+    const warnPct = await this.constants.get(
+      ReferenceKey.IPE_DEVIATION_WARN_PCT,
+      10,
+    );
     if (metrics.ipe < 100 * (1 - warnPct / 100)) {
       await this.alertsService.raise(
         {
@@ -340,6 +468,71 @@ export class AdvisoryEngine {
     }
   }
 
+  /**
+   * Alerte sur la déviation du GMQ : le lot sert de référence à lui-même.
+   * Si le GMQ cumulé baisse de plus de warnPct par rapport à la dernière pesée
+   * précédente, la croissance a ralenti — indicateur précoce de problème.
+   */
+  private async evaluateGmq(
+    batch: ProductionBatch,
+    metrics: BatchMetrics,
+    farmId: string,
+    batchId: string,
+  ) {
+    if (metrics.gmqGramsPerDay == null || metrics.ageDays < 14) {
+      await this.alertsService.clearKind(farmId, batchId, AlertKind.GMQ);
+      return;
+    }
+    const sampleAgeDays = (entryDate: string) =>
+      this.ageDaysAt(entryDate, batch.integrationDate);
+    const weighted = (
+      await this.entriesRepo.find({
+        where: { batchId: batch.id },
+        order: { entryDate: 'ASC' },
+      })
+    ).filter((e) => e.avgWeightKg != null && e.avgWeightKg > 0);
+    if (weighted.length < 2) {
+      await this.alertsService.clearKind(farmId, batchId, AlertKind.GMQ);
+      return;
+    }
+    const prev = weighted[weighted.length - 2];
+    const prevAge = sampleAgeDays(prev.entryDate);
+    if (prevAge < 7) {
+      await this.alertsService.clearKind(farmId, batchId, AlertKind.GMQ);
+      return;
+    }
+    const prevGmq = ((prev.avgWeightKg! - DAY1_WEIGHT_KG) * 1000) / prevAge;
+    if (prevGmq <= 0) {
+      await this.alertsService.clearKind(farmId, batchId, AlertKind.GMQ);
+      return;
+    }
+    const dropPct = ((prevGmq - metrics.gmqGramsPerDay) / prevGmq) * 100;
+    const warnPct = await this.constants.get(
+      ReferenceKey.GMQ_DEVIATION_WARN_PCT,
+      10,
+    );
+    if (dropPct >= warnPct) {
+      await this.alertsService.raise(
+        {
+          kind: AlertKind.GMQ,
+          level: AlertLevel.JAUNE,
+          message: `GMQ en recul sur le lot ${batch.batchName} : ${metrics.gmqGramsPerDay.toFixed(1)} g/j vs ${prevGmq.toFixed(1)} g/j avant (${dropPct.toFixed(0)}% de baisse).`,
+          recommendation:
+            'Vérifier la qualité de l’aliment, l’ambiance (chauffage/ventilation) et la santé du lot ; re-poser une pesée de contrôle.',
+          context: {
+            gmqGramsPerDay: metrics.gmqGramsPerDay,
+            previousGmqGramsPerDay: Number(prevGmq.toFixed(1)),
+            dropPercent: Number(dropPct.toFixed(1)),
+            warnPercent: warnPct,
+          },
+        },
+        { farmId, batchId },
+      );
+    } else {
+      await this.alertsService.clearKind(farmId, batchId, AlertKind.GMQ);
+    }
+  }
+
   private async evaluateExpiration(
     batch: ProductionBatch,
     farmId: string,
@@ -352,36 +545,59 @@ export class AdvisoryEngine {
     const lots = await this.inputRepo.find({
       where: { farmId, batchId },
     });
+
+    // Agrégation : l'alerte globale du lot dépend de l'ensemble des intrants,
+    // pas de l'ordre de lecture (fix d'un clear dépendant de l'ordre).
+    const expired: InputLot[] = [];
+    const expiringSoon: InputLot[] = [];
+    const expiringLater: InputLot[] = [];
     for (const lot of lots) {
       if (!lot.expirationDate) continue;
       const exp = new Date(lot.expirationDate + 'T00:00:00');
       if (exp < new Date()) {
-        await this.alertsService.raise(
-          {
-            kind: AlertKind.PEREMPTION,
-            level: AlertLevel.ROUGE,
-            message: `Intrant périmé : ${lot.productName} (lot ${lot.supplierLotNumber}).`,
-            recommendation:
-              'Retirer du stock — ne pas distribuer un produit périmé pour la sécurité sanitaire.',
-            context: { productName: lot.productName },
-          },
-          { farmId, batchId },
-        );
+        expired.push(lot);
       } else if (exp <= secSoon) {
-        await this.alertsService.raise(
-          {
-            kind: AlertKind.PEREMPTION,
-            level: exp <= soon ? AlertLevel.ROUGE : AlertLevel.JAUNE,
-            message: `Péremption proche : ${lot.productName} expire le ${lot.expirationDate}.`,
-            recommendation: 'Planifier l’utilisation avant la date de péremption.',
-            context: { productName: lot.productName, expirationDate: lot.expirationDate },
-          },
-          { farmId, batchId },
-        );
-      } else {
-        await this.alertsService.clearKind(farmId, batchId, AlertKind.PEREMPTION);
+        (exp <= soon ? expiringSoon : expiringLater).push(lot);
       }
     }
+
+    if (expired.length > 0) {
+      const lot = expired[0];
+      await this.alertsService.raise(
+        {
+          kind: AlertKind.PEREMPTION,
+          level: AlertLevel.ROUGE,
+          message: `Intrant périmé : ${lot.productName} (lot ${lot.supplierLotNumber})${expired.length > 1 ? ` et ${expired.length - 1} autre(s)` : ''}.`,
+          recommendation:
+            'Retirer du stock — ne pas distribuer un produit périmé pour la sécurité sanitaire.',
+          context: {
+            productName: lot.productName,
+            expiredCount: expired.length,
+          },
+        },
+        { farmId, batchId },
+      );
+      return;
+    }
+    if (expiringSoon.length > 0 || expiringLater.length > 0) {
+      const urgent = expiringSoon[0] ?? expiringLater[0];
+      await this.alertsService.raise(
+        {
+          kind: AlertKind.PEREMPTION,
+          level: expiringSoon.length > 0 ? AlertLevel.ROUGE : AlertLevel.JAUNE,
+          message: `Péremption proche : ${urgent.productName} expire le ${urgent.expirationDate}.`,
+          recommendation:
+            'Planifier l’utilisation avant la date de péremption.',
+          context: {
+            productName: urgent.productName,
+            expirationDate: urgent.expirationDate,
+          },
+        },
+        { farmId, batchId },
+      );
+      return;
+    }
+    await this.alertsService.clearKind(farmId, batchId, AlertKind.PEREMPTION);
   }
 
   private async evaluateSaleReadiness(
@@ -395,7 +611,8 @@ export class AdvisoryEngine {
       batch.chickLotNumber != null &&
       batch.hatchDate != null;
     const isSaleOrClose =
-      batch.status === BatchStatus.EN_VENTE || batch.status === BatchStatus.CLOTURE;
+      batch.status === BatchStatus.EN_VENTE ||
+      batch.status === BatchStatus.CLOTURE;
     if (!traceComplete && isSaleOrClose) {
       await this.alertsService.raise(
         {

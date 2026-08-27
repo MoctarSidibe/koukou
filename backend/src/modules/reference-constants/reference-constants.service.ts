@@ -1,4 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ReferenceKey } from '../../common/enums/reference-key.enum.js';
@@ -32,6 +36,23 @@ export class ReferenceConstantsService {
       return this.repo.save(row);
     }
     return this.repo.save(this.repo.create({ key, value }));
+  }
+
+  /** Mise à jour « réglages » : clé existante + constante éditable uniquement. */
+  async update(key: string, value: number): Promise<ReferenceConstant> {
+    const row = await this.repo.findOne({ where: { key } });
+    if (!row) {
+      throw new NotFoundException(
+        `Constante de référence inconnue : « ${key} ».`,
+      );
+    }
+    if (row.isEditable !== true) {
+      throw new BadRequestException(
+        `La constante « ${key} » n'est pas modifiable en réglages.`,
+      );
+    }
+    row.value = value;
+    return this.repo.save(row);
   }
 
   async findAll(): Promise<ReferenceConstant[]> {

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BatchType } from '../../common/enums/batch-type.enum.js';
+import { Species } from '../../common/enums/species.enum.js';
 import { Breed } from './entities/breed.entity.js';
 
 @Injectable()
@@ -19,8 +20,12 @@ export class BreedsService {
     return this.repo.findOne({ where: { id } });
   }
 
-  async createCustom(name: string, type: BatchType): Promise<Breed> {
-    const breed = this.repo.create({ name, type, isCustom: true });
+  async createCustom(
+    name: string,
+    type: BatchType,
+    species: Species = Species.POULET,
+  ): Promise<Breed> {
+    const breed = this.repo.create({ name, type, species, isCustom: true });
     return this.repo.save(breed);
   }
 }

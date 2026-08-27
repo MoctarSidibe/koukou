@@ -15,19 +15,25 @@ export class CreateBuildingDto {
   @IsNotEmpty({ message: 'Le nom du bâtiment est obligatoire.' })
   name: string;
 
-  @ApiPropertyOptional({ description: 'Surface du bâtiment (m²) — densité au niveau bâtiment' })
+  @ApiPropertyOptional({
+    description: 'Surface du bâtiment (m²) — densité au niveau bâtiment',
+  })
   @IsOptional()
   @IsNumber()
   @Min(1)
   buildingAreaM2?: number;
 
-  @ApiPropertyOptional({ description: 'Capacité (oiseaux) — pour le ratio par rapport à la capacité' })
+  @ApiPropertyOptional({
+    description: 'Capacité (oiseaux) — pour le ratio par rapport à la capacité',
+  })
   @IsOptional()
   @IsInt()
   @Min(1)
   capacity?: number;
 
-  @ApiPropertyOptional({ description: 'Date du dernier vide sanitaire validé (YYYY-MM-DD)' })
+  @ApiPropertyOptional({
+    description: 'Date du dernier vide sanitaire validé (YYYY-MM-DD)',
+  })
   @IsOptional()
   @IsDateString()
   lastVideSanitaireAt?: string;

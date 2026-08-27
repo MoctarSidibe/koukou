@@ -25,7 +25,9 @@ export class CreateElevageDto {
 
   @ApiProperty({ description: 'Mot de passe temporaire (min 6 caractères)' })
   @IsString()
-  @MinLength(6, { message: 'Le mot de passe doit contenir au moins 6 caractères.' })
+  @MinLength(6, {
+    message: 'Le mot de passe doit contenir au moins 6 caractères.',
+  })
   password: string;
 
   @ApiPropertyOptional({ description: 'Bâtiment assigné' })

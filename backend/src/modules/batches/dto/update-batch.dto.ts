@@ -1,18 +1,30 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsDateString, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsDateString,
+  IsEnum,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
+import { Species } from '../../../common/enums/species.enum.js';
 
 export class UpdateBatchDto {
-  @ApiPropertyOptional({ description: "Nom du bâtiment / lot" })
+  @ApiPropertyOptional({ description: 'Nom du bâtiment / lot' })
   @IsOptional()
   @IsString()
   batchName?: string;
 
-  @ApiPropertyOptional({ description: 'Traçabilité HACCP — fournisseur du couvoir (poussins)' })
+  @ApiPropertyOptional({
+    description: 'Traçabilité HACCP — fournisseur du couvoir (poussins)',
+  })
   @IsOptional()
   @IsString()
   couvoirSupplier?: string | null;
 
-  @ApiPropertyOptional({ description: 'Traçabilité HACCP — numéro de lot des poussins' })
+  @ApiPropertyOptional({
+    description: 'Traçabilité HACCP — numéro de lot des poussins',
+  })
   @IsOptional()
   @IsString()
   chickLotNumber?: string | null;
@@ -34,8 +46,18 @@ export class UpdateBatchDto {
   @Min(1)
   feedUnitSacKg?: number | null;
 
-  @ApiPropertyOptional({ description: 'Bâtiment (id Building) — rattacher le lot à un bâtiment' })
+  @ApiPropertyOptional({
+    description: 'Bâtiment (id Building) — rattacher le lot à un bâtiment',
+  })
   @IsOptional()
   @IsString()
   buildingId?: string | null;
+
+  @ApiPropertyOptional({
+    enum: Species,
+    description: 'Espèce (gallinacé) du lot',
+  })
+  @IsOptional()
+  @IsEnum(Species, { message: 'L’espèce doit être une valeur valide.' })
+  species?: Species | null;
 }

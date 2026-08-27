@@ -6,7 +6,11 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { AlertKind, AlertLevel, AlertStatus } from '../../../common/enums/alert-level.enum.js';
+import {
+  AlertKind,
+  AlertLevel,
+  AlertStatus,
+} from '../../../common/enums/alert-level.enum.js';
 
 @Entity('alerts')
 export class Alert {

@@ -8,7 +8,11 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { BatchStatus, BatchType } from '../../../common/enums/batch-type.enum.js';
+import {
+  BatchStatus,
+  BatchType,
+} from '../../../common/enums/batch-type.enum.js';
+import { Species } from '../../../common/enums/species.enum.js';
 import { Breed } from '../../breeds/entities/breed.entity.js';
 import { Farm } from '../../farms/entities/farm.entity.js';
 
@@ -51,6 +55,13 @@ export class ProductionBatch {
   @Column({ type: 'enum', enum: BatchType, default: BatchType.CHAIR })
   @Index()
   type: BatchType;
+
+  @Column({
+    type: 'enum',
+    enum: Species,
+    default: Species.POULET,
+  })
+  species: Species;
 
   @Column({ type: 'enum', enum: BatchStatus, default: BatchStatus.ACTIF })
   status: BatchStatus;
