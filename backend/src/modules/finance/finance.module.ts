@@ -1,0 +1,78 @@
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { FarmsModule } from '../farms/farms.module.js';
+import { AlertsModule } from '../alerts/alerts.module.js';
+import { ReferenceConstantsModule } from '../reference-constants/reference-constants.module.js';
+import { BatchesModule } from '../batches/batches.module.js';
+import { FeedStockModule } from '../feed-stock/feed-stock.module.js';
+import { ProductionBatch } from '../batches/entities/production-batch.entity.js';
+import { InputLot } from '../inputs/entities/input-lot.entity.js';
+import { Farm } from '../farms/entities/farm.entity.js';
+import { Customer } from './entities/customer.entity.js';
+import { Sale } from './entities/sale.entity.js';
+import { SaleItem } from './entities/sale-item.entity.js';
+import { Payment } from './entities/payment.entity.js';
+import { PaymentMethodConfig } from './entities/payment-method.entity.js';
+import { CashSession } from './entities/cash-session.entity.js';
+import { CashMovement } from './entities/cash-movement.entity.js';
+import { Expense } from './entities/expense.entity.js';
+import { PdfService } from './pdf.service.js';
+import { CustomersService } from './customers.service.js';
+import { PaymentsService } from './payments.service.js';
+import { CaisseService } from './caisse.service.js';
+import { ExpensesService } from './expenses.service.js';
+import { RentabiliteService } from './rentabilite.service.js';
+import { SalesService } from './sales.service.js';
+import { FinanceEventsService } from './finance-events.service.js';
+import { CustomersController } from './customers.controller.js';
+import { SalesController } from './sales.controller.js';
+import {
+  PaymentMethodsController,
+  PaymentsController,
+} from './payments.controller.js';
+import { CaisseController } from './caisse.controller.js';
+import { ExpensesController } from './expenses.controller.js';
+import { RentabiliteController } from './rentabilite.controller.js';
+
+@Module({
+  imports: [
+    TypeOrmModule.forFeature([
+      Customer,
+      Sale,
+      SaleItem,
+      Payment,
+      PaymentMethodConfig,
+      CashSession,
+      CashMovement,
+      Expense,
+      ProductionBatch,
+      InputLot,
+      Farm,
+    ]),
+    FarmsModule,
+    AlertsModule,
+    ReferenceConstantsModule,
+    BatchesModule,
+    FeedStockModule,
+  ],
+  controllers: [
+    CustomersController,
+    SalesController,
+    PaymentsController,
+    PaymentMethodsController,
+    CaisseController,
+    ExpensesController,
+    RentabiliteController,
+  ],
+  providers: [
+    PdfService,
+    CustomersService,
+    PaymentsService,
+    CaisseService,
+    ExpensesService,
+    RentabiliteService,
+    SalesService,
+    FinanceEventsService,
+  ],
+})
+export class FinanceModule {}

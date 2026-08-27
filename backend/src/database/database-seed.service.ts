@@ -11,6 +11,8 @@ import { AlertKind } from '../common/enums/alert-level.enum.js';
 import { RuleRegistry } from '../modules/alerts/entities/rule-registry.entity.js';
 import { SanitaryProtocol } from '../modules/sanitary/entities/sanitary-protocol.entity.js';
 import { ProtocolStep } from '../modules/sanitary/entities/protocol-step.entity.js';
+import { PaymentMethodConfig } from '../modules/finance/entities/payment-method.entity.js';
+import { PaymentMethod } from '../common/enums/payment-method.enum.js';
 
 interface SeedConstant {
   key: ReferenceKey;
@@ -123,6 +125,18 @@ const DEFAULT_CONSTANTS: SeedConstant[] = [
     value: 3,
     description:
       'Stock provende : alerte ROUGE si l’autonomie passe sous N jours (CDCF — 72 h)',
+  },
+  {
+    key: ReferenceKey.RENTABILITE_MARGE_MIN_PCT,
+    value: 5,
+    description:
+      'Rentabilité : marge nette minimale avant alerte JAUNE (compte de résultat par lot)',
+  },
+  {
+    key: ReferenceKey.VENTE_INVENDUS_DAYS,
+    value: 5,
+    description:
+      'Ventes : alerte si un lot en vente n’a pas d’écoulement confirmé depuis N jours',
   },
 ];
 
@@ -297,6 +311,8 @@ export class DatabaseSeedService implements OnApplicationBootstrap {
     private readonly protocolRepo: Repository<SanitaryProtocol>,
     @InjectRepository(ProtocolStep)
     private readonly stepRepo: Repository<ProtocolStep>,
+    @InjectRepository(PaymentMethodConfig)
+    private readonly paymentMethodRepo: Repository<PaymentMethodConfig>,
   ) {}
 
   async onApplicationBootstrap() {
@@ -304,6 +320,7 @@ export class DatabaseSeedService implements OnApplicationBootstrap {
     await this.seedBreeds();
     await this.seedRules();
     await this.seedProtocols();
+    await this.seedPaymentMethods();
     this.logger.log('Semence des données de référence terminée.');
   }
 
@@ -442,6 +459,22 @@ export class DatabaseSeedService implements OnApplicationBootstrap {
         description:
           'Alerte si le stock de provende passe sous le seuil d’autonomie (JAUNE < 5 j, ROUGE < 3 j de consommation théorique).',
       },
+      {
+        code: 'rentabilite-1',
+        kind: AlertKind.RENTABILITE,
+        category: 'FINANCE',
+        shortLabel: 'Rentabilité du lot',
+        description:
+          'Compte de résultat par lot : alerte ROUGE si perte nette, JAUNE si la marge passe sous le seuil minimal (évaluée à la clôture et après chaque vente/dépense).',
+      },
+      {
+        code: 'vente-1',
+        kind: AlertKind.VENTE,
+        category: 'FINANCE',
+        shortLabel: 'Écoulement / invendus',
+        description:
+          'Alerte si un lot en vente n’a pas eu d’écoulement confirmé depuis vente_invendu_days (5 j) — invendus générant du surcoût (surcharge du bâtiment).',
+      },
     ];
     for (const rule of rules) {
       const existing = await this.ruleRepo.findOne({
@@ -490,6 +523,46 @@ export class DatabaseSeedService implements OnApplicationBootstrap {
             withdrawalDays: s.withdrawalDays,
             active: true,
           }),
+        );
+      }
+    }
+  }
+
+  /**
+   * POS : CASH activé par défaut ; MOBILE_MONEY / QR_CODE affichés au guichet
+   * mais désactivés (« Bientôt disponible ») jusqu'à l'intégration des API.
+   */
+  private async seedPaymentMethods() {
+    const defaults: Partial<PaymentMethodConfig>[] = [
+      {
+        code: PaymentMethod.CASH,
+        label: 'Espèces',
+        enabled: true,
+        displayHint: 'Encaissement comptoir',
+        sortOrder: 1,
+      },
+      {
+        code: PaymentMethod.MOBILE_MONEY,
+        label: 'Mobile Money (Airtel Money / Moov Money)',
+        enabled: false,
+        displayHint: 'Bientôt disponible',
+        sortOrder: 2,
+      },
+      {
+        code: PaymentMethod.QR_CODE,
+        label: 'Paiement par QR code',
+        enabled: false,
+        displayHint: 'Bientôt disponible',
+        sortOrder: 3,
+      },
+    ];
+    for (const def of defaults) {
+      const existing = await this.paymentMethodRepo.findOne({
+        where: { code: def.code },
+      });
+      if (!existing) {
+        await this.paymentMethodRepo.save(
+          this.paymentMethodRepo.create(def as PaymentMethodConfig),
         );
       }
     }

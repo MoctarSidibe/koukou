@@ -15,6 +15,7 @@ import { AlertsModule } from './modules/alerts/alerts.module.js';
 import { ReferenceConstantsModule } from './modules/reference-constants/reference-constants.module.js';
 import { SanitaryModule } from './modules/sanitary/sanitary.module.js';
 import { FeedStockModule } from './modules/feed-stock/feed-stock.module.js';
+import { FinanceModule } from './modules/finance/finance.module.js';
 import { DatabaseModule } from './database/database.module.js';
 
 @Module({
@@ -47,6 +48,7 @@ import { DatabaseModule } from './database/database.module.js';
     ReferenceConstantsModule,
     SanitaryModule,
     FeedStockModule,
+    FinanceModule,
     DatabaseModule,
   ],
   controllers: [AppController],

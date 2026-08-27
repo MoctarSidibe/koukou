@@ -4,7 +4,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, IsNull, MoreThanOrEqual, Repository } from 'typeorm';
+import {
+  EntityManager,
+  In,
+  IsNull,
+  MoreThanOrEqual,
+  Repository,
+} from 'typeorm';
 import { AuthUser } from '../../common/decorators/current-user.decorator.js';
 import { AlertKind, AlertLevel } from '../../common/enums/alert-level.enum.js';
 import { FoodType } from '../../common/enums/food-type.enum.js';
@@ -22,6 +28,8 @@ import {
   FeedStockLoss,
   computeLossKg,
 } from './entities/feed-stock-loss.entity.js';
+import { FeedStockSale } from './entities/feed-stock-sale.entity.js';
+import { FeedUnit } from '../../common/enums/food-type.enum.js';
 
 const CONSUMPTION_WINDOW_DAYS = 3;
 
@@ -51,6 +59,7 @@ export interface FeedTypeStock {
   receivedKg: number;
   usedKg: number;
   lostKg: number;
+  soldKg: number;
   availableKg: number;
   autonomyDays: number | null;
   status: AlertLevel;
@@ -70,8 +79,20 @@ export interface FeedLotStock {
   receivedKg: number;
   usedKg: number;
   lostKg: number;
+  soldKg: number;
   availableKg: number;
   expired: boolean;
+}
+
+export interface RecordFeedSaleInput {
+  farmId: string;
+  inputLotId: string | null;
+  batchId?: string | null;
+  saleItemId: string | null;
+  quantity: number;
+  unit: FeedUnit;
+  soldAt?: string;
+  createdById: string | null;
 }
 
 interface ComputedStock {
@@ -88,6 +109,8 @@ export class FeedStockService {
     private readonly entryRepo: Repository<DailyEntry>,
     @InjectRepository(FeedStockLoss)
     private readonly lossRepo: Repository<FeedStockLoss>,
+    @InjectRepository(FeedStockSale)
+    private readonly saleRepo: Repository<FeedStockSale>,
     @InjectRepository(Farm)
     private readonly farmRepo: Repository<Farm>,
     @InjectRepository(ProductionBatch)
@@ -165,6 +188,68 @@ export class FeedStockService {
     return loss;
   }
 
+  // ---------- Ventes de provende (intégration POS) ----------
+
+  /**
+   * Enregistre une vente d'aliment (provende) déclenchée par un point de vente.
+   * Convertit la quantité (SAC → kg via `farm.defaultSacKg`). Si `em` est fourni
+   * (transaction POS), l'écriture se fait dans cette transaction (validité
+   * atomique) ; le rafraîchissement des alertes stock est alors à la charge de
+   * l'appelant après commit.
+   */
+  async recordFeedSale(
+    input: RecordFeedSaleInput & { em?: EntityManager },
+  ): Promise<FeedStockSale> {
+    const manager = input.em;
+    const farmRepo = manager ? manager.getRepository(Farm) : this.farmRepo;
+    const inputRepo = manager
+      ? manager.getRepository(InputLot)
+      : this.inputRepo;
+    const saleRepo = manager
+      ? manager.getRepository(FeedStockSale)
+      : this.saleRepo;
+
+    const farm = await farmRepo.findOne({ where: { id: input.farmId } });
+    if (!farm) throw new NotFoundException('Ferme introuvable.');
+
+    let lot: InputLot | null = null;
+    if (input.inputLotId != null) {
+      lot = await inputRepo.findOne({
+        where: { id: input.inputLotId, farmId: input.farmId },
+      });
+      if (!lot || lot.kind !== InputKind.ALIMENT) {
+        throw new BadRequestException(
+          'Lot d’intrant alimentaire introuvable dans cette ferme (catégorie ALIMENT uniquement).',
+        );
+      }
+    }
+
+    const quantityKg =
+      (input.unit ?? FeedUnit.SAC) === FeedUnit.SAC
+        ? input.quantity * (farm.defaultSacKg ?? 50)
+        : input.quantity;
+
+    const sale = await saleRepo.save(
+      saleRepo.create({
+        farmId: input.farmId,
+        inputLotId: input.inputLotId,
+        batchId: input.batchId ?? lot?.batchId ?? null,
+        saleItemId: input.saleItemId,
+        quantityKg,
+        soldAt: input.soldAt ?? todayStr(),
+        createdById: input.createdById,
+      }),
+    );
+    if (!manager) await this.evaluateStockAlerts(input.farmId);
+    return sale;
+  }
+
+  /** Annule une vente de provende (retour au stock décrémenté). */
+  async revertFeedSale(saleItemId: string, em?: EntityManager): Promise<void> {
+    const repo = em ? em.getRepository(FeedStockSale) : this.saleRepo;
+    await repo.delete({ saleItemId });
+  }
+
   // ---------- Journal des mouvements (traçabilité 360°) ----------
 
   async listMovements(user: AuthUser, farmId: string) {
@@ -177,11 +262,12 @@ export class FeedStockService {
     );
     const lotIds = lots.map((l) => l.id);
 
-    const [entries, losses] = await Promise.all([
+    const [entries, losses, feedSales] = await Promise.all([
       lotIds.length > 0
         ? this.entryRepo.find({ where: { inputLotId: In(lotIds) } })
         : Promise.resolve<DailyEntry[]>([]),
       this.lossRepo.find({ where: { farmId } }),
+      this.saleRepo.find({ where: { farmId } }),
     ]);
 
     const movements = [
@@ -196,6 +282,17 @@ export class FeedStockService {
         reason: l.reason,
         notes: l.notes,
         createdAt: l.createdAt,
+      })),
+      ...feedSales.map((s) => ({
+        id: s.id,
+        type: 'VENTE',
+        date: s.soldAt,
+        quantityKg: s.quantityKg,
+        foodType: s.inputLotId ? (lotType.get(s.inputLotId) ?? null) : null,
+        inputLotId: s.inputLotId,
+        batchId: s.batchId,
+        saleItemId: s.saleItemId,
+        createdAt: s.createdAt,
       })),
       ...entries.map((e) => ({
         id: e.id,
@@ -388,12 +485,14 @@ export class FeedStockService {
 
     let entries: DailyEntry[] = [];
     let losses: FeedStockLoss[] = [];
+    let feedSales: FeedStockSale[] = [];
 
     if (lots.length > 0) {
       const lotIds = lots.map((l) => l.id);
-      [entries, losses] = await Promise.all([
+      [entries, losses, feedSales] = await Promise.all([
         this.entryRepo.find({ where: { inputLotId: In(lotIds) } }),
         this.lossRepo.find({ where: { farmId } }),
+        this.saleRepo.find({ where: { farmId } }),
       ]);
     }
 
@@ -413,6 +512,14 @@ export class FeedStockService {
         (lostByLot.get(l.inputLotId) ?? 0) + l.quantityKg,
       );
     }
+    const soldByLot = new Map<string, number>();
+    for (const s of feedSales) {
+      if (s.inputLotId == null) continue;
+      soldByLot.set(
+        s.inputLotId,
+        (soldByLot.get(s.inputLotId) ?? 0) + s.quantityKg,
+      );
+    }
 
     const today = todayStr();
     const lotStocks: FeedLotStock[] = lots.map((lot) => {
@@ -420,7 +527,11 @@ export class FeedStockService {
         (lot.unit === 'KG' ? lot.quantity : lot.quantity * sacKg) || 0;
       const usedKg = usedByLot.get(lot.id) ?? 0;
       const lostKg = lostByLot.get(lot.id) ?? 0;
-      const availableKg = round(Math.max(0, receivedKg - usedKg - lostKg), 2);
+      const soldKg = soldByLot.get(lot.id) ?? 0;
+      const availableKg = round(
+        Math.max(0, receivedKg - usedKg - lostKg - soldKg),
+        2,
+      );
       return {
         id: lot.id,
         productName: lot.productName,
@@ -435,6 +546,7 @@ export class FeedStockService {
         receivedKg,
         usedKg: round(usedKg, 2),
         lostKg: round(lostKg, 2),
+        soldKg: round(soldKg, 2),
         availableKg,
         expired: lot.expirationDate != null && lot.expirationDate < today,
       };
@@ -480,6 +592,10 @@ export class FeedStockService {
         typedLots.reduce((s, x) => s + x.lostKg, 0),
         2,
       );
+      const soldKg = round(
+        typedLots.reduce((s, x) => s + x.soldKg, 0),
+        2,
+      );
       const availableKg = round(
         typedLots.reduce((s, x) => s + x.availableKg, 0),
         2,
@@ -492,6 +608,7 @@ export class FeedStockService {
         receivedKg,
         usedKg,
         lostKg,
+        soldKg,
         availableKg,
         autonomyDays,
         status: this.stockStatus(autonomyDays, criticalDays, warnDays),

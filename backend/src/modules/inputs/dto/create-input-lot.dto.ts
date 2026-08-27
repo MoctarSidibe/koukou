@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsDateString,
   IsEnum,
+  IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -60,6 +61,15 @@ export class CreateInputLotDto {
   @IsNumber()
   @Min(0)
   quantity: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Prix d’achat unitaire en FCFA (permet le renseignement du coût de revient — enrichissement P&L)',
+  })
+  @IsOptional()
+  @IsInt({ message: 'Le prix unitaire doit être un entier (FCFA).' })
+  @Min(0, { message: 'Le prix unitaire ne peut pas être négatif.' })
+  unitPriceFcfa?: number;
 
   @ApiPropertyOptional({ enum: FeedUnit, description: 'Unité (SAC ou KG)' })
   @IsOptional()

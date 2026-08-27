@@ -16,6 +16,14 @@ export class UpdateBatchDto {
   batchName?: string;
 
   @ApiPropertyOptional({
+    description: 'Prix d’achat unitaire du poussin (FCFA)',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  chickUnitPriceFcfa?: number | null;
+
+  @ApiPropertyOptional({
     description: 'Traçabilité HACCP — fournisseur du couvoir (poussins)',
   })
   @IsOptional()

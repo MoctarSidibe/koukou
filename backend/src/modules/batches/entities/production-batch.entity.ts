@@ -52,6 +52,9 @@ export class ProductionBatch {
   @Column({ name: 'quantity_alive', type: 'int' })
   quantityAlive: number;
 
+  @Column({ name: 'chick_unit_price_fcfa', type: 'int', nullable: true })
+  chickUnitPriceFcfa: number | null;
+
   @Column({ type: 'enum', enum: BatchType, default: BatchType.CHAIR })
   @Index()
   type: BatchType;

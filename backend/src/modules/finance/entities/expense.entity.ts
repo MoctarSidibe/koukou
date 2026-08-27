@@ -1,0 +1,78 @@
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
+} from 'typeorm';
+import { ExpenseCategory } from '../../../common/enums/expense-category.enum.js';
+import { Farm } from '../../farms/entities/farm.entity.js';
+import { ProductionBatch } from '../../batches/entities/production-batch.entity.js';
+import { User } from '../../users/entities/user.entity.js';
+import { CashMovement } from './cash-movement.entity.js';
+
+@Entity('expenses')
+export class Expense {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @ManyToOne(() => Farm, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'farm_id' })
+  farm: Farm;
+
+  @Column({ name: 'farm_id', type: 'uuid' })
+  @Index()
+  farmId: string;
+
+  @Column({ name: 'expense_date', type: 'date' })
+  expenseDate: string;
+
+  @Column({ type: 'enum', enum: ExpenseCategory })
+  category: ExpenseCategory;
+
+  @Column({ name: 'amount_fcfa', type: 'int' })
+  amountFcfa: number;
+
+  @Column({ name: 'label', type: 'varchar', nullable: true })
+  label: string | null;
+
+  @Column({ name: 'supplier', type: 'varchar', nullable: true })
+  supplier: string | null;
+
+  @Column({ name: 'notes', type: 'text', nullable: true })
+  notes: string | null;
+
+  @Column({ name: 'paid_by_caisse', default: false })
+  paidByCaisse: boolean;
+
+  @ManyToOne(() => ProductionBatch, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'batch_id' })
+  batch: ProductionBatch | null;
+
+  @Column({ name: 'batch_id', type: 'uuid', nullable: true })
+  @Index()
+  batchId: string | null;
+
+  @ManyToOne(() => CashMovement, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'cash_movement_id' })
+  cashMovement: CashMovement | null;
+
+  @Column({ name: 'cash_movement_id', type: 'uuid', nullable: true })
+  cashMovementId: string | null;
+
+  @ManyToOne(() => User, { nullable: true })
+  @JoinColumn({ name: 'created_by' })
+  createdBy: User | null;
+
+  @Column({ name: 'created_by', type: 'uuid', nullable: true })
+  createdById: string | null;
+
+  @CreateDateColumn()
+  createdAt: Date;
+
+  @UpdateDateColumn()
+  updatedAt: Date;
+}

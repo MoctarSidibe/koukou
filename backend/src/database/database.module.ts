@@ -5,6 +5,7 @@ import { ReferenceConstant } from '../modules/reference-constants/entities/refer
 import { RuleRegistry } from '../modules/alerts/entities/rule-registry.entity.js';
 import { SanitaryProtocol } from '../modules/sanitary/entities/sanitary-protocol.entity.js';
 import { ProtocolStep } from '../modules/sanitary/entities/protocol-step.entity.js';
+import { PaymentMethodConfig } from '../modules/finance/entities/payment-method.entity.js';
 import { DatabaseSeedService } from './database-seed.service.js';
 
 @Module({
@@ -15,6 +16,7 @@ import { DatabaseSeedService } from './database-seed.service.js';
       RuleRegistry,
       SanitaryProtocol,
       ProtocolStep,
+      PaymentMethodConfig,
     ]),
   ],
   providers: [DatabaseSeedService],

@@ -55,6 +55,9 @@ export class InputLot {
   @Column({ name: 'received_date', type: 'date' })
   receivedDate: string;
 
+  @Column({ name: 'unit_price_fcfa', type: 'int', nullable: true })
+  unitPriceFcfa: number | null;
+
   @Column({ type: 'float', default: 0 })
   quantity: number;
 

@@ -95,4 +95,13 @@ export class CreateBatchDto {
   @IsOptional()
   @IsDateString()
   hatchDate?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Prix d’achat unitaire du poussin en FCFA (enrichissement du compte de résultat du lot)',
+  })
+  @IsOptional()
+  @IsInt({ message: 'Le prix du poussin doit être un entier (FCFA).' })
+  @Min(0, { message: 'Le prix du poussin ne peut pas être négatif.' })
+  chickUnitPriceFcfa?: number;
 }

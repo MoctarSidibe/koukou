@@ -19,6 +19,7 @@ export interface CreateInputLotInput {
   receivedDate?: string | null;
   quantity: number;
   unit?: FeedUnit | null;
+  unitPriceFcfa?: number | null;
 }
 
 @Injectable()
@@ -45,6 +46,7 @@ export class InputsService {
           input.receivedDate ?? new Date().toISOString().slice(0, 10),
         quantity: input.quantity,
         unit: input.unit ?? null,
+        unitPriceFcfa: input.unitPriceFcfa ?? null,
       }),
     );
   }

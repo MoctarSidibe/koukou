@@ -7,7 +7,7 @@ import {
 } from 'typeorm';
 import { AlertKind } from '../../../common/enums/alert-level.enum.js';
 
-export type RuleCategory = 'ELEVAGE' | 'HACCP' | 'VENTE';
+export type RuleCategory = 'ELEVAGE' | 'HACCP' | 'VENTE' | 'FINANCE';
 
 @Entity('rule_registry')
 export class RuleRegistry {

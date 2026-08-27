@@ -10,6 +10,7 @@ import { Farm } from '../farms/entities/farm.entity.js';
 import { FeedStockController } from './feed-stock.controller.js';
 import { FeedStockService } from './feed-stock.service.js';
 import { FeedStockLoss } from './entities/feed-stock-loss.entity.js';
+import { FeedStockSale } from './entities/feed-stock-sale.entity.js';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { FeedStockLoss } from './entities/feed-stock-loss.entity.js';
       InputLot,
       DailyEntry,
       FeedStockLoss,
+      FeedStockSale,
       Farm,
       ProductionBatch,
     ]),

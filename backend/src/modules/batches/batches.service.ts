@@ -18,6 +18,7 @@ import { ChangeTypeDto } from './dto/change-type.dto.js';
 import { UpdateBatchDto } from './dto/update-batch.dto.js';
 import { MetricsService } from './metrics.service.js';
 import { AdvisoryEngine } from './advisory.engine.js';
+import { KOUKOU_EVENTS, koukouBus } from '../../common/utils/event-bus.js';
 
 @Injectable()
 export class BatchesService {
@@ -74,6 +75,7 @@ export class BatchesService {
       couvoirSupplier: dto.couvoirSupplier ?? null,
       chickLotNumber: dto.chickLotNumber ?? null,
       hatchDate: dto.hatchDate ?? null,
+      chickUnitPriceFcfa: dto.chickUnitPriceFcfa ?? null,
     });
     await this.batchRepo.save(batch);
     await this.afterChange(user, farmId, batch);
@@ -99,6 +101,8 @@ export class BatchesService {
     if (dto.chickLotNumber !== undefined)
       batch.chickLotNumber = dto.chickLotNumber ?? null;
     if (dto.hatchDate !== undefined) batch.hatchDate = dto.hatchDate ?? null;
+    if (dto.chickUnitPriceFcfa !== undefined)
+      batch.chickUnitPriceFcfa = dto.chickUnitPriceFcfa ?? null;
     if (dto.buildingAreaM2 !== undefined)
       batch.buildingAreaM2 = dto.buildingAreaM2 ?? null;
     if (dto.feedUnitSacKg !== undefined)
@@ -205,6 +209,7 @@ export class BatchesService {
     batch.status = BatchStatus.CLOTURE;
     await this.batchRepo.save(batch);
     await this.afterChange(user, farmId, batch);
+    koukouBus.emit(KOUKOU_EVENTS.BATCH_CLOSED, { farmId, batchId });
     return this.findOne(user, farmId, batchId);
   }
 

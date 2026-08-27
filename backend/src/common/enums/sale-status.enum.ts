@@ -1,0 +1,5 @@
+export enum SaleStatus {
+  SETTLED = 'SETTLED',
+  OUTSTANDING = 'OUTSTANDING',
+  CANCELLED = 'CANCELLED',
+}
