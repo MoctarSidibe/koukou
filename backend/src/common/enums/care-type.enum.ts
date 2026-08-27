@@ -1,0 +1,6 @@
+export enum CareType {
+  VACCIN = 'VACCIN',
+  VITAMINE = 'VITAMINE',
+  ANTIBIOTIQUE = 'ANTIBIOTIQUE',
+  AUTRE = 'AUTRE',
+}
