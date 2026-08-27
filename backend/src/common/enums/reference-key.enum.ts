@@ -9,4 +9,9 @@ export enum ReferenceKey {
   WATER_DROP_CRITICAL_PCT = 'water_drop_critical_pct',
   FEED_DROP_WARN_PCT = 'feed_drop_warn_pct',
   IPE_DEVIATION_WARN_PCT = 'ipe_deviation_warn_pct',
+  VIDE_SANITAIRE_MIN_DAYS = 'vide_sanitaire_min_days',
+  VIDE_SANITAIRE_MAX_DAYS = 'vide_sanitaire_max_days',
+  AGE_GAP_MAX_WEEKS = 'age_gap_max_weeks',
+  BUILDING_DENSITY_WARN = 'building_density_warn_per_m2',
+  BUILDING_DENSITY_CRITICAL = 'building_density_critical_per_m2',
 }

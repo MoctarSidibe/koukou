@@ -25,6 +25,11 @@ const DEFAULT_CONSTANTS: SeedConstant[] = [
   { key: ReferenceKey.DEFAULT_SAC_KG, value: 50, description: 'Poids par défaut d’un sac d’aliment (kg)' },
   { key: ReferenceKey.FEED_DROP_WARN_PCT, value: 10, description: 'Baisse d’aliment d’alerte (%)' },
   { key: ReferenceKey.IPE_DEVIATION_WARN_PCT, value: 10, description: 'Déviation IPE d’alerte (%)' },
+  { key: ReferenceKey.VIDE_SANITAIRE_MIN_DAYS, value: 14, description: 'Vide sanitaire — durée minimum (jours) avant réintroduction' },
+  { key: ReferenceKey.VIDE_SANITAIRE_MAX_DAYS, value: 21, description: 'Vide sanitaire — durée recommandée (jours)' },
+  { key: ReferenceKey.AGE_GAP_MAX_WEEKS, value: 4, description: 'Écart d’âge maximal (semaines) entre bandes cohabitant dans un même bâtiment' },
+  { key: ReferenceKey.BUILDING_DENSITY_WARN, value: 15, description: 'Densité d’alerte au niveau bâtiment (oiseaux/m²)' },
+  { key: ReferenceKey.BUILDING_DENSITY_CRITICAL, value: 18, description: 'Densité critique au niveau bâtiment (oiseaux/m²)' },
 ];
 
 const DEFAULT_BREEDS: { name: string; type: BatchType }[] = [
@@ -124,6 +129,27 @@ export class DatabaseSeedService implements OnApplicationBootstrap {
         category: 'VENTE',
         shortLabel: 'Traçabilité avant vente',
         description: 'Bloque/alement la vente si la traçabilité HACCP est incomplète.',
+      },
+      {
+        code: 'cohabitation-1',
+        kind: AlertKind.COHABITATION,
+        category: 'ELEVAGE',
+        shortLabel: 'Cohabitation d’âges',
+        description: 'Alerte si des bandes d’âges trop écartés cohabitent dans un bâtiment (risque sanitaire).',
+      },
+      {
+        code: 'vide-sanitaire-1',
+        kind: AlertKind.VIDE_SANITAIRE,
+        category: 'ELEVAGE',
+        shortLabel: 'Vide sanitaire',
+        description: 'Alerte si un bâtiment est réoccupé avant la fin du vide sanitaire légal.',
+      },
+      {
+        code: 'building-density-1',
+        kind: AlertKind.DENSITE_BATIMENT,
+        category: 'ELEVAGE',
+        shortLabel: 'Densité du bâtiment',
+        description: 'Densité calculée sur la somme des oiseaux de tous les lots actifs du bâtiment.',
       },
     ];
     for (const rule of rules) {

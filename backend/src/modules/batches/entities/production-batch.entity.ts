@@ -25,6 +25,10 @@ export class ProductionBatch {
   @Index()
   farmId: string;
 
+  @Column({ name: 'building_id', type: 'uuid', nullable: true })
+  @Index()
+  buildingId: string | null;
+
   @ManyToOne(() => Breed, { eager: true, nullable: true })
   @JoinColumn({ name: 'breed_id' })
   breed: Breed | null;

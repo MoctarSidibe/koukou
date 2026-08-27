@@ -5,6 +5,7 @@ import { BreedsModule } from '../breeds/breeds.module.js';
 import { DailyEntry } from '../daily-entries/entities/daily-entry.entity.js';
 import { FarmsModule } from '../farms/farms.module.js';
 import { Farm } from '../farms/entities/farm.entity.js';
+import { Building } from '../buildings/entities/building.entity.js';
 import { InputLot } from '../inputs/entities/input-lot.entity.js';
 import { ReferenceConstantsModule } from '../reference-constants/reference-constants.module.js';
 import { AdvisoryEngine } from './advisory.engine.js';
@@ -22,6 +23,7 @@ import { MetricsService } from './metrics.service.js';
       DailyEntry,
       InputLot,
       Farm,
+      Building,
     ]),
     FarmsModule,
     BreedsModule,

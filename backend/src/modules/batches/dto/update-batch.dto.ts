@@ -33,4 +33,9 @@ export class UpdateBatchDto {
   @IsNumber()
   @Min(1)
   feedUnitSacKg?: number | null;
+
+  @ApiPropertyOptional({ description: 'Bâtiment (id Building) — rattacher le lot à un bâtiment' })
+  @IsOptional()
+  @IsString()
+  buildingId?: string | null;
 }

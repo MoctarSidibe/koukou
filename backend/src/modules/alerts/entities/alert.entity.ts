@@ -21,6 +21,10 @@ export class Alert {
   @Index()
   batchId: string | null;
 
+  @Column({ name: 'building_id', type: 'uuid', nullable: true })
+  @Index()
+  buildingId: string | null;
+
   @Column({ name: 'rule_id', type: 'uuid', nullable: true })
   ruleId: string | null;
 
@@ -41,6 +45,9 @@ export class Alert {
 
   @Column({ type: 'jsonb', nullable: true, name: 'context' })
   context: Record<string, unknown> | null;
+
+  @Column({ name: 'resolved_at', type: 'timestamptz', nullable: true })
+  resolvedAt: Date | null;
 
   @CreateDateColumn()
   createdAt: Date;

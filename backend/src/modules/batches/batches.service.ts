@@ -9,6 +9,7 @@ import { AuthUser } from '../../common/decorators/current-user.decorator.js';
 import { BatchStatus } from '../../common/enums/batch-type.enum.js';
 import { FarmsService } from '../farms/farms.service.js';
 import { BreedsService } from '../breeds/breeds.service.js';
+import { Building } from '../buildings/entities/building.entity.js';
 import { ProductionBatch } from './entities/production-batch.entity.js';
 import { TypeHistoryEntry } from './entities/type-history-entry.entity.js';
 import { CreateBatchDto } from './dto/create-batch.dto.js';
@@ -22,6 +23,8 @@ export class BatchesService {
   constructor(
     @InjectRepository(ProductionBatch)
     private readonly batchRepo: Repository<ProductionBatch>,
+    @InjectRepository(Building)
+    private readonly buildingRepo: Repository<Building>,
     @InjectRepository(TypeHistoryEntry)
     private readonly historyRepo: Repository<TypeHistoryEntry>,
     private readonly farmsService: FarmsService,
@@ -42,16 +45,27 @@ export class BatchesService {
       if (!breed) throw new BadRequestException('Souche introuvable.');
       breedId = breed.id;
     }
+    let buildingId: string | null = null;
+    let buildingArea = dto.buildingAreaM2 ?? farm.buildingAreaM2 ?? null;
+    if (dto.buildingId) {
+      const building = await this.buildingRepo.findOne({
+        where: { id: dto.buildingId, farmId },
+      });
+      if (!building) throw new BadRequestException('Bâtiment introuvable dans cette ferme.');
+      buildingId = building.id;
+      if (building.buildingAreaM2 != null) buildingArea = building.buildingAreaM2;
+    }
     const batch = this.batchRepo.create({
       farmId,
       breedId,
+      buildingId,
       batchName: dto.batchName,
       integrationDate: dto.integrationDate,
       quantityAtStart: dto.quantityAtStart,
       quantityAlive: dto.quantityAtStart,
       type: dto.type,
       status: BatchStatus.ACTIF,
-      buildingAreaM2: dto.buildingAreaM2 ?? farm.buildingAreaM2 ?? null,
+      buildingAreaM2: buildingArea,
       feedUnitSacKg: dto.feedUnitSacKg ?? farm.defaultSacKg,
       couvoirSupplier: dto.couvoirSupplier ?? null,
       chickLotNumber: dto.chickLotNumber ?? null,
@@ -77,6 +91,18 @@ export class BatchesService {
     if (dto.hatchDate !== undefined) batch.hatchDate = dto.hatchDate ?? null;
     if (dto.buildingAreaM2 !== undefined) batch.buildingAreaM2 = dto.buildingAreaM2 ?? null;
     if (dto.feedUnitSacKg !== undefined) batch.feedUnitSacKg = dto.feedUnitSacKg ?? null;
+    if (dto.buildingId !== undefined) {
+      if (dto.buildingId) {
+        const building = await this.buildingRepo.findOne({
+          where: { id: dto.buildingId, farmId },
+        });
+        if (!building) throw new BadRequestException('Bâtiment introuvable dans cette ferme.');
+        batch.buildingId = building.id;
+        if (building.buildingAreaM2 != null) batch.buildingAreaM2 = building.buildingAreaM2;
+      } else {
+        batch.buildingId = null;
+      }
+    }
     await this.batchRepo.save(batch);
     await this.afterChange(user, farmId, batch);
     return this.findOne(user, farmId, batchId);
@@ -135,7 +161,6 @@ export class BatchesService {
     await this.farmsService.assertAccessible(user, farmId);
     const batch = await this.batchRepo.findOne({ where: { id: batchId, farmId } });
     if (!batch) throw new NotFoundException('Lot introuvable dans cette ferme.');
-    this.requireTraceability(batch);
     batch.status = BatchStatus.EN_VENTE;
     await this.batchRepo.save(batch);
     await this.afterChange(user, farmId, batch);
@@ -146,18 +171,9 @@ export class BatchesService {
     await this.farmsService.assertAccessible(user, farmId);
     const batch = await this.batchRepo.findOne({ where: { id: batchId, farmId } });
     if (!batch) throw new NotFoundException('Lot introuvable dans cette ferme.');
-    this.requireTraceability(batch);
     batch.status = BatchStatus.CLOTURE;
     await this.batchRepo.save(batch);
     return this.findOne(user, farmId, batchId);
-  }
-
-  private requireTraceability(batch: ProductionBatch) {
-    if (!batch.couvoirSupplier || !batch.chickLotNumber || !batch.hatchDate) {
-      throw new BadRequestException(
-        'Traçabilité HACCP incomplète : veuillez renseigner la provenance des poussins (couvoir, n° de lot, date d’éclosion) avant la vente.',
-      );
-    }
   }
 
   private async afterChange(

@@ -29,4 +29,19 @@ export class AlertsController {
     await this.farmsService.assertAccessible(user, farmId);
     return this.alertsService.listForFarm(farmId, status);
   }
+
+  @Get('history')
+  @Roles(UserRole.PROPRIETAIRE, UserRole.ELEVEUR)
+  @ApiOperation({
+    summary:
+      'Historique COMPLET des alertes (actives + acquittées + résolues) — visibilité 360° pour les rapports',
+  })
+  @ApiParam({ name: 'farmId' })
+  async history(
+    @CurrentUser() user: AuthUser,
+    @Param('farmId') farmId: string,
+  ) {
+    await this.farmsService.assertAccessible(user, farmId);
+    return this.alertsService.historyForFarm(farmId);
+  }
 }

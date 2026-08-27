@@ -7,6 +7,7 @@ export enum AlertLevel {
 export enum AlertStatus {
   ACTIVE = 'ACTIVE',
   ACQUITTEE = 'ACQUITTEE',
+  RESOLUE = 'RESOLUE',
 }
 
 export enum AlertKind {
@@ -15,6 +16,9 @@ export enum AlertKind {
   MORTALITE = 'MORTALITE',
   SURDENSITE = 'SURDENSITE',
   DENSITE = 'DENSITE',
+  DENSITE_BATIMENT = 'DENSITE_BATIMENT',
+  COHABITATION = 'COHABITATION',
+  VIDE_SANITAIRE = 'VIDE_SANITAIRE',
   IPE = 'IPE',
   GMQ = 'GMQ',
   PEREMPTION = 'PEREMPTION',

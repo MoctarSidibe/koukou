@@ -124,24 +124,36 @@ describe('Module 1 — Gestion des Lots (e2e)', () => {
     expect(eau.level).toBe('ROUGE');
   });
 
-  it('bloque la VENTE tant que la traçabilité HACCP est incomplète', async () => {
-    await request(server)
-      .post(`/farms/${farmId}/batches/${batchId}/vente`)
-      .set('Authorization', `Bearer ${token}`)
-      .expect(400);
-  });
-
-  it('met à jour la traçabilité HACCP puis autorise la VENTE', async () => {
-    await request(server)
-      .patch(`/farms/${farmId}/batches/${batchId}`)
-      .set('Authorization', `Bearer ${token}`)
-      .send({ couvoirSupplier: 'Couvoir E2E', chickLotNumber: 'CH-2026-E2E', hatchDate: daysAgo(28) })
-      .expect(200);
+  it('accepte la VENTE sans traçabilité mais lève une alerte TRACABILITÉ (ROUGE)', async () => {
     const sale = await request(server)
       .post(`/farms/${farmId}/batches/${batchId}/vente`)
       .set('Authorization', `Bearer ${token}`)
       .expect(201);
     expect(sale.body.status).toBe('EN_VENTE');
+    const alerts = await request(server)
+      .get(`/farms/${farmId}/alerts`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    const trac = alerts.body.find((a: any) => a.kind === 'TRACABILITE');
+    expect(trac).toBeTruthy();
+    expect(trac.level).toBe('ROUGE');
+  });
+
+  it('comble la traçabilité HACCP puis l’alerte TRACABILITÉ se résout', async () => {
+    await request(server)
+      .patch(`/farms/${farmId}/batches/${batchId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ couvoirSupplier: 'Couvoir E2E', chickLotNumber: 'CH-2026-E2E', hatchDate: daysAgo(28) })
+      .expect(200);
+    await request(server)
+      .post(`/farms/${farmId}/batches/${batchId}/vente`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(201);
+    const alerts = await request(server)
+      .get(`/farms/${farmId}/alerts`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(alerts.body.some((a: any) => a.kind === 'TRACABILITE' && a.status === 'ACTIVE')).toBe(false);
   });
 
   it('restreint l’accès d’un Éleveur aux fermes auxquelles il est rattaché', async () => {

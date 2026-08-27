@@ -7,6 +7,7 @@ import { AuthModule } from './modules/auth/auth.module.js';
 import { BreedsModule } from './modules/breeds/breeds.module.js';
 import { UsersModule } from './modules/users/users.module.js';
 import { FarmsModule } from './modules/farms/farms.module.js';
+import { BuildingsModule } from './modules/buildings/buildings.module.js';
 import { BatchesModule } from './modules/batches/batches.module.js';
 import { DailyEntriesModule } from './modules/daily-entries/daily-entries.module.js';
 import { InputsModule } from './modules/inputs/inputs.module.js';
@@ -35,6 +36,7 @@ import { DatabaseModule } from './database/database.module.js';
     AuthModule,
     UsersModule,
     FarmsModule,
+    BuildingsModule,
     BreedsModule,
     BatchesModule,
     DailyEntriesModule,

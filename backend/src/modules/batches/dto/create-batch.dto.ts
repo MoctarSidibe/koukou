@@ -47,6 +47,11 @@ export class CreateBatchDto {
   @Min(1)
   feedUnitSacKg?: number;
 
+  @ApiPropertyOptional({ description: 'Bâtiment (id Building) dans lequel le lot est installé' })
+  @IsOptional()
+  @IsString()
+  buildingId?: string;
+
   @ApiPropertyOptional({ description: 'Traçabilité HACCP — fournisseur du couvoir (poussins)' })
   @IsOptional()
   @IsString()

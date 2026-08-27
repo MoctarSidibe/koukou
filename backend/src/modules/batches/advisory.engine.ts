@@ -6,6 +6,8 @@ import {
   AlertLevel,
 } from '../../common/enums/alert-level.enum.js';
 import { ReferenceKey } from '../../common/enums/reference-key.enum.js';
+import { BatchStatus } from '../../common/enums/batch-type.enum.js';
+import { Building } from '../buildings/entities/building.entity.js';
 import { AlertsService } from '../alerts/alerts.service.js';
 import { DailyEntry } from '../daily-entries/entities/daily-entry.entity.js';
 import { ReferenceConstantsService } from '../reference-constants/reference-constants.service.js';
@@ -20,6 +22,10 @@ export class AdvisoryEngine {
     private readonly entriesRepo: Repository<DailyEntry>,
     @InjectRepository(InputLot)
     private readonly inputRepo: Repository<InputLot>,
+    @InjectRepository(ProductionBatch)
+    private readonly batchRepo: Repository<ProductionBatch>,
+    @InjectRepository(Building)
+    private readonly buildingRepo: Repository<Building>,
     private readonly alertsService: AlertsService,
     private readonly constants: ReferenceConstantsService,
   ) {}
@@ -35,7 +41,159 @@ export class AdvisoryEngine {
       this.evaluateIpeGmq(batch, metrics, farmId, batchId),
       this.evaluateExpiration(batch, farmId, batchId),
       this.evaluateSaleReadiness(batch, metrics, farmId, batchId),
+      this.evaluateBuildingContext(batch),
     ]);
+  }
+
+  /** Évaluations au niveau BÂTIMENT (densité cumulée, cohabitation d'âges, vide sanitaire). */
+  private async evaluateBuildingContext(batch: ProductionBatch) {
+    if (!batch.buildingId) return;
+    const buildingId = batch.buildingId;
+    const farmId = batch.farmId;
+
+    const [building, lots] = await Promise.all([
+      this.buildingRepo.findOne({ where: { id: buildingId } }),
+      this.batchRepo.find({
+        where: { buildingId, farmId },
+      }),
+    ]);
+    if (!building) return;
+    const activeLots = lots.filter((l) => l.status !== BatchStatus.CLOTURE);
+
+    await Promise.all([
+      this.evaluateBuildingDensity(building, activeLots, farmId),
+      this.evaluateCohabitation(activeLots, farmId, buildingId),
+      this.evaluateVideSanitaire(building, lots, farmId, buildingId),
+    ]);
+  }
+
+  private async evaluateBuildingDensity(
+    building: Building,
+    activeLots: ProductionBatch[],
+    farmId: string,
+  ) {
+    const buildingId = building.id;
+    const area = building.buildingAreaM2;
+    if (area == null || area <= 0) return;
+    const activeBirds = activeLots.reduce(
+      (s, l) => s + l.quantityAlive,
+      0,
+    );
+    const density = activeBirds / area;
+    const warn = await this.constants.get(ReferenceKey.BUILDING_DENSITY_WARN, 15);
+    const crit = await this.constants.get(ReferenceKey.BUILDING_DENSITY_CRITICAL, 18);
+    const activeBatch = activeLots[0];
+
+    if (density > crit) {
+      await this.alertsService.raise(
+        {
+          kind: AlertKind.DENSITE_BATIMENT,
+          level: AlertLevel.ROUGE,
+          message: `Densité du bâtiment critique : ${density.toFixed(1)} oiseaux/m² (${activeBirds} oiseaux cumulés).`,
+          recommendation:
+            'Réduire le cheptel total du bâtiment ou augmenter la surface. Risque sanitaire et thermique élevé.',
+          context: { densityBuildingPerM2: density, activeBirds, activeLots: activeLots.length },
+        },
+        { farmId, batchId: activeBatch?.id ?? null, buildingId },
+      );
+    } else if (density > warn) {
+      await this.alertsService.raise(
+        {
+          kind: AlertKind.DENSITE_BATIMENT,
+          level: AlertLevel.JAUNE,
+          message: `Densité du bâtiment élevée : ${density.toFixed(1)} oiseaux/m² (${activeBirds} oiseaux cumulés).`,
+          recommendation: 'Surveiller ventilation et litière ; éviter d’ajouter de nouveaux lots.',
+          context: { densityBuildingPerM2: density, activeBirds, activeLots: activeLots.length },
+        },
+        { farmId, batchId: activeBatch?.id ?? null, buildingId },
+      );
+    } else {
+      await this.alertsService.clearKind(farmId, null, AlertKind.DENSITE_BATIMENT, buildingId);
+    }
+  }
+
+  private async evaluateCohabitation(
+    activeLots: ProductionBatch[],
+    farmId: string,
+    buildingId: string,
+  ) {
+    if (activeLots.length < 2) {
+      await this.alertsService.clearKind(farmId, null, AlertKind.COHABITATION, buildingId);
+      return;
+    }
+    const maxGapWeeks = await this.constants.get(ReferenceKey.AGE_GAP_MAX_WEEKS, 4);
+    const agesInWeeks = activeLots.map((l) => this.ageInWeeks(l.integrationDate));
+    const minWeek = Math.min(...agesInWeeks);
+    const maxWeek = Math.max(...agesInWeeks);
+    const gapWeeks = maxWeek - minWeek;
+    const activeBatch = activeLots[0];
+
+    if (gapWeeks > maxGapWeeks) {
+      // Le cas le plus dangereux : un poussin fragile partage avec une bande trop mature.
+      const hasChick = minWeek <= 3;
+      await this.alertsService.raise(
+        {
+          kind: AlertKind.COHABITATION,
+          level: hasChick ? AlertLevel.ROUGE : AlertLevel.JAUNE,
+          message: `Cohabitation d'âges : écart de ${gapWeeks.toFixed(0)} semaines entre ${activeLots.length} bandes dans le bâtiment. ${hasChick ? 'Un poussin fragile est exposé à une bande mature — risque élevé de transmission virale.' : ''}`,
+          recommendation:
+            'Planifier un vide sanitaire et, si possible, séparer les bandes d’âges trop écartés pour limiter la propagation de maladies.',
+          context: { ageGapWeeks: gapWeeks, maxAgeGapWeeks: maxGapWeeks, activeLots: activeLots.length },
+        },
+        { farmId, batchId: activeBatch?.id ?? null, buildingId },
+      );
+    } else {
+      await this.alertsService.clearKind(farmId, null, AlertKind.COHABITATION, buildingId);
+    }
+  }
+
+  private async evaluateVideSanitaire(
+    building: Building,
+    lots: ProductionBatch[],
+    farmId: string,
+    buildingId: string,
+  ) {
+    const lastClosed = lots
+      .filter((l) => l.status === BatchStatus.CLOTURE)
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())[0];
+    if (!lastClosed) return;
+
+    const minDays = await this.constants.get(ReferenceKey.VIDE_SANITAIRE_MIN_DAYS, 14);
+    const recommendedDays = await this.constants.get(ReferenceKey.VIDE_SANITAIRE_MAX_DAYS, 21);
+    const elapsedDays = (Date.now() - lastClosed.updatedAt.getTime()) / 86400000;
+    const activeBatch = lots.find((l) => l.status !== BatchStatus.CLOTURE);
+
+    if (elapsedDays < minDays) {
+      await this.alertsService.raise(
+        {
+          kind: AlertKind.VIDE_SANITAIRE,
+          level: AlertLevel.ROUGE,
+          message: `Vide sanitaire non respecté : le dernier lot du bâtiment s'est terminé il y a ${elapsedDays.toFixed(0)} jour(s) (minimum ${minDays}).`,
+          recommendation: `Laisser le bâtiment vide et désinfecté ${minDays} à ${recommendedDays} jours avant de réintroduire des poussins. Nettoyer et désinfecter intégralement.`,
+          context: { elapsedDays: elapsedDays, minDays, recommendedDays },
+        },
+        { farmId, batchId: activeBatch?.id ?? null, buildingId },
+      );
+    } else if (elapsedDays < recommendedDays) {
+      await this.alertsService.raise(
+        {
+          kind: AlertKind.VIDE_SANITAIRE,
+          level: AlertLevel.JAUNE,
+          message: `Le vide sanitaire du bâtiment est en cours (${elapsedDays.toFixed(0)} jours).`,
+          recommendation: `Poursuivre la désinfection ; idéalement attendre ${recommendedDays} jours.`,
+          context: { elapsedDays: elapsedDays, minDays, recommendedDays },
+        },
+        { farmId, batchId: activeBatch?.id ?? null, buildingId },
+      );
+    } else {
+      await this.alertsService.clearKind(farmId, null, AlertKind.VIDE_SANITAIRE, buildingId);
+    }
+  }
+
+  private ageInWeeks(integrationDate: string): number {
+    const start = new Date(integrationDate + 'T00:00:00').getTime();
+    const now = Date.now();
+    return Math.max(0, (now - start) / (7 * 86400000));
   }
 
   private async evaluateMortality(
@@ -236,14 +394,16 @@ export class AdvisoryEngine {
       batch.couvoirSupplier != null &&
       batch.chickLotNumber != null &&
       batch.hatchDate != null;
-    if (!traceComplete && batch.status === 'EN_VENTE') {
+    const isSaleOrClose =
+      batch.status === BatchStatus.EN_VENTE || batch.status === BatchStatus.CLOTURE;
+    if (!traceComplete && isSaleOrClose) {
       await this.alertsService.raise(
         {
           kind: AlertKind.TRACABILITE,
           level: AlertLevel.ROUGE,
-          message: `Traçabilité HACCP incomplète pour le lot ${batch.batchName} — vente bloquée.`,
+          message: `Traçabilité HACCP incomplète pour le lot ${batch.batchName} — renseignez la provenance des poussins (exigence gouvernementale).`,
           recommendation:
-            'Compléter la provenance des poussins (couvoir, n° de lot, date d’éclosion) avant la vente. Exigence gouvernementale.',
+            'Compléter la provenance des poussins (couvoir, n° de lot, date d’éclosion) dès que possible. Cette alerte reste tracée dans l’historique et le rapport du fermier.',
           context: { traceComplete: false },
         },
         { farmId, batchId },
