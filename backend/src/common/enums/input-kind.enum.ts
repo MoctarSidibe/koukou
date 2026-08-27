@@ -1,0 +1,7 @@
+export enum InputKind {
+  ALIMENT = 'ALIMENT',
+  MEDICAMENT = 'MEDICAMENT',
+  VITAMINE = 'VITAMINE',
+  POUSSINS = 'POUSSINS',
+  AUTRE = 'AUTRE',
+}
