@@ -419,6 +419,29 @@ describe('Module 4 — Finance & Rentabilité (POS ferme, e2e)', () => {
     expect(batch.body.length).toBeGreaterThan(1000);
   });
 
+  it('listes : ventes et dépenses renvoyées par l’API (200)', async () => {
+    const sales = await request(server)
+      .get(`/farms/${farmId}/sales`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(Array.isArray(sales.body)).toBe(true);
+    expect(sales.body.length).toBeGreaterThanOrEqual(3);
+    expect(sales.body[0].referenceNumber).toMatch(/^VTE-\d{8}-\d{6}$/);
+
+    const settled = await request(server)
+      .get(`/farms/${farmId}/sales?status=SETTLED`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(settled.body.every((s: any) => s.status === 'SETTLED')).toBe(true);
+
+    const expenses = await request(server)
+      .get(`/farms/${farmId}/expenses`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(Array.isArray(expenses.body)).toBe(true);
+    expect(expenses.body.length).toBeGreaterThanOrEqual(2);
+  });
+
   it('clôture de caisse : solde déclaré = attendu → écart nul', async () => {
     const res = await request(server)
       .post(`/farms/${farmId}/caisse/close`)
@@ -457,6 +480,111 @@ describe('Module 4 — Finance & Rentabilité (POS ferme, e2e)', () => {
     const dem = stock.body.byType.find((t: any) => t.foodType === 'DEMARRAGE');
     expect(dem.availableKg).toBe(500);
     expect(dem.soldKg).toBe(0);
+  });
+
+  it('idempotence scopée par vente : une clé réutilisée sur une autre vente ne renvoie pas l’ancien paiement', async () => {
+    await request(server)
+      .post(`/farms/${farmId}/caisse/open`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ openingBalanceFcfa: 0 })
+      .expect(201);
+
+    const saleX = await request(server)
+      .post(`/farms/${farmId}/sales`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        items: [
+          {
+            productType: 'POULET_PIECE',
+            quantity: 1,
+            unitPriceFcfa: 3000,
+            batchId: batchAId,
+          },
+        ],
+        payments: [
+          { method: 'CASH', amountFcfa: 3000, idempotencyKey: 'idem-x' },
+        ],
+      })
+      .expect(201);
+    const saleXId = saleX.body.sale.id;
+    expect(saleX.body.payments).toHaveLength(1);
+    expect(saleX.body.payments[0].saleId).toBe(saleXId);
+
+    const saleY = await request(server)
+      .post(`/farms/${farmId}/sales`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        items: [
+          {
+            productType: 'POULET_PIECE',
+            quantity: 1,
+            unitPriceFcfa: 3000,
+            batchId: batchAId,
+          },
+        ],
+        payments: [
+          { method: 'CASH', amountFcfa: 3000, idempotencyKey: 'idem-x' },
+        ],
+      })
+      .expect(201);
+    const saleYId = saleY.body.sale.id;
+    expect(saleYId).not.toBe(saleXId);
+    expect(saleY.body.payments).toHaveLength(1);
+    expect(saleY.body.payments[0].saleId).toBe(saleYId);
+
+    const paymentsOfY = await request(server)
+      .get(`/farms/${farmId}/payments?saleId=${saleYId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(paymentsOfY.body).toHaveLength(1);
+    expect(paymentsOfY.body[0].saleId).toBe(saleYId);
+  });
+
+  it('invendus détectés au niveau des articles : une vente liée par item éteint l’alerte VENTE du lot', async () => {
+    const batchDId = await createBatch('Lot D invendus par articles');
+    await request(server)
+      .post(`/farms/${farmId}/batches/${batchDId}/vente`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(201);
+
+    await request(server)
+      .post(`/farms/${farmId}/sales`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        items: [
+          {
+            productType: 'POULET_PIECE',
+            quantity: 1,
+            unitPriceFcfa: 3000,
+            batchId: batchDId,
+          },
+        ],
+        payments: [{ method: 'CASH', amountFcfa: 3000 }],
+      })
+      .expect(201);
+
+    const alert = await activeAlert('VENTE', batchDId);
+    expect(alert).toBeUndefined();
+  });
+
+  it('vente de provende au-delà du stock du lot → 400 (comme le cheptel)', async () => {
+    const res = await request(server)
+      .post(`/farms/${farmId}/sales`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        items: [
+          {
+            productType: 'PROVENDE',
+            quantity: 11,
+            unit: 'SAC',
+            unitPriceFcfa: 15000,
+            inputLotId: feedLotId,
+          },
+        ],
+        payments: [{ method: 'CASH', amountFcfa: 165000 }],
+      })
+      .expect(400);
+    expect(res.body.message).toContain('insuffisant');
   });
 
   it('un utilisateur d’une autre ferme n’a accès à rien → 403', async () => {

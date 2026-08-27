@@ -64,9 +64,9 @@ export class CashSession {
   @Column({ name: 'closed_by', type: 'uuid', nullable: true })
   closedById: string | null;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 }

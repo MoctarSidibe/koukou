@@ -59,15 +59,21 @@ export class PaymentsService {
   ): Promise<PaymentMethodConfig> {
     const repo = em.getRepository(PaymentMethodConfig);
     const config = await repo.findOne({ where: { code: method } });
-    const fallback =
-      method === PaymentMethod.CASH
-        ? { code: PaymentMethod.CASH, enabled: true }
-        : { code: method, enabled: false };
+    const fallback: PaymentMethodConfig = {
+      code: method,
+      label: method === PaymentMethod.CASH ? 'Espèces' : method,
+      enabled: method === PaymentMethod.CASH,
+      displayHint: null,
+      sortOrder: method === PaymentMethod.CASH ? 0 : 1,
+      id: '',
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    };
     const effective = config ?? fallback;
     if (!effective.enabled) {
       throw new BadRequestException(DISABLED_METHOD_MESSAGE[method]);
     }
-    return config as PaymentMethodConfig;
+    return effective;
   }
 
   async recordPayment(
@@ -84,6 +90,7 @@ export class PaymentsService {
       const existing = await paymentRepo.findOne({
         where: {
           farmId: input.farm.id,
+          saleId: input.sale.id,
           idempotencyKey: input.idempotencyKey,
         },
       });

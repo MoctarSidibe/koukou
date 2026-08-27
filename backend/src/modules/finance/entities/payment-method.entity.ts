@@ -27,9 +27,9 @@ export class PaymentMethodConfig {
   @Column({ type: 'int', default: 0 })
   sortOrder: number;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
 }

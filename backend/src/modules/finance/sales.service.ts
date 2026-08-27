@@ -334,7 +334,12 @@ export class SalesService {
     farmId: string,
     batchId: string,
   ): Promise<ProductionBatch> {
-    const batch = await repo.findOne({ where: { id: batchId, farmId } });
+    const batch = await repo
+      .createQueryBuilder('batch')
+      .setLock('pessimistic_write')
+      .where('batch.id = :id', { id: batchId })
+      .andWhere('batch.farm_id = :farmId', { farmId })
+      .getOne();
     if (!batch)
       throw new BadRequestException(
         'Lot de production introuvable dans cette ferme.',

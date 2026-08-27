@@ -462,16 +462,33 @@ export class RentabiliteService {
     });
 
     for (const batch of batches) {
-      const lastSaleRow = await this.saleRepo
-        .createQueryBuilder('sale')
-        .select('MAX(sale.sale_date)', 'max')
-        .where('sale.farm_id = :farmId', { farmId })
-        .andWhere('sale.batch_id = :batchId', { batchId: batch.id })
-        .andWhere('sale.status != :cancelled', {
-          cancelled: SaleStatus.CANCELLED,
-        })
-        .getRawOne<{ max: string | null }>();
-      const lastSaleDate = lastSaleRow?.max ?? null;
+      const [viaSale, viaItems] = await Promise.all([
+        this.saleRepo
+          .createQueryBuilder('sale')
+          .select('MAX(sale.sale_date)', 'max')
+          .where('sale.farm_id = :farmId', { farmId })
+          .andWhere('sale.batch_id = :batchId', { batchId: batch.id })
+          .andWhere('sale.status != :cancelled', {
+            cancelled: SaleStatus.CANCELLED,
+          })
+          .getRawOne<{ max: string | null }>(),
+        this.itemRepo
+          .createQueryBuilder('item')
+          .select('MAX(sale.sale_date)', 'max')
+          .innerJoin(Sale, 'sale', 'sale.id = item.sale_id')
+          .where('sale.farm_id = :farmId', { farmId })
+          .andWhere('item.batch_id = :batchId', { batchId: batch.id })
+          .andWhere('sale.status != :cancelled', {
+            cancelled: SaleStatus.CANCELLED,
+          })
+          .getRawOne<{ max: string | null }>(),
+      ]);
+      const candidates = [viaSale?.max, viaItems?.max].filter(
+        (v): v is string => !!v,
+      );
+      const lastSaleDate = candidates.length
+        ? candidates.reduce((a, b) => (a > b ? a : b))
+        : null;
 
       if (!lastSaleDate || lastSaleDate < since) {
         await this.alertsService.raise(

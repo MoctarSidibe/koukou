@@ -126,6 +126,12 @@ export class ExpensesService {
       const batch = await this.resolveBatch(farmId, dto.batchId);
       expense.batchId = batch?.id ?? null;
     }
+    if (dto.label != null && expense.cashMovementId != null) {
+      await this.movementRepo.update(
+        { id: expense.cashMovementId },
+        { reason: dto.label ?? expense.category },
+      );
+    }
     return this.expenseRepo.save(expense);
   }
 

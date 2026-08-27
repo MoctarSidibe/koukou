@@ -229,6 +229,15 @@ export class FeedStockService {
         ? input.quantity * (farm.defaultSacKg ?? 50)
         : input.quantity;
 
+    if (lot) {
+      await this.assertFeedStockAvailable(
+        input.em,
+        lot.id,
+        quantityKg,
+        farm.defaultSacKg ?? 50,
+      );
+    }
+
     const sale = await saleRepo.save(
       saleRepo.create({
         farmId: input.farmId,
@@ -248,6 +257,49 @@ export class FeedStockService {
   async revertFeedSale(saleItemId: string, em?: EntityManager): Promise<void> {
     const repo = em ? em.getRepository(FeedStockSale) : this.saleRepo;
     await repo.delete({ saleItemId });
+  }
+
+  /** Contrôle de disponibilité (réception − conso − pertes − ventes) avant vente POS. */
+  private async assertFeedStockAvailable(
+    em: EntityManager | undefined,
+    inputLotId: string,
+    quantityKg: number,
+    sacKg: number,
+  ): Promise<void> {
+    const lot = await (em
+      ? em.getRepository(InputLot)
+      : this.inputRepo
+    ).findOne({ where: { id: inputLotId } });
+    if (!lot || lot.kind !== InputKind.ALIMENT) {
+      throw new BadRequestException(
+        'Lot d’intrant alimentaire introuvable dans cette ferme (catégorie ALIMENT uniquement).',
+      );
+    }
+    const entryRepo = em
+      ? em.getRepository(DailyEntry)
+      : this.entryRepo;
+    const lossRepo = em
+      ? em.getRepository(FeedStockLoss)
+      : this.lossRepo;
+    const saleRepo2 = em
+      ? em.getRepository(FeedStockSale)
+      : this.saleRepo;
+
+    const [entries, losses, feedSales] = await Promise.all([
+      entryRepo.find({ where: { inputLotId } }),
+      lossRepo.find({ where: { inputLotId } }),
+      saleRepo2.find({ where: { inputLotId } }),
+    ]);
+    const receivedKg = (lot.unit === 'KG' ? lot.quantity : lot.quantity * sacKg) || 0;
+    const usedKg = entries.reduce((s, e) => s + e.feedQuantity, 0);
+    const lostKg = losses.reduce((s, l) => s + l.quantityKg, 0);
+    const soldKg = feedSales.reduce((s, x) => s + x.quantityKg, 0);
+    const availableKg = receivedKg - usedKg - lostKg - soldKg;
+    if (quantityKg > availableKg + 1e-6) {
+      throw new BadRequestException(
+        `Stock d’aliment insuffisant sur ce lot : disponible ${round(Math.max(0, availableKg), 2)} kg, vente demandée ${round(quantityKg, 2)} kg.`,
+      );
+    }
   }
 
   // ---------- Journal des mouvements (traçabilité 360°) ----------
