@@ -21,4 +21,5 @@ export enum ReferenceKey {
   FEED_STOCK_CRITICAL_DAYS = 'feed_stock_critical_days',
   RENTABILITE_MARGE_MIN_PCT = 'rentabilite_marge_min_pct',
   VENTE_INVENDUS_DAYS = 'vente_invendu_days',
+  EGG_STOCK_WARN_ALVEOLES = 'egg_stock_warn_alveoles',
 }

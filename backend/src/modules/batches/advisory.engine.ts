@@ -14,6 +14,12 @@ import { BatchMetrics } from './models/batch-metrics.model.js';
 
 const DAY1_WEIGHT_KG = 0.045;
 
+function addDaysIso(date: string, days: number): string {
+  const d = new Date(`${date}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 @Injectable()
 export class AdvisoryEngine {
   constructor(
@@ -538,10 +544,11 @@ export class AdvisoryEngine {
     farmId: string,
     batchId: string,
   ) {
-    const soon = new Date();
-    soon.setDate(soon.getDate() + 7);
-    const secSoon = new Date();
-    secSoon.setDate(secSoon.getDate() + 14);
+    // Convention dates UTC (YYYY-MM-DD) : la comparaison se fait sur des
+    // chaînes ISO, sans convertir en heure locale (robustesse aux fuseaux).
+    const today = new Date().toISOString().slice(0, 10);
+    const soon = addDaysIso(today, 7);
+    const secSoon = addDaysIso(today, 14);
     const lots = await this.inputRepo.find({
       where: { farmId, batchId },
     });
@@ -553,11 +560,10 @@ export class AdvisoryEngine {
     const expiringLater: InputLot[] = [];
     for (const lot of lots) {
       if (!lot.expirationDate) continue;
-      const exp = new Date(lot.expirationDate + 'T00:00:00');
-      if (exp < new Date()) {
+      if (lot.expirationDate < today) {
         expired.push(lot);
-      } else if (exp <= secSoon) {
-        (exp <= soon ? expiringSoon : expiringLater).push(lot);
+      } else if (lot.expirationDate <= secSoon) {
+        (lot.expirationDate <= soon ? expiringSoon : expiringLater).push(lot);
       }
     }
 

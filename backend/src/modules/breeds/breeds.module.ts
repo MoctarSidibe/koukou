@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Breed } from './entities/breed.entity.js';
+import { BreedStandard } from './entities/breed-standard.entity.js';
 import { BreedsController } from './breeds.controller.js';
 import { BreedsService } from './breeds.service.js';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Breed])],
+  imports: [TypeOrmModule.forFeature([Breed, BreedStandard])],
   controllers: [BreedsController],
   providers: [BreedsService],
   exports: [BreedsService],

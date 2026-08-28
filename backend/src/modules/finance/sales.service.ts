@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Not, Repository } from 'typeorm';
 import { AuthUser } from '../../common/decorators/current-user.decorator.js';
 import { SaleStatus } from '../../common/enums/sale-status.enum.js';
 import {
@@ -27,6 +27,8 @@ import { FeedStockService } from '../feed-stock/feed-stock.service.js';
 import { InputLot } from '../inputs/entities/input-lot.entity.js';
 import { InputKind } from '../../common/enums/input-kind.enum.js';
 import { ProductionBatch } from '../batches/entities/production-batch.entity.js';
+import { BatchStatus, BatchType } from '../../common/enums/batch-type.enum.js';
+import { DailyEntry } from '../daily-entries/entities/daily-entry.entity.js';
 import { Customer } from './entities/customer.entity.js';
 import { CashSession } from './entities/cash-session.entity.js';
 import { CashSessionStatus } from '../../common/enums/cash-session-status.enum.js';
@@ -37,11 +39,13 @@ import { SaleItem } from './entities/sale-item.entity.js';
 import { PaymentsService } from './payments.service.js';
 import { RentabiliteService } from './rentabilite.service.js';
 import { PdfService } from '../../common/services/pdf.service.js';
+import { koukouBus, KOUKOU_EVENTS } from '../../common/utils/event-bus.js';
 import { CreatePaymentDto } from './dto/payment.dto.js';
 import { CreateSaleDto } from './dto/sale.dto.js';
 import { FeedUnit } from '../../common/enums/food-type.enum.js';
 
 const SALE_PREFIX = 'VTE';
+const EGGS_PER_ALVEOL = 30;
 const ITEM_LABELS: Record<SaleItemProductType, string> = {
   POULET_PIECE: 'Poulet à la pièce',
   POULET_KG: 'Poulet au kilo',
@@ -259,6 +263,7 @@ export class SalesService {
         );
       }
       batchId = dto.batchId ?? null;
+      await this.assertEggsAvailable(em, farmId, quantity);
     } else if (productType === SaleItemProductType.PROVENDE) {
       if (unit !== SaleItemUnit.SAC && unit !== SaleItemUnit.KG) {
         throw new BadRequestException(
@@ -362,6 +367,7 @@ export class SalesService {
       throw new BadRequestException(
         'Lot de production introuvable dans cette ferme.',
       );
+    this.assertSellable(batch);
     return batch;
   }
 
@@ -369,7 +375,7 @@ export class SalesService {
     em: EntityManager,
     farmId: string,
     batchId: string,
-  ): Promise<void> {
+  ): Promise<ProductionBatch> {
     const batch = await em.getRepository(ProductionBatch).findOne({
       where: { id: batchId, farmId },
     });
@@ -377,6 +383,65 @@ export class SalesService {
       throw new BadRequestException(
         'Lot de production introuvable dans cette ferme.',
       );
+    this.assertSellable(batch);
+    return batch;
+  }
+
+  private assertSellable(batch: ProductionBatch): void {
+    if (batch.status === BatchStatus.CLOTURE) {
+      throw new BadRequestException(
+        'Lot clôturé : aucune vente ne peut être rattachée à un lot clôturé (immuabilité).',
+      );
+    }
+  }
+
+  /**
+   * Garde de stock œufs : calcul identique au dashboard
+   * (Σ collectés − fêlés − petits − déjà vendus, 30 œufs/alvéole).
+   */
+  private async assertEggsAvailable(
+    em: EntityManager,
+    farmId: string,
+    alveoles: number,
+  ): Promise<void> {
+    const pondBatches = await em.getRepository(ProductionBatch).find({
+      where: { farmId, type: BatchType.PONDEUSE },
+    });
+    let produced = 0;
+    if (pondBatches.length > 0) {
+      const entries = await em.getRepository(DailyEntry).find({
+        where: { batchId: In(pondBatches.map((b) => b.id)) },
+      });
+      produced = entries.reduce(
+        (s, e) => s + (e.eggsCollected - e.eggsCracked - e.eggsSmall),
+        0,
+      );
+    }
+    const sales = await em.getRepository(Sale).find({
+      where: { farmId, status: Not(SaleStatus.CANCELLED) },
+    });
+    let soldEggs = 0;
+    if (sales.length > 0) {
+      const eggItems = await em.getRepository(SaleItem).find({
+        where: {
+          saleId: In(sales.map((s) => s.id)),
+          productType: SaleItemProductType.OEUFS,
+        },
+      });
+      soldEggs = eggItems.reduce(
+        (s, i) => s + i.quantity * EGGS_PER_ALVEOL,
+        0,
+      );
+    }
+    const requestedEggs = alveoles * EGGS_PER_ALVEOL;
+    const availableEggs = produced - soldEggs;
+    if (requestedEggs > availableEggs) {
+      throw new BadRequestException(
+        `Stock d’œufs insuffisant : ${Math.max(0, availableEggs)} œuf(s) disponible(s) (≈${Math.floor(
+          Math.max(0, availableEggs) / EGGS_PER_ALVEOL,
+        )} alvéoles), vente demandée ${alveoles} alvéoles.`,
+      );
+    }
   }
 
   /** Vérifie que l'id feed sale existe bien dans la transaction (validate). */
@@ -395,6 +460,7 @@ export class SalesService {
         ),
       ),
     ]);
+    koukouBus.emit(KOUKOU_EVENTS.SALE_CHANGED, { farmId });
   }
 
   // ---------- Lecture ----------
@@ -526,6 +592,11 @@ export class SalesService {
             where: { id: item.batchId },
           });
           if (batch) {
+            if (batch.status === BatchStatus.CLOTURE) {
+              throw new BadRequestException(
+                'Impossible d’annuler une vente qui affecte un lot clôturé (immuabilité).',
+              );
+            }
             const birds = item.pieceCount ?? Math.ceil(item.quantity);
             batch.quantityAlive += birds;
             await batchRepo.save(batch);

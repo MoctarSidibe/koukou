@@ -8,10 +8,12 @@ import { DataSource, EntityManager, Repository } from 'typeorm';
 import { AuthUser } from '../../common/decorators/current-user.decorator.js';
 import { FeedUnit } from '../../common/enums/food-type.enum.js';
 import { InputKind } from '../../common/enums/input-kind.enum.js';
+import { BatchStatus } from '../../common/enums/batch-type.enum.js';
 import { FarmsService } from '../farms/farms.service.js';
 import { FlockReconciliationService } from '../batches/flock-reconciliation.service.js';
 import { ProductionBatch } from '../batches/entities/production-batch.entity.js';
 import { InputLot } from '../inputs/entities/input-lot.entity.js';
+import { koukouBus, KOUKOU_EVENTS } from '../../common/utils/event-bus.js';
 import { DailyEntry } from './entities/daily-entry.entity.js';
 import { CreateDailyEntryDto } from './dto/create-daily-entry.dto.js';
 
@@ -41,6 +43,12 @@ export class DailyEntriesService {
     });
     if (!batch)
       throw new NotFoundException('Lot introuvable dans cette ferme.');
+
+    if (batch.status === BatchStatus.CLOTURE) {
+      throw new BadRequestException(
+        'Lot clôturé : impossible d’ajouter une saisie (immuabilité).',
+      );
+    }
 
     if (dto.inputLotId != null) {
       const lot = await this.inputRepo.findOne({
@@ -90,6 +98,13 @@ export class DailyEntriesService {
       await entryRepo.save(entry);
       await this.recomputeLiveCount(em, batch.id);
       return entry;
+    }).then((entry) => {
+      koukouBus.emit(KOUKOU_EVENTS.DAILY_ENTRY_CREATED, {
+        farmId,
+        batchId,
+        entryDate: dto.entryDate,
+      });
+      return entry;
     });
   }
 
@@ -118,13 +133,9 @@ export class DailyEntriesService {
    * décréments du POS.
    */
   private async recomputeLiveCount(em: EntityManager, batchId: string) {
-    const entryRepo = em.getRepository(DailyEntry);
-    const rows = await entryRepo.find({ where: { batchId } });
-    const totalDeaths = rows.reduce((s, e) => s + e.deaths, 0);
-    const [soldBirds, slaughteredBirds] = await Promise.all([
-      this.flockReconciliation.netSoldBirds(batchId),
-      this.flockReconciliation.netSlaughteredBirds(batchId),
-    ]);
+    // Verrou pessimiste acquis AVANT toute lecture des flux de sortie : toute
+    // vente/abattage concurrent sérialise sur la même ligne et son impact est
+    // visible/après notre lecture (pas de course lecture/écriture).
     const locked = await em
       .getRepository(ProductionBatch)
       .createQueryBuilder('batch')
@@ -132,6 +143,15 @@ export class DailyEntriesService {
       .where('batch.id = :id', { id: batchId })
       .getOne();
     if (!locked) return;
+
+    const rows = await em
+      .getRepository(DailyEntry)
+      .find({ where: { batchId } });
+    const totalDeaths = rows.reduce((s, e) => s + e.deaths, 0);
+    const [soldBirds, slaughteredBirds] = await Promise.all([
+      this.flockReconciliation.netSoldBirds(batchId, em),
+      this.flockReconciliation.netSlaughteredBirds(batchId, em),
+    ]);
     locked.quantityAlive = Math.max(
       0,
       locked.quantityAtStart - totalDeaths - soldBirds - slaughteredBirds,

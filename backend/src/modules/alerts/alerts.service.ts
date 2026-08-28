@@ -42,7 +42,10 @@ export class AlertsService {
     const where: FindOptionsWhere<Alert> = {
       farmId: ctx.farmId,
       kind: candidate.kind,
-      status: AlertStatus.ACTIVE,
+      // Une alerte ACQUITTEE est réactivée si le risque persiste (au lieu de
+      // créer un doublon) : l'acquittement est un accusé de lecture, pas une
+      // extinction du risque.
+      status: In([AlertStatus.ACTIVE, AlertStatus.ACQUITTEE]),
     };
     if (ctx.buildingId) {
       where.buildingId = ctx.buildingId;
@@ -55,6 +58,8 @@ export class AlertsService {
     }
     const existing = await this.alertRepo.findOne({ where });
     if (existing) {
+      existing.status = AlertStatus.ACTIVE;
+      existing.resolvedAt = null;
       existing.level = candidate.level;
       existing.message = candidate.message;
       existing.recommendation = candidate.recommendation ?? null;

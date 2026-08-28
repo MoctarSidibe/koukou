@@ -1,22 +1,117 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, Not, Repository } from 'typeorm';
 import { AuthUser } from '../../common/decorators/current-user.decorator.js';
-import { AlertLevel, AlertStatus } from '../../common/enums/alert-level.enum.js';
-import { BatchStatus } from '../../common/enums/batch-type.enum.js';
+import {
+  AlertKind,
+  AlertLevel,
+  AlertStatus,
+} from '../../common/enums/alert-level.enum.js';
+import { BatchStatus, BatchType } from '../../common/enums/batch-type.enum.js';
 import { PaymentStatus } from '../../common/enums/payment-method.enum.js';
+import { SaleStatus } from '../../common/enums/sale-status.enum.js';
+import { SaleItemProductType } from '../../common/enums/sale-item-type.enum.js';
+import { ReferenceKey } from '../../common/enums/reference-key.enum.js';
 import { isoWeekStart } from '../../common/utils/date.utils.js';
+import {
+  DailyEntryCreatedEvent,
+  KOUKOU_EVENTS,
+  koukouBus,
+  SaleChangedEvent,
+} from '../../common/utils/event-bus.js';
 import { DailyEntry } from '../daily-entries/entities/daily-entry.entity.js';
 import { FarmEmployee } from '../farms/entities/farm-employee.entity.js';
 import { FarmsService } from '../farms/farms.service.js';
 import { FeedStockService } from '../feed-stock/feed-stock.service.js';
+import { ReferenceConstantsService } from '../reference-constants/reference-constants.service.js';
 import { Alert } from '../alerts/entities/alert.entity.js';
+import { AlertsService } from '../alerts/alerts.service.js';
 import { Payment } from '../finance/entities/payment.entity.js';
+import { SaleItem } from '../finance/entities/sale-item.entity.js';
+import { Sale } from '../finance/entities/sale.entity.js';
 import { ProductionBatch } from './entities/production-batch.entity.js';
+import { BatchesService } from './batches.service.js';
+import { BreedStatus, MetricsService } from './metrics.service.js';
+import { FarmWeather, WeatherService } from '../weather/weather.service.js';
 
 const DAY1_WEIGHT_KG = 0.045;
 
+const EGGS_PER_ALVEOL = 30;
+
 const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+function todayStr(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function addDays(date: string, days: number): string {
+  const d = new Date(`${date}T12:00:00`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function daysBetween(from: string, to: string): number {
+  const a = new Date(`${from}T12:00:00`).getTime();
+  const b = new Date(`${to}T12:00:00`).getTime();
+  return Math.round((b - a) / 86400000);
+}
+
+export type HealthGrade = 'EXCELLENT' | 'BON' | 'MOYEN' | 'CRITIQUE';
+
+export interface DashboardHealth {
+  score: number;
+  grade: HealthGrade;
+  breakdown: { rouge: number; jaune: number; saisiesManquantes: number };
+}
+
+export interface HealthOverviewRow {
+  batchId: string;
+  batchName: string | null;
+  status: BatchStatus;
+  type: BatchType;
+  ageDays: number;
+  liveCount: number;
+  weekDeaths: number;
+  mortalityPercent: number;
+  alertesRouges: number;
+  alertesJaunes: number;
+  lastEntryDate: string | null;
+  lastEntryLagDays: number | null;
+  breedStatus: BreedStatus | null;
+}
+
+export interface LeaderboardRow {
+  batchId: string;
+  batchName: string | null;
+  status: BatchStatus;
+  type: BatchType;
+  ageDays: number;
+  perfIndex: number | null;
+  fcr: number | null;
+  gmqGramsPerDay: number | null;
+  ipe: number | null;
+  layRatePercent: number | null;
+  mortalityPercent: number;
+  liveCount: number;
+}
+
+export interface WeeklyDeltas {
+  mortalityThisWeek: number;
+  mortalityPrevWeek: number;
+  mortalityDelta: number;
+  feedThisWeekKg: number;
+  feedPrevWeekKg: number;
+  feedDeltaKg: number;
+  layRateThisWeekPct: number | null;
+  layRatePrevWeekPct: number | null;
+  layRateDeltaPct: number | null;
+}
+
+export interface EggStockInfo {
+  availableAlveoles: number;
+  availableEggs: number;
+  warnAlveoles: number;
+}
 
 export interface DashboardData {
   farmId: string;
@@ -29,6 +124,12 @@ export interface DashboardData {
   collectedTodayFcfa: number;
   teamCount: number;
   alerts: { total: number; rouge: number; jaune: number; vert: number };
+  health: DashboardHealth;
+  healthOverview: HealthOverviewRow[];
+  leaderboard: LeaderboardRow[];
+  deltas: WeeklyDeltas;
+  eggStock: EggStockInfo;
+  weather: FarmWeather | null;
 }
 
 export interface CurveWeek {
@@ -47,8 +148,17 @@ export interface BatchCurve {
   weekly: CurveWeek[];
 }
 
+const GRADE_TABLE: Array<{ min: number; grade: HealthGrade }> = [
+  { min: 85, grade: 'EXCELLENT' },
+  { min: 70, grade: 'BON' },
+  { min: 50, grade: 'MOYEN' },
+  { min: 0, grade: 'CRITIQUE' },
+];
+
 @Injectable()
-export class DashboardService {
+export class DashboardService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(DashboardService.name);
+
   constructor(
     @InjectRepository(ProductionBatch)
     private readonly batchRepo: Repository<ProductionBatch>,
@@ -60,9 +170,45 @@ export class DashboardService {
     private readonly paymentRepo: Repository<Payment>,
     @InjectRepository(FarmEmployee)
     private readonly employeeRepo: Repository<FarmEmployee>,
+    @InjectRepository(Sale)
+    private readonly saleRepo: Repository<Sale>,
+    @InjectRepository(SaleItem)
+    private readonly saleItemRepo: Repository<SaleItem>,
     private readonly farmsService: FarmsService,
     private readonly feedStockService: FeedStockService,
+    private readonly batchesService: BatchesService,
+    private readonly alertsService: AlertsService,
+    private readonly metricsService: MetricsService,
+    private readonly constants: ReferenceConstantsService,
+    private readonly weatherService: WeatherService,
   ) {}
+
+  onModuleInit() {
+    koukouBus.on(KOUKOU_EVENTS.DAILY_ENTRY_CREATED, this.onEntryCreated);
+    koukouBus.on(KOUKOU_EVENTS.SALE_CHANGED, this.onSaleChanged);
+  }
+
+  onModuleDestroy() {
+    koukouBus.off(KOUKOU_EVENTS.DAILY_ENTRY_CREATED, this.onEntryCreated);
+    koukouBus.off(KOUKOU_EVENTS.SALE_CHANGED, this.onSaleChanged);
+  }
+
+  private readonly onEntryCreated = (ev: DailyEntryCreatedEvent) => {
+    void Promise.all([
+      this.evaluateDailyEntryAlerts(ev.farmId),
+      this.evaluateEggStockAlerts(ev.farmId),
+    ]).catch((err) =>
+      this.logger.error(
+        `Réévaluation post-saisie (ferme ${ev.farmId})`, err,
+      ),
+    );
+  };
+
+  private readonly onSaleChanged = (ev: SaleChangedEvent) => {
+    void this.evaluateEggStockAlerts(ev.farmId).catch((err) =>
+      this.logger.error(`Évaluation stock œufs (ferme ${ev.farmId})`, err),
+    );
+  };
 
   async getDashboard(user: AuthUser, farmId: string): Promise<DashboardData> {
     await this.farmsService.assertAccessible(user, farmId);
@@ -77,16 +223,27 @@ export class DashboardService {
         this.feedStockService.getStockSummary(user, farmId),
         this.paymentRepo.sum('amountFcfa', {
           farmId,
-          paymentDate: new Date().toISOString().slice(0, 10),
+          paymentDate: todayStr(),
           status: PaymentStatus.CONFIRMED,
         }),
       ]);
 
+    const missingEntries = await this.evaluateDailyEntryAlerts(farmId);
+
     let totalDeaths = 0;
     let totalStart = 0;
-    const liveStock = batches.reduce((s, b) => s + b.quantityAlive, 0);
+    // Cheptel vivant = lots en cours uniquement (les lots clôturés sont
+    // historiques et ne font plus partie de l'effectif exploitable).
+    const activeBatches = batches.filter(
+      (b) => b.status !== BatchStatus.CLOTURE,
+    );
+    const liveStock = activeBatches.reduce(
+      (s, b) => s + b.quantityAlive,
+      0,
+    );
+    let entries: DailyEntry[] = [];
     if (batches.length > 0) {
-      const entries = await this.entryRepo.find({
+      entries = await this.entryRepo.find({
         where: { batchId: In(batches.map((b) => b.id)) },
       });
       totalDeaths = entries.reduce((s, e) => s + e.deaths, 0);
@@ -115,6 +272,20 @@ export class DashboardService {
       { rouge: 0, jaune: 0, vert: 0 },
     );
 
+    const health = this.computeHealth(alerts, missingEntries);
+    const deltas = this.computeDeltas(batches, entries);
+    const leaderboard = await this.computeLeaderboard(user, farmId);
+    const healthOverview = await this.computeHealthOverview(
+      batches,
+      entries,
+      alerts,
+    );
+    const eggStock = await this.evaluateEggStockAlerts(farmId);
+    // La météo ne doit jamais dégrader le dashboard (échec réseau → null).
+    const weather = await this.weatherService
+      .forecastForFarm(farmId)
+      .catch(() => null);
+
     return {
       farmId,
       generatedAt: new Date().toISOString(),
@@ -131,13 +302,324 @@ export class DashboardService {
       collectedTodayFcfa: collectedToday ?? 0,
       teamCount: employees,
       alerts: { total: alerts.length, ...alertLevels },
+      health,
+      healthOverview,
+      leaderboard,
+      deltas,
+      eggStock,
+      weather,
     };
   }
 
-  async getCurve(user: AuthUser, farmId: string, batchId: string): Promise<BatchCurve> {
+  // ---------- Stock d'œufs & alerte seuil ----------
+
+  /**
+   * Stock d'œufs disponible = œufs collectés (toutes bandes pondeuses) −
+   * alvéoles vendues (vente OEUFS, unité ALVEOLES). Évaluée de façon paresseuse
+   * (lecture dashboard) et re-évaluée après chaque saisie de ponte / vente.
+   */
+  async evaluateEggStockAlerts(farmId: string): Promise<EggStockInfo> {
+    const pondBatches = await this.batchRepo.find({
+      where: { farmId, type: BatchType.PONDEUSE },
+    });
+    let collected = 0;
+    if (pondBatches.length > 0) {
+      const entries = await this.entryRepo.find({
+        where: { batchId: In(pondBatches.map((b) => b.id)) },
+      });
+      // Stock disponible = œufs collectés − œufs non commercialisables
+      // (fêlés, petits) : seuls ces œufs peuvent être vendus en alvéoles.
+      collected = entries.reduce(
+        (s, e) => s + (e.eggsCollected - e.eggsCracked - e.eggsSmall),
+        0,
+      );
+    }
+
+    const nonCancelled = await this.saleRepo.find({
+      where: { farmId, status: Not(SaleStatus.CANCELLED) },
+    });
+    let soldAlveoles = 0;
+    if (nonCancelled.length > 0) {
+      const eggItems = await this.saleItemRepo.find({
+        where: {
+          saleId: In(nonCancelled.map((s) => s.id)),
+          productType: SaleItemProductType.OEUFS,
+        },
+      });
+      soldAlveoles = eggItems.reduce((s, i) => s + i.quantity, 0);
+    }
+
+    const availableEggs = Math.max(
+      0,
+      collected - soldAlveoles * EGGS_PER_ALVEOL,
+    );
+    const availableAlveoles = Math.floor(availableEggs / EGGS_PER_ALVEOL);
+    const warnAlveoles = await this.constants.get(
+      ReferenceKey.EGG_STOCK_WARN_ALVEOLES,
+      10,
+    );
+
+    if (availableAlveoles >= warnAlveoles) {
+      await this.alertsService.raise(
+        {
+          kind: AlertKind.STOCK_OEUF,
+          level: AlertLevel.JAUNE,
+          message: `Stock d'œufs à écouler : ${availableAlveoles} alvéoles (~${availableEggs} œufs) collectées et non vendues.`,
+          recommendation:
+            'Vendre ou valoriser le stock (clients, marchés, cuisine, dons) avant péremption.',
+          context: { availableAlveoles, availableEggs, warnAlveoles },
+        },
+        { farmId },
+      );
+    } else {
+      await this.alertsService.clearKind(farmId, null, AlertKind.STOCK_OEUF);
+    }
+    return { availableAlveoles, availableEggs, warnAlveoles };
+  }
+
+  // ---------- Vigilance quotidienne : lot sans saisie du jour ----------
+
+  /**
+   * Soulève (ou résout) l'alerte `SAISIE_MANQUEE` de niveau ferme : tout lot en
+   * cours (ACTIF / EN_VENTE) doit avoir une saisie journalière datée du jour.
+   * Évaluée de façon paresseuse (lecture dashboard) et réévaluée après chaque
+   * saisie via le bus d'événements.
+   */
+  private async evaluateDailyEntryAlerts(
+    farmId: string,
+  ): Promise<string[]> {
+    const today = todayStr();
+    const active = await this.batchRepo.find({
+      where: { farmId, status: In([BatchStatus.ACTIF, BatchStatus.EN_VENTE]) },
+    });
+    if (active.length === 0) {
+      await this.alertsService.clearKind(farmId, null, AlertKind.SAISIE_MANQUEE);
+      return [];
+    }
+    const todays = await this.entryRepo.find({
+      where: { batchId: In(active.map((b) => b.id)), entryDate: today },
+    });
+    const have = new Set(todays.map((e) => e.batchId));
+    const missingIds = active
+      .filter((b) => !have.has(b.id))
+      .map((b) => b.id);
+
+    if (missingIds.length === 0) {
+      await this.alertsService.clearKind(farmId, null, AlertKind.SAISIE_MANQUEE);
+      return [];
+    }
+
+    const byId = new Map(active.map((b) => [b.id, b]));
+    const names = missingIds
+      .slice(0, 3)
+      .map((id) => byId.get(id)?.batchName ?? `Lot #${id.slice(0, 8)}`)
+      .join(', ');
+    const more = missingIds.length - 3;
+    await this.alertsService.raise(
+      {
+        kind: AlertKind.SAISIE_MANQUEE,
+        level: AlertLevel.JAUNE,
+        message: `Saisie du jour manquante : ${names}${
+          more > 0 ? ` et ${more} autre(s) lot(s)` : ''
+        }.`,
+        recommendation:
+          'Enregistrer les données du jour (morts, aliments, ponte, poids) pour garder le suivi à jour.',
+        context: { missingBatchIds: missingIds },
+      },
+      { farmId },
+    );
+    return missingIds;
+  }
+
+  // ---------- Score de santé de ferme (0–100) ----------
+
+  private computeHealth(
+    alerts: Alert[],
+    missingEntries: string[],
+  ): DashboardHealth {
+    const rouge = alerts.filter((a) => a.level === AlertLevel.ROUGE).length;
+    // SAISIE_MANQUEE est comptée via `missingEntries` pour ne pas compter deux fois.
+    const jaune = alerts.filter(
+      (a) => a.level === AlertLevel.JAUNE && a.kind !== AlertKind.SAISIE_MANQUEE,
+    ).length;
+    const saisiesManquantes = missingEntries.length;
+    const score = Math.max(
+      0,
+      Math.min(100, 100 - rouge * 20 - jaune * 5 - saisiesManquantes * 10),
+    );
+    const grade =
+      GRADE_TABLE.find((g) => score >= g.min)?.grade ?? 'CRITIQUE';
+    return {
+      score,
+      grade,
+      breakdown: { rouge, jaune, saisiesManquantes },
+    };
+  }
+
+  // ---------- Aperçu de santé par lot ----------
+
+  private async computeHealthOverview(
+    batches: ProductionBatch[],
+    entries: DailyEntry[],
+    alerts: Alert[],
+  ): Promise<HealthOverviewRow[]> {
+    const today = todayStr();
+    const weekStart = isoWeekStart(today);
+    const rows: HealthOverviewRow[] = [];
+
+    for (const b of batches) {
+      const bEntries = entries.filter((e) => e.batchId === b.id);
+      const totalDeaths = bEntries.reduce((s, e) => s + e.deaths, 0);
+      const sorted = [...bEntries].sort((x, y) =>
+        x.entryDate.localeCompare(y.entryDate),
+      );
+      const last = sorted[sorted.length - 1];
+      const lastEntryDate = last ? last.entryDate : null;
+      const ageDays = Math.max(
+        0,
+        Math.floor(
+          (Date.now() - new Date(`${b.integrationDate}T00:00:00`).getTime()) /
+            86400000,
+        ),
+      );
+
+      let alertesRouges = 0;
+      let alertesJaunes = 0;
+      for (const a of alerts) {
+        if (a.batchId !== b.id) continue;
+        if (a.level === AlertLevel.ROUGE) alertesRouges += 1;
+        else if (a.level === AlertLevel.JAUNE) alertesJaunes += 1;
+      }
+
+      rows.push({
+        batchId: b.id,
+        batchName: b.batchName,
+        status: b.status,
+        type: b.type,
+        ageDays,
+        liveCount: Math.max(0, b.quantityAlive),
+        weekDeaths: bEntries
+          .filter((e) => e.entryDate >= weekStart)
+          .reduce((s, e) => s + e.deaths, 0),
+        mortalityPercent:
+          b.quantityAtStart > 0
+            ? round2((totalDeaths / b.quantityAtStart) * 100)
+            : 0,
+        alertesRouges,
+        alertesJaunes,
+        lastEntryDate,
+        lastEntryLagDays: lastEntryDate ? daysBetween(lastEntryDate, today) : null,
+        breedStatus: await this.metricsService.breedStatus(b),
+      });
+    }
+
+    return rows.sort(
+      (x, y) =>
+        y.alertesRouges - x.alertesRouges ||
+        (y.lastEntryLagDays ?? 0) - (x.lastEntryLagDays ?? 0) ||
+        y.weekDeaths - x.weekDeaths,
+    );
+  }
+
+  // ---------- Palmarès des bandes (leaderboard) ----------
+
+  private async computeLeaderboard(
+    user: AuthUser,
+    farmId: string,
+  ): Promise<LeaderboardRow[]> {
+    const batches = await this.batchesService.findAll(user, farmId);
+    return batches
+      .map((b) => {
+        const m = b.metrics;
+        const perfIndex =
+          b.type === BatchType.CHAIR ? m.ipe : m.layRatePercent;
+        return {
+          batchId: b.id,
+          batchName: b.batchName,
+          status: b.status,
+          type: b.type,
+          ageDays: m.ageDays,
+          perfIndex,
+          fcr: m.fcr,
+          gmqGramsPerDay: m.gmqGramsPerDay,
+          ipe: m.ipe,
+          layRatePercent: m.layRatePercent,
+          mortalityPercent: m.mortalityPercent,
+          liveCount: m.liveCount,
+        };
+      })
+      .sort((a, b) => (b.perfIndex ?? -1) - (a.perfIndex ?? -1))
+      .slice(0, 10);
+  }
+
+  // ---------- Écarts vs semaine précédente ----------
+
+  private computeDeltas(
+    batches: ProductionBatch[],
+    entries: DailyEntry[],
+  ): WeeklyDeltas {
+    const thisWeekStart = isoWeekStart(todayStr());
+    const prevWeekStart = isoWeekStart(addDays(thisWeekStart, -7));
+
+    const thisWeek = entries.filter((e) => e.entryDate >= thisWeekStart);
+    const prevWeek = entries.filter(
+      (e) => e.entryDate >= prevWeekStart && e.entryDate < thisWeekStart,
+    );
+    const sum = (rows: DailyEntry[], f: (e: DailyEntry) => number) =>
+      rows.reduce((s, e) => s + f(e), 0);
+
+    const mortalityThisWeek = sum(thisWeek, (e) => e.deaths);
+    const mortalityPrevWeek = sum(prevWeek, (e) => e.deaths);
+    const feedThisWeekKg = sum(thisWeek, (e) => e.feedQuantity);
+    const feedPrevWeekKg = sum(prevWeek, (e) => e.feedQuantity);
+
+    const pondIds = new Set(
+      batches
+        .filter((b) => b.type === BatchType.PONDEUSE)
+        .map((b) => b.id),
+    );
+    const hens = batches
+      .filter((b) => pondIds.has(b.id))
+      .reduce((s, b) => s + b.quantityAlive, 0);
+    const layRates = (rows: DailyEntry[]): number | null => {
+      const eggRows = rows.filter(
+        (e) => pondIds.has(e.batchId) && e.eggsCollected > 0,
+      );
+      const days = new Set(eggRows.map((e) => e.entryDate)).size;
+      const eggs = sum(eggRows, (e) => e.eggsCollected);
+      if (hens <= 0 || days <= 0) return null;
+      return round2((eggs / (hens * days)) * 100);
+    };
+    const layRateThisWeekPct = layRates(thisWeek);
+    const layRatePrevWeekPct = layRates(prevWeek);
+
+    return {
+      mortalityThisWeek,
+      mortalityPrevWeek,
+      mortalityDelta: mortalityThisWeek - mortalityPrevWeek,
+      feedThisWeekKg: round2(feedThisWeekKg),
+      feedPrevWeekKg: round2(feedPrevWeekKg),
+      feedDeltaKg: round2(feedThisWeekKg - feedPrevWeekKg),
+      layRateThisWeekPct,
+      layRatePrevWeekPct,
+      layRateDeltaPct:
+        layRateThisWeekPct != null && layRatePrevWeekPct != null
+          ? round2(layRateThisWeekPct - layRatePrevWeekPct)
+          : null,
+    };
+  }
+
+  // ---------- Courbe de croissance du lot ----------
+
+  async getCurve(
+    user: AuthUser,
+    farmId: string,
+    batchId: string,
+  ): Promise<BatchCurve> {
     await this.farmsService.assertAccessible(user, farmId);
     const batch = await this.batchRepo.findOne({ where: { id: batchId, farmId } });
-    if (!batch) throw new NotFoundException('Lot introuvable dans cette ferme.');
+    if (!batch)
+      throw new NotFoundException('Lot introuvable dans cette ferme.');
 
     const entries = await this.entryRepo.find({
       where: { batchId },
@@ -154,7 +636,8 @@ export class DashboardService {
     };
     const byWeek = new Map<string, WeekGroup>();
     for (const e of entries) {
-      if (e.feedQuantity <= 0 && e.deaths <= 0 && e.avgWeightKg == null) continue;
+      if (e.feedQuantity <= 0 && e.deaths <= 0 && e.avgWeightKg == null)
+        continue;
       const weekStart = isoWeekStart(e.entryDate);
       let group = byWeek.get(weekStart);
       if (!group) {
@@ -178,14 +661,13 @@ export class DashboardService {
     }
 
     const liveCount = Math.max(0, batch.quantityAlive);
-    const cumFeed = (w: WeekGroup) => w.feedKg;
     const weeks = [...byWeek.values()].sort((a, b) =>
       a.weekStart.localeCompare(b.weekStart),
     );
 
     let accumulatedFeed = 0;
     const weekly: CurveWeek[] = weeks.map((w) => {
-      accumulatedFeed += cumFeed(w);
+      accumulatedFeed += w.feedKg;
       const weightGainKg =
         w.lastAvgWeightKg != null
           ? (w.lastAvgWeightKg - DAY1_WEIGHT_KG) * liveCount
@@ -197,9 +679,7 @@ export class DashboardService {
       return {
         weekStart: w.weekStart,
         avgWeightKg:
-          w.weightCount > 0
-            ? round2(w.weightSum / w.weightCount)
-            : null,
+          w.weightCount > 0 ? round2(w.weightSum / w.weightCount) : null,
         feedKg: round2(w.feedKg),
         deaths: w.deaths,
         cumFeedKg: round2(accumulatedFeed),

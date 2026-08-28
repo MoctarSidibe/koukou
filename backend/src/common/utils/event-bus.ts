@@ -5,6 +5,16 @@ export interface BatchClosedEvent {
   batchId: string;
 }
 
+export interface DailyEntryCreatedEvent {
+  farmId: string;
+  batchId: string;
+  entryDate: string;
+}
+
+export interface SaleChangedEvent {
+  farmId: string;
+}
+
 /**
  * Bus d'événements in-process minimal : permet aux modules de s'abonner à des
  * moments clés sans créer de dépendances circulaires (ex. clôture d'un lot →
@@ -12,8 +22,11 @@ export interface BatchClosedEvent {
  */
 export const KOUKOU_EVENTS = {
   BATCH_CLOSED: 'batch.closed',
+  DAILY_ENTRY_CREATED: 'daily.entry.created',
+  SALE_CHANGED: 'sale.changed',
 } as const;
 
 class KoukouBus extends EventEmitter {}
 
 export const koukouBus = new KoukouBus();
+koukouBus.setMaxListeners(50);

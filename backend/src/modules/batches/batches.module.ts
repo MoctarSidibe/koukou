@@ -8,7 +8,9 @@ import { Farm } from '../farms/entities/farm.entity.js';
 import { FarmEmployee } from '../farms/entities/farm-employee.entity.js';
 import { Building } from '../buildings/entities/building.entity.js';
 import { InputLot } from '../inputs/entities/input-lot.entity.js';
+import { BreedStandard } from '../breeds/entities/breed-standard.entity.js';
 import { ReferenceConstantsModule } from '../reference-constants/reference-constants.module.js';
+import { WeatherModule } from '../weather/weather.module.js';
 import { SaleItem } from '../finance/entities/sale-item.entity.js';
 import { Sale } from '../finance/entities/sale.entity.js';
 import { Payment } from '../finance/entities/payment.entity.js';
@@ -36,6 +38,7 @@ import {
       TypeHistoryEntry,
       DailyEntry,
       InputLot,
+      BreedStandard,
       Farm,
       Building,
       SaleItem,
@@ -50,6 +53,7 @@ import {
     AlertsModule,
     ReferenceConstantsModule,
     FeedStockModule,
+    WeatherModule,
   ],
   controllers: [BatchesController, FarmDashboardController, BatchCurveController],
   providers: [

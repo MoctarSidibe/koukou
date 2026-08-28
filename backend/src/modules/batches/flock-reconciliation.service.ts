@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { SaleItemProductType } from '../../common/enums/sale-item-type.enum.js';
 import { SaleStatus } from '../../common/enums/sale-status.enum.js';
 import { SlaughterStatus } from '../../common/enums/slaughter-status.enum.js';
@@ -25,8 +25,9 @@ export class FlockReconciliationService {
     private readonly slaughterRepo: Repository<SlaughterOrder>,
   ) {}
 
-  async netSoldBirds(batchId: string): Promise<number> {
-    const row = await this.saleItemRepo
+  async netSoldBirds(batchId: string, em?: EntityManager): Promise<number> {
+    const repo = em ? em.getRepository(SaleItem) : this.saleItemRepo;
+    const row = await repo
       .createQueryBuilder('item')
       .innerJoin(
         Sale,
@@ -46,8 +47,9 @@ export class FlockReconciliationService {
     return Math.max(0, Number(row?.total ?? 0));
   }
 
-  async netSlaughteredBirds(batchId: string): Promise<number> {
-    const row = await this.slaughterRepo
+  async netSlaughteredBirds(batchId: string, em?: EntityManager): Promise<number> {
+    const repo = em ? em.getRepository(SlaughterOrder) : this.slaughterRepo;
+    const row = await repo
       .createQueryBuilder('order')
       .where('order.batch_id = :batchId', { batchId })
       .andWhere('order.status = :processed', {

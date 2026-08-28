@@ -206,6 +206,102 @@ describe('Tableau de bord & courbes de croissance (e2e)', () => {
     expect(res.body.liveStock).toBe(96);
   });
 
+  it('vigueur quotidienne : score 100 sain, alerte saisie manquée levée puis résolue, palmarès et écarts', async () => {
+    const healthy = await request(server)
+      .get(`/farms/${farmId}/dashboard`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(healthy.body.health.breakdown).toEqual({
+      rouge: 0,
+      jaune: 1,
+      saisiesManquantes: 0,
+    });
+    expect(healthy.body.health.grade).toBe('EXCELLENT');
+    const healthyScore = healthy.body.health.score;
+    expect(healthyScore).toBe(95);
+    expect(healthy.body.leaderboard).toHaveLength(1);
+    expect(healthy.body.leaderboard[0].batchId).toBe(batchId);
+    expect(healthy.body.leaderboard[0].status).toBe('ACTIF');
+    expect(
+      typeof healthy.body.leaderboard[0].perfIndex === 'number' ||
+        healthy.body.leaderboard[0].perfIndex === null,
+    ).toBe(true);
+    expect(
+      healthy.body.deltas.feedThisWeekKg + healthy.body.deltas.feedPrevWeekKg,
+    ).toBe(20);
+    expect(
+      healthy.body.deltas.mortalityThisWeek +
+        healthy.body.deltas.mortalityPrevWeek,
+    ).toBe(2);
+    expect(healthy.body.deltas.layRateDeltaPct).toBeNull();
+
+    const batch2 = await request(server)
+      .post(`/farms/${farmId}/batches`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        batchName: 'Bande sans saisie',
+        integrationDate: today(),
+        quantityAtStart: 50,
+        type: 'PONDEUSE',
+      })
+      .expect(201);
+
+    const penalized = await request(server)
+      .get(`/farms/${farmId}/dashboard`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(penalized.body.health.breakdown).toEqual({
+      rouge: 0,
+      jaune: 1,
+      saisiesManquantes: 1,
+    });
+    expect(penalized.body.health.score).toBe(healthyScore - 10);
+    expect(penalized.body.health.grade).toBe('EXCELLENT');
+    expect(penalized.body.leaderboard).toHaveLength(2);
+
+    const alerts = await request(server)
+      .get(`/farms/${farmId}/alerts`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    const saisie = alerts.body.find(
+      (a: { kind: string; status: string }) =>
+        a.kind === 'SAISIE_MANQUEE' && a.status === 'ACTIVE',
+    );
+    expect(saisie).toBeTruthy();
+    expect(saisie.batchId).toBeNull();
+    expect(saisie.level).toBe('JAUNE');
+
+    await request(server)
+      .post(`/farms/${farmId}/batches/${batch2.body.id}/daily-entries`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        entryDate: today(),
+        deaths: 0,
+        feedQuantity: 5,
+        feedUnit: 'KG',
+        feedType: 'FINITION',
+        eggsCollected: 10,
+      })
+      .expect(201);
+
+    const resolved = await request(server)
+      .get(`/farms/${farmId}/dashboard`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(resolved.body.health.breakdown.saisiesManquantes).toBe(0);
+    expect(resolved.body.health.score).toBe(healthyScore);
+    const alertsAfter = await request(server)
+      .get(`/farms/${farmId}/alerts`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(
+      alertsAfter.body.find(
+        (a: { kind: string; status: string }) =>
+          a.kind === 'SAISIE_MANQUEE' && a.status === 'ACTIVE',
+      ),
+    ).toBeFalsy();
+  });
+
   it('accès : lot introuvable → 404 ; autre ferme → 403', async () => {
     await request(server)
       .get(`/farms/${farmId}/batches/00000000-0000-4000-8000-000000000000/curve`)

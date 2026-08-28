@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import { BatchType } from '../../common/enums/batch-type.enum.js';
@@ -32,6 +32,16 @@ export class BreedsController {
   @Roles(UserRole.PROPRIETAIRE, UserRole.ELEVEUR)
   findAll() {
     return this.breedsService.findAll();
+  }
+
+  @Get(':id/standards')
+  @ApiOperation({
+    summary:
+      'Référentiel zootechnique d’une souche : poids moyen / IC / ponte par semaine (Breed Intelligence)',
+  })
+  @Roles(UserRole.PROPRIETAIRE, UserRole.ELEVEUR)
+  getStandards(@Param('id') id: string) {
+    return this.breedsService.getStandards(id);
   }
 
   @Post()
