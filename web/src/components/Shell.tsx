@@ -1,8 +1,7 @@
 import { useState } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Activity,
-  Bird,
   AlertTriangle,
   Factory,
   FileBarChart,
@@ -54,6 +53,8 @@ export function Shell() {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const isAdmin = user?.role === 'PLATFORM_ADMIN';
+  const { pathname } = useLocation();
+  const onPlatform = pathname.startsWith('/app/platform');
 
   return (
     <div className="min-h-screen bg-slate-100">
@@ -64,12 +65,12 @@ export function Shell() {
         )}
       >
         <div className="flex items-center gap-2 px-5 py-5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-sky-600 text-white">
-            <Bird className="h-5 w-5" />
+          <div className="overflow-hidden rounded-lg bg-white p-1 shadow">
+            <img src="/logo.jpg" alt="KouKou" className="h-8 w-auto" />
           </div>
           <div>
             <p className="text-sm font-bold text-white">KouKou</p>
-            <p className="text-[11px] text-slate-400">Console de pilotage</p>
+            <p className="text-[11px] text-slate-400">Console pilote</p>
           </div>
           <button
             className="ml-auto rounded p-1 text-slate-400 hover:text-white lg:hidden"
@@ -80,13 +81,13 @@ export function Shell() {
           </button>
         </div>
 
-        {!isAdmin ? (
+        {!onPlatform ? (
           <div className="px-3">
             <label className="mb-1 block px-2 text-[11px] uppercase tracking-wide text-slate-500">
-              Ferme active
+              {isAdmin ? 'Ferme à consulter' : 'Ferme active'}
             </label>
             <select
-              className="w-full rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-2 text-sm text-slate-100 outline-none focus:border-sky-500"
+              className="w-full rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-2 text-sm text-slate-100 outline-none focus:border-brand-500"
               value={farmId ?? ''}
               onChange={(e) => setFarm(e.target.value)}
             >
@@ -195,20 +196,30 @@ export function Shell() {
             <Menu className="h-5 w-5" />
           </button>
           <div className="text-sm font-medium text-slate-700">
-            {farm?.name ?? 'KouKou'}
-            {farm ? (
-              <span className="ml-2 hidden text-xs font-normal text-slate-400 sm:inline">
-                {farm.administrativeCity} · {farm.active ? 'ferme active' : 'ferme suspendue'}
-              </span>
-            ) : null}
+            {!onPlatform && farm ? (
+              <>
+                {isAdmin ? <span className="text-slate-400">Ferme : </span> : null}
+                {farm.name}
+                <span className="ml-2 hidden text-xs font-normal text-slate-400 sm:inline">
+                  {farm.administrativeCity} · {farm.active ? 'ferme active' : 'ferme suspendue'}
+                </span>
+              </>
+            ) : (
+              'Console administrateur plateforme'
+            )}
           </div>
           <div className="ml-auto flex items-center gap-2 text-xs text-slate-400">
-            {farm ? <span>Capacité {farm.capacityPerBuilding ?? '—'} ois./bât.</span> : null}
+            {!onPlatform && farm ? <span>Capacité {farm.capacityPerBuilding ?? '—'} ois./bât.</span> : null}
           </div>
           {isAdmin ? (
             <button
               onClick={() => navigate('/app/platform')}
-              className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-sky-700"
+              className={classNames(
+                'rounded-lg px-3 py-1.5 text-xs font-semibold transition',
+                onPlatform
+                  ? 'bg-brand-600 text-white'
+                  : 'bg-brand-50 text-brand-700 hover:bg-brand-100',
+              )}
             >
               Plateforme
             </button>

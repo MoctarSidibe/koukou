@@ -42,9 +42,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           identifier,
           password,
         });
+        if (res.user.role !== 'PLATFORM_ADMIN') {
+          clearSession();
+          throw new Error(
+            "La console web est réservée à l'administrateur plateforme. Propriétaires et éleveurs utilisent l'application mobile.",
+          );
+        }
         setSession(res.accessToken, res.user);
         setUser(res.user);
-        navigate(res.user.role === 'PLATFORM_ADMIN' ? '/app/platform' : '/app');
+        navigate('/app/platform');
       },
       logout: () => {
         clearSession();

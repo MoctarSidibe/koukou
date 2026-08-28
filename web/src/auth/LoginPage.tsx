@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, Bird, Lock, User } from 'lucide-react';
+import { AlertTriangle, Lock, User } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import { ApiError } from '../api/client';
 import { getStoredUser } from '../api/client';
 import { useEffect } from 'react';
+import { Logo } from '../components/Logo';
 
 export function LoginPage() {
   const { login } = useAuth();
@@ -15,7 +16,8 @@ export function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (getStoredUser()) navigate('/app');
+    const u = getStoredUser();
+    if (u && u.role === 'PLATFORM_ADMIN') navigate('/app/platform');
   }, [navigate]);
 
   async function onSubmit(e: React.FormEvent) {
@@ -36,16 +38,18 @@ export function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-sky-950 via-slate-900 to-emerald-950 p-4">
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-brand-950 via-slate-900 to-brand-900 p-4">
       <div className="w-full max-w-sm rounded-2xl bg-white p-8 shadow-2xl">
-        <div className="mb-6 flex flex-col items-center gap-2 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-sky-600 text-white">
-            <Bird className="h-7 w-7" />
+        <div className="mb-6 flex flex-col items-center gap-3 text-center">
+          <div className="overflow-hidden rounded-2xl bg-white p-2 shadow-lg ring-1 ring-black/5">
+            <Logo className="h-12 w-auto" />
           </div>
-          <h1 className="text-xl font-bold text-slate-900">KouKou</h1>
-          <p className="text-sm text-slate-500">
-            Console de pilotage avicole
-          </p>
+          <div>
+            <h1 className="text-xl font-bold text-slate-900">KouKou</h1>
+            <p className="text-sm text-slate-500">
+              Console Administrateur Plateforme
+            </p>
+          </div>
         </div>
 
         {error ? (
@@ -63,7 +67,7 @@ export function LoginPage() {
             <div className="relative">
               <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
-                className="w-full rounded-lg border border-slate-300 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
+                className="w-full rounded-lg border border-slate-300 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
                 placeholder="+241 6x xx xx xx"
@@ -80,7 +84,7 @@ export function LoginPage() {
               <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
                 type="password"
-                className="w-full rounded-lg border border-slate-300 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
+                className="w-full rounded-lg border border-slate-300 py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
@@ -92,7 +96,7 @@ export function LoginPage() {
           <button
             type="submit"
             disabled={submitting}
-            className="w-full rounded-lg bg-sky-600 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-700 disabled:opacity-60"
+            className="w-full rounded-lg bg-brand-600 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:opacity-60"
           >
             {submitting ? 'Connexion…' : 'Se connecter'}
           </button>

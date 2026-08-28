@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { FarmProvider } from './app/FarmContext';
 import { RequiresAuth, RequiresPlatformAdmin } from './auth/guards';
+import { useAuth } from './auth/AuthContext';
 import { LoginPage } from './auth/LoginPage';
 import { Shell } from './components/Shell';
 import { DashboardPage } from './pages/DashboardPage';
@@ -17,6 +18,16 @@ import { TeamPage } from './pages/TeamPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { PlatformPage } from './pages/PlatformPage';
 
+function HomeRedirect() {
+  const { user } = useAuth();
+  return (
+    <Navigate
+      to={user?.role === 'PLATFORM_ADMIN' ? '/app/platform' : '/app/dashboard'}
+      replace
+    />
+  );
+}
+
 export function App() {
   return (
     <Routes>
@@ -31,7 +42,7 @@ export function App() {
             </FarmProvider>
           }
         >
-          <Route index element={<Navigate to="/app/dashboard" replace />} />
+          <Route index element={<HomeRedirect />} />
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="batches" element={<BatchesPage />} />
           <Route path="alerts" element={<AlertsPage />} />
