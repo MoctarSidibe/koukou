@@ -2,6 +2,7 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsDateString,
   IsEnum,
+  IsInt,
   IsNumber,
   IsOptional,
   IsString,
@@ -19,7 +20,7 @@ export class UpdateBatchDto {
     description: 'Prix d’achat unitaire du poussin (FCFA)',
   })
   @IsOptional()
-  @IsNumber()
+  @IsInt({ message: 'Le prix unitaire du poussin doit être un entier (FCFA).' })
   @Min(0)
   chickUnitPriceFcfa?: number | null;
 

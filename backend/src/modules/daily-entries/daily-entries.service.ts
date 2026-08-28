@@ -1,10 +1,17 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { AuthUser } from '../../common/decorators/current-user.decorator.js';
 import { FeedUnit } from '../../common/enums/food-type.enum.js';
+import { InputKind } from '../../common/enums/input-kind.enum.js';
 import { FarmsService } from '../farms/farms.service.js';
+import { FlockReconciliationService } from '../batches/flock-reconciliation.service.js';
 import { ProductionBatch } from '../batches/entities/production-batch.entity.js';
+import { InputLot } from '../inputs/entities/input-lot.entity.js';
 import { DailyEntry } from './entities/daily-entry.entity.js';
 import { CreateDailyEntryDto } from './dto/create-daily-entry.dto.js';
 
@@ -15,7 +22,11 @@ export class DailyEntriesService {
     private readonly entryRepo: Repository<DailyEntry>,
     @InjectRepository(ProductionBatch)
     private readonly batchRepo: Repository<ProductionBatch>,
+    @InjectRepository(InputLot)
+    private readonly inputRepo: Repository<InputLot>,
     private readonly farmsService: FarmsService,
+    private readonly flockReconciliation: FlockReconciliationService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async create(
@@ -31,34 +42,55 @@ export class DailyEntriesService {
     if (!batch)
       throw new NotFoundException('Lot introuvable dans cette ferme.');
 
-    const feedKg = this.toKg(dto, batch);
-    const existing = await this.entryRepo.findOne({
-      where: { batchId, entryDate: dto.entryDate },
+    if (dto.inputLotId != null) {
+      const lot = await this.inputRepo.findOne({
+        where: { id: dto.inputLotId, farmId },
+      });
+      if (!lot || lot.kind !== InputKind.ALIMENT) {
+        throw new BadRequestException(
+          'Lot d’intrant alimentaire introuvable dans cette ferme (catégorie ALIMENT uniquement).',
+        );
+      }
+    }
+
+    return this.dataSource.transaction(async (em) => {
+      const entryRepo = em.getRepository(DailyEntry);
+      const existing = await entryRepo.findOne({
+        where: { batchId, entryDate: dto.entryDate },
+      });
+
+      // Seuls les champs réellement fournis sont appliqués (l'upsert ne doit pas
+      // écraser les saisies du jour quand on ne met à jour qu'un seul champ).
+      const data: Partial<DailyEntry> = {
+        batchId,
+        entryDate: dto.entryDate,
+        createdById: user.id,
+      };
+      if (dto.deaths !== undefined) data.deaths = dto.deaths;
+      if (dto.feedQuantity !== undefined || dto.feedBags !== undefined) {
+        data.feedQuantity = this.toKg(dto, batch);
+      }
+      if (dto.feedUnit !== undefined) data.feedUnit = dto.feedUnit ?? null;
+      if (dto.feedType !== undefined) data.feedType = dto.feedType ?? null;
+      if (dto.inputLotId !== undefined)
+        data.inputLotId = dto.inputLotId ?? null;
+      if (dto.waterL !== undefined) data.waterL = dto.waterL;
+      if (dto.avgWeightKg !== undefined)
+        data.avgWeightKg = dto.avgWeightKg ?? null;
+      if (dto.eggsCollected !== undefined)
+        data.eggsCollected = dto.eggsCollected;
+      if (dto.eggsSellable !== undefined) data.eggsSellable = dto.eggsSellable;
+      if (dto.eggsCracked !== undefined) data.eggsCracked = dto.eggsCracked;
+      if (dto.eggsSmall !== undefined) data.eggsSmall = dto.eggsSmall;
+      if (dto.source !== undefined) data.source = dto.source;
+
+      const entry = existing
+        ? entryRepo.merge(existing, data)
+        : entryRepo.create(data);
+      await entryRepo.save(entry);
+      await this.recomputeLiveCount(em, batch.id);
+      return entry;
     });
-
-    const data = {
-      batchId,
-      entryDate: dto.entryDate,
-      deaths: dto.deaths ?? 0,
-      feedQuantity: feedKg,
-      feedUnit: dto.feedUnit ?? null,
-      feedType: dto.feedType ?? null,
-      inputLotId: dto.inputLotId ?? null,
-      waterL: dto.waterL ?? 0,
-      avgWeightKg: dto.avgWeightKg ?? null,
-      eggsCollected: dto.eggsCollected ?? 0,
-      eggsSellable: dto.eggsSellable ?? 0,
-      eggsCracked: dto.eggsCracked ?? 0,
-      eggsSmall: dto.eggsSmall ?? 0,
-      createdById: user.id,
-    };
-
-    const entry = existing
-      ? this.entryRepo.merge(existing, data)
-      : this.entryRepo.create(data);
-    await this.entryRepo.save(entry);
-    await this.recomputeLiveCount(batch);
-    return entry;
   }
 
   async listForBatch(user: AuthUser, farmId: string, batchId: string) {
@@ -79,10 +111,31 @@ export class DailyEntriesService {
     return bags * sacKg;
   }
 
-  private async recomputeLiveCount(batch: ProductionBatch) {
-    const rows = await this.entryRepo.find({ where: { batchId: batch.id } });
+  /**
+   * Recalcule le cheptel vivant comme source de vérité :
+   * arrivés − morts − oiseaux vendus (ventes non annulées) − oiseaux abattus.
+   * Verrou pessimiste (dans la transaction) pour rester en phase avec les
+   * décréments du POS.
+   */
+  private async recomputeLiveCount(em: EntityManager, batchId: string) {
+    const entryRepo = em.getRepository(DailyEntry);
+    const rows = await entryRepo.find({ where: { batchId } });
     const totalDeaths = rows.reduce((s, e) => s + e.deaths, 0);
-    batch.quantityAlive = Math.max(0, batch.quantityAtStart - totalDeaths);
-    await this.batchRepo.save(batch);
+    const [soldBirds, slaughteredBirds] = await Promise.all([
+      this.flockReconciliation.netSoldBirds(batchId),
+      this.flockReconciliation.netSlaughteredBirds(batchId),
+    ]);
+    const locked = await em
+      .getRepository(ProductionBatch)
+      .createQueryBuilder('batch')
+      .setLock('pessimistic_write')
+      .where('batch.id = :id', { id: batchId })
+      .getOne();
+    if (!locked) return;
+    locked.quantityAlive = Math.max(
+      0,
+      locked.quantityAtStart - totalDeaths - soldBirds - slaughteredBirds,
+    );
+    await em.getRepository(ProductionBatch).save(locked);
   }
 }

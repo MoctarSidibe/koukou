@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import {
   BordereauData,
   PasseportData,
@@ -82,6 +82,7 @@ export class SlaughterService {
     private readonly farmsService: FarmsService,
     private readonly metricsService: MetricsService,
     private readonly pdfService: PdfService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async create(user: AuthUser, farmId: string, dto: CreateSlaughterOrderDto) {
@@ -144,7 +145,22 @@ export class SlaughterService {
   ): Promise<SlaughterOrder> {
     await this.farmsService.assertAccessible(user, farmId);
     const order = await this.getOne(user, farmId, orderId);
-    this.assertMutable(order);
+    // Après traitement, seuls les champs de réception abattoir restent
+    // modifiables (le code lot abattoir est saisissable à tout moment).
+    if (order.status === SlaughterStatus.PROCESSED) {
+      if (
+        dto.slaughterType !== undefined ||
+        dto.plannedDate !== undefined ||
+        dto.birdCount !== undefined ||
+        dto.totalWeightKg !== undefined
+      ) {
+        throw new BadRequestException(
+          'Un ordre d’abattage traité ne peut plus être modifié (seul le code lot abattoir reste saisissable).',
+        );
+      }
+    } else {
+      this.assertMutable(order);
+    }
     if (dto.slaughterType !== undefined)
       order.slaughterType = dto.slaughterType;
     if (dto.plannedDate !== undefined) order.plannedDate = dto.plannedDate;
@@ -168,9 +184,19 @@ export class SlaughterService {
     await this.farmsService.assertAccessible(user, farmId);
     const order = await this.getOne(user, farmId, orderId);
     this.assertMutable(order);
+    if (order.status === SlaughterStatus.SENT) {
+      throw new BadRequestException(
+        'Cet ordre d’abattage a déjà été envoyé à l’abattoir.',
+      );
+    }
+
+    await this.assertLotEligibleForSend(order);
+
     if (order.destination === SlaughterDestination.INTERNE) {
       order.internalBatchCode =
-        dto.internalBatchCode ?? this.makeInternalCode();
+        dto.internalBatchCode ??
+        order.internalBatchCode ??
+        (await this.nextInternalCode());
     } else if (dto.abattoirLotCode !== undefined) {
       order.abattoirLotCode = dto.abattoirLotCode;
     }
@@ -192,14 +218,47 @@ export class SlaughterService {
     if (order.status === SlaughterStatus.CANCELLED) {
       throw new BadRequestException('Un ordre annulé ne peut pas être traité.');
     }
-    if (dto.abattoirLotCode !== undefined)
-      order.abattoirLotCode = dto.abattoirLotCode;
-    if (dto.abattoirNotes !== undefined)
-      order.abattoirNotes = dto.abattoirNotes;
-    order.status = SlaughterStatus.PROCESSED;
-    order.processedAt = new Date();
-    await this.orderRepo.save(order);
-    return order;
+    if (order.status === SlaughterStatus.PROCESSED) {
+      throw new BadRequestException('Cet ordre d’abattage a déjà été traité.');
+    }
+    if (order.status !== SlaughterStatus.SENT) {
+      throw new BadRequestException(
+        'Un ordre d’abattage doit d’abord être envoyé (SENT) avant d’être traité.',
+      );
+    }
+
+    // Synchronisation avec le cheptel : on ne peut abattre que les oiseaux
+    // réellement présents sur le lot (verrou pessimiste, dans la transaction).
+    return this.dataSource.transaction(async (em) => {
+      const batch = await em
+        .getRepository(ProductionBatch)
+        .createQueryBuilder('batch')
+        .setLock('pessimistic_write')
+        .where('batch.id = :id', { id: order.batchId })
+        .andWhere('batch.farm_id = :farmId', { farmId })
+        .getOne();
+      if (!batch) {
+        throw new BadRequestException(
+          'Lot de production introuvable dans cette ferme.',
+        );
+      }
+      if (order.birdCount > batch.quantityAlive) {
+        throw new BadRequestException(
+          `Cheptel insuffisant pour l'abattage : il reste ${batch.quantityAlive} oiseau(x) vivant(s) sur le lot, ordre de ${order.birdCount}.`,
+        );
+      }
+      batch.quantityAlive -= order.birdCount;
+      await em.getRepository(ProductionBatch).save(batch);
+
+      if (dto.abattoirLotCode !== undefined)
+        order.abattoirLotCode = dto.abattoirLotCode;
+      if (dto.abattoirNotes !== undefined)
+        order.abattoirNotes = dto.abattoirNotes;
+      order.status = SlaughterStatus.PROCESSED;
+      order.processedAt = new Date();
+      await em.getRepository(SlaughterOrder).save(order);
+      return order;
+    });
   }
 
   async cancel(
@@ -240,6 +299,7 @@ export class SlaughterService {
       batchLabel: this.batchLabel(order.batch),
       slaughterTypeLabel: TYPE_LABELS[order.slaughterType],
       destinationLabel: DESTINATION_LABELS[order.destination],
+      destination: order.destination,
       plannedDate: order.plannedDate,
       birdCount: order.birdCount,
       totalWeightKg: order.totalWeightKg,
@@ -333,6 +393,41 @@ export class SlaughterService {
     return this.pdfService.createPasseportPdf(data);
   }
 
+  private async assertLotEligibleForSend(order: SlaughterOrder): Promise<void> {
+    const batch = order.batch;
+    // Synchronisation du stock : on n'envoie que les oiseaux réellement
+    // présents sur le lot (toutes les sorties doivent rester cohérentes).
+    if (order.birdCount > batch.quantityAlive) {
+      throw new BadRequestException(
+        `Cheptel insuffisant pour l'envoi : il reste ${batch.quantityAlive} oiseau(x) vivant(s) sur le lot, ordre de ${order.birdCount}.`,
+      );
+    }
+    // Critères sanitaires (normes internationales) : pas de délai d'attente actif
+    // et prophylaxie à jour avant de pouvoir envoyer un lot à l'abattage.
+    const active = await this.alertRepo.find({
+      where: {
+        farmId: order.farmId,
+        batchId: order.batchId,
+        kind: In([AlertKind.DELAI_ATTENTE, AlertKind.PROPHYLAXIE]),
+        status: AlertStatus.ACTIVE,
+      },
+    });
+    const delaiAttente = active.find((a) => a.kind === AlertKind.DELAI_ATTENTE);
+    const prophyEnRetard = active.find(
+      (a) => a.kind === AlertKind.PROPHYLAXIE && a.level === AlertLevel.ROUGE,
+    );
+    if (delaiAttente) {
+      throw new BadRequestException(
+        'Délai d’attente antibiotique en cours : la commercialisation et l’envoi à l’abattage sont suspendus (sécurité alimentaire). Respecter le délai d’élimination avant de réessayer.',
+      );
+    }
+    if (prophyEnRetard) {
+      throw new BadRequestException(
+        'Des soins prophylactiques sont en retard au calendrier sanitaire du lot : régulariser le programme de soins avant d’envoyer le lot à l’abattage.',
+      );
+    }
+  }
+
   private batchLabel(batch: ProductionBatch): string {
     const base =
       batch.batchName ??
@@ -362,6 +457,19 @@ export class SlaughterService {
     const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const suffix = Math.floor(100000 + Math.random() * 900000);
     return `${SLAUGHTER_PREFIX}-${date}-${suffix}-I`;
+  }
+
+  private async nextInternalCode(): Promise<string> {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const candidate = this.makeInternalCode();
+      const existing = await this.orderRepo.findOne({
+        where: { internalBatchCode: candidate },
+      });
+      if (!existing) return candidate;
+    }
+    throw new BadRequestException(
+      'Impossible de générer un code de suivi interne unique. Réessayer.',
+    );
   }
 
   private async nextReference(): Promise<string> {

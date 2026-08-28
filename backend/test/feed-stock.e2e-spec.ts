@@ -18,7 +18,6 @@ describe('Module 3 — Stocks & Inventaire provende (e2e)', () => {
   let farmId: string;
   let otherFarmId: string;
   let lotAId: string;
-  let lotBId: string;
   let foreignLotId: string;
 
   async function createBatch(integrationDate: string) {
@@ -206,7 +205,7 @@ describe('Module 3 — Stocks & Inventaire provende (e2e)', () => {
   });
 
   it('réapprovisionnement ramène l’autonomie au-dessus des 5 jours → alerte résolue', async () => {
-    lotBId = await addInput('DEMA-120', 2, 'SAC'); // total : 200 kg
+    await addInput('DEMA-120', 2, 'SAC'); // total : 200 kg
     const res = await request(server)
       .get(`/farms/${farmId}/feed-stock`)
       .set('Authorization', `Bearer ${token}`)

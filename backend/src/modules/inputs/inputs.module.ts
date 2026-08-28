@@ -5,9 +5,14 @@ import { FeedStockModule } from '../feed-stock/feed-stock.module.js';
 import { InputsController } from './inputs.controller.js';
 import { InputsService } from './inputs.service.js';
 import { InputLot } from './entities/input-lot.entity.js';
+import { ProductionBatch } from '../batches/entities/production-batch.entity.js';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([InputLot]), FarmsModule, FeedStockModule],
+  imports: [
+    TypeOrmModule.forFeature([InputLot, ProductionBatch]),
+    FarmsModule,
+    FeedStockModule,
+  ],
   controllers: [InputsController],
   providers: [InputsService],
   exports: [InputsService],

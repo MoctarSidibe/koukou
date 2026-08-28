@@ -34,6 +34,7 @@ export interface BordereauData {
   batchLabel: string;
   slaughterTypeLabel: string;
   destinationLabel: string;
+  destination: 'INTERNE' | 'EXTERNE';
   plannedDate: string;
   birdCount: number;
   totalWeightKg: number | null;
@@ -280,7 +281,7 @@ export class PdfService {
           ],
           style: 'meta',
         },
-        ...(data.destinationLabel === 'EXTERNE'
+        ...(data.destination === 'EXTERNE'
           ? [
               {
                 stack: [

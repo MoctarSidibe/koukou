@@ -1,10 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AuthUser } from '../../common/decorators/current-user.decorator.js';
 import { FeedUnit, FoodType } from '../../common/enums/food-type.enum.js';
 import { InputKind } from '../../common/enums/input-kind.enum.js';
 import { FarmsService } from '../farms/farms.service.js';
+import { ProductionBatch } from '../batches/entities/production-batch.entity.js';
 import { InputLot } from './entities/input-lot.entity.js';
 
 export interface CreateInputLotInput {
@@ -27,11 +28,22 @@ export class InputsService {
   constructor(
     @InjectRepository(InputLot)
     private readonly inputRepo: Repository<InputLot>,
+    @InjectRepository(ProductionBatch)
+    private readonly batchRepo: Repository<ProductionBatch>,
     private readonly farmsService: FarmsService,
   ) {}
 
   async create(user: AuthUser, input: CreateInputLotInput): Promise<InputLot> {
     await this.farmsService.assertAccessible(user, input.farmId);
+    if (input.batchId != null) {
+      const batch = await this.batchRepo.findOne({
+        where: { id: input.batchId, farmId: input.farmId },
+      });
+      if (!batch)
+        throw new BadRequestException(
+          'Lot de production introuvable dans cette ferme.',
+        );
+    }
     return this.inputRepo.save(
       this.inputRepo.create({
         farmId: input.farmId,

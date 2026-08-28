@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsEmail,
@@ -10,11 +11,15 @@ import {
 
 export class CreateElevageDto {
   @ApiProperty({ description: 'Numéro de téléphone', example: '+24174123457' })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @IsNotEmpty({ message: 'Le numéro de téléphone est obligatoire.' })
   phone: string;
 
   @ApiProperty({ description: 'Adresse e-mail' })
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
   @IsEmail({}, { message: "L'adresse e-mail n'est pas valide." })
   email: string;
 

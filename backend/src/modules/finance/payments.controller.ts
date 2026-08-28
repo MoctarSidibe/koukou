@@ -4,6 +4,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
 import type { AuthUser } from '../../common/decorators/current-user.decorator.js';
 import { Roles } from '../../common/decorators/roles.decorator.js';
 import { UserRole } from '../../common/enums/role.enum.js';
+import { FarmsService } from '../farms/farms.service.js';
 import { PaymentsService } from './payments.service.js';
 
 @ApiTags('Finance — Paiements')
@@ -33,7 +34,10 @@ export class PaymentsController {
 @ApiTags('Finance — Méthodes de paiement')
 @Controller('farms/:farmId/payment-methods')
 export class PaymentMethodsController {
-  constructor(private readonly paymentsService: PaymentsService) {}
+  constructor(
+    private readonly paymentsService: PaymentsService,
+    private readonly farmsService: FarmsService,
+  ) {}
 
   @Get()
   @Roles(UserRole.PROPRIETAIRE, UserRole.ELEVEUR)
@@ -42,7 +46,11 @@ export class PaymentMethodsController {
       'Méthodes de paiement du POS (CASH activé ; Mobile Money / QR « Bientôt disponible »)',
   })
   @ApiParam({ name: 'farmId' })
-  methods() {
+  async methods(
+    @CurrentUser() user: AuthUser,
+    @Param('farmId') farmId: string,
+  ) {
+    await this.farmsService.assertAccessible(user, farmId);
     return this.paymentsService.listPaymentMethods();
   }
 }

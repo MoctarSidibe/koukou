@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -99,7 +100,7 @@ export class FarmsService {
       }),
     );
     const link = await this.linkEmployee(owner, farmId, employee.id);
-    return { user: employee, employment: link };
+    return { user: this.publicUser(employee), employment: link };
   }
 
   async linkEmployee(
@@ -113,6 +114,11 @@ export class FarmsService {
     });
     if (!employee)
       throw new NotFoundException('Employé (Éleveur) introuvable.');
+    if (employee.role !== UserRole.ELEVEUR) {
+      throw new BadRequestException(
+        'Seul un compte « Éleveur » (role ELEVEUR) peut être rattaché à une ferme.',
+      );
+    }
     const existing = await this.employeeRepo.findOne({
       where: { farmId, userId: employeeUserId },
     });
@@ -121,10 +127,34 @@ export class FarmsService {
     return this.employeeRepo.save(link);
   }
 
-  async listEmployees(farmId: string): Promise<FarmEmployee[]> {
-    return this.employeeRepo.find({
+  async listEmployees(
+    farmId: string,
+  ): Promise<Array<Omit<FarmEmployee, 'user'> & { user: PublicUser }>> {
+    const employments = await this.employeeRepo.find({
       where: { farmId },
       relations: { user: true },
     });
+    return employments.map((e) => {
+      const { user, ...rest } = e;
+      return { ...rest, user: this.publicUser(user) };
+    });
   }
+
+  private publicUser(user: User): PublicUser {
+    return {
+      id: user.id,
+      phone: user.phone,
+      email: user.email,
+      fullName: user.fullName,
+      role: user.role,
+    };
+  }
+}
+
+export interface PublicUser {
+  id: string;
+  phone: string;
+  email: string;
+  fullName: string;
+  role: UserRole;
 }

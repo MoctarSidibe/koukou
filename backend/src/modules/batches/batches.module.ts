@@ -8,9 +8,13 @@ import { Farm } from '../farms/entities/farm.entity.js';
 import { Building } from '../buildings/entities/building.entity.js';
 import { InputLot } from '../inputs/entities/input-lot.entity.js';
 import { ReferenceConstantsModule } from '../reference-constants/reference-constants.module.js';
+import { SaleItem } from '../finance/entities/sale-item.entity.js';
+import { Sale } from '../finance/entities/sale.entity.js';
+import { SlaughterOrder } from '../slaughter/entities/slaughter-order.entity.js';
 import { AdvisoryEngine } from './advisory.engine.js';
 import { BatchesController } from './batches.controller.js';
 import { BatchesService } from './batches.service.js';
+import { FlockReconciliationService } from './flock-reconciliation.service.js';
 import { ProductionBatch } from './entities/production-batch.entity.js';
 import { TypeHistoryEntry } from './entities/type-history-entry.entity.js';
 import { MetricsService } from './metrics.service.js';
@@ -24,6 +28,9 @@ import { MetricsService } from './metrics.service.js';
       InputLot,
       Farm,
       Building,
+      SaleItem,
+      Sale,
+      SlaughterOrder,
     ]),
     FarmsModule,
     BreedsModule,
@@ -31,7 +38,12 @@ import { MetricsService } from './metrics.service.js';
     ReferenceConstantsModule,
   ],
   controllers: [BatchesController],
-  providers: [BatchesService, MetricsService, AdvisoryEngine],
-  exports: [MetricsService, BatchesService],
+  providers: [
+    BatchesService,
+    MetricsService,
+    AdvisoryEngine,
+    FlockReconciliationService,
+  ],
+  exports: [MetricsService, BatchesService, FlockReconciliationService],
 })
 export class BatchesModule {}

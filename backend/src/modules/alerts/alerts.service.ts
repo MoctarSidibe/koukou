@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { FindOptionsWhere, IsNull, Repository } from 'typeorm';
+import { FindOptionsWhere, In, IsNull, Repository } from 'typeorm';
 import {
   AlertKind,
   AlertLevel,
@@ -89,7 +89,7 @@ export class AlertsService {
     const where: FindOptionsWhere<Alert> = {
       farmId,
       kind,
-      status: AlertStatus.ACTIVE,
+      status: In([AlertStatus.ACTIVE, AlertStatus.ACQUITTEE]),
     };
     if (buildingId) {
       where.buildingId = buildingId;

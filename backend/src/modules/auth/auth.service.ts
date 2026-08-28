@@ -3,7 +3,6 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
@@ -19,7 +18,6 @@ export class AuthService {
     @InjectRepository(User)
     private readonly usersRepo: Repository<User>,
     private readonly jwtService: JwtService,
-    private readonly config: ConfigService,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -46,18 +44,17 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
+    const identifier = dto.identifier.trim().toLowerCase();
     const user = await this.usersRepo.findOne({
-      where: [{ phone: dto.identifier }, { email: dto.identifier }],
+      where: [{ phone: identifier }, { email: identifier }],
     });
-    if (!user) {
+    const ok = await bcrypt.compare(
+      dto.password,
+      user ? user.passwordHash : DUMMY_PASSWORD_HASH,
+    );
+    if (!user || !ok) {
       throw new UnauthorizedException(
-        'Identifiants invalides : utilisateur introuvable.',
-      );
-    }
-    const ok = await bcrypt.compare(dto.password, user.passwordHash);
-    if (!ok) {
-      throw new UnauthorizedException(
-        'Identifiants invalides : mot de passe incorrect.',
+        'Identifiants invalides. Vérifiez le numéro/téléphone ou l’e-mail et le mot de passe.',
       );
     }
     return this.buildAuthResponse(user);
@@ -65,13 +62,7 @@ export class AuthService {
 
   private buildAuthResponse(user: User) {
     const payload = { sub: user.id, role: user.role };
-    const accessToken = this.jwtService.sign(payload, {
-      secret: this.config.get(
-        'JWT_SECRET',
-        'koukou_ferme_change_me_in_production',
-      ),
-      expiresIn: this.config.get('JWT_EXPIRES_IN', '7d'),
-    });
+    const accessToken = this.jwtService.sign(payload);
     return {
       accessToken,
       user: {
@@ -84,3 +75,5 @@ export class AuthService {
     };
   }
 }
+
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync('kudummy-identity-check', 10);

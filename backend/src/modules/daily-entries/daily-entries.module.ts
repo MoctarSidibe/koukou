@@ -7,10 +7,11 @@ import { ProductionBatch } from '../batches/entities/production-batch.entity.js'
 import { DailyEntriesController } from './daily-entries.controller.js';
 import { DailyEntriesService } from './daily-entries.service.js';
 import { DailyEntry } from './entities/daily-entry.entity.js';
+import { InputLot } from '../inputs/entities/input-lot.entity.js';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([DailyEntry, ProductionBatch]),
+    TypeOrmModule.forFeature([DailyEntry, ProductionBatch, InputLot]),
     FarmsModule,
     BatchesModule,
     FeedStockModule,

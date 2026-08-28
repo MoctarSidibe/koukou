@@ -102,6 +102,10 @@ export class SalesService {
           throw new BadRequestException('Client introuvable dans cette ferme.');
       }
 
+      if (dto.batchId) {
+        await this.assertBatchInFarm(em, farmId, dto.batchId);
+      }
+
       const sale = await saleRepo.save(
         saleRepo.create({
           farmId,
@@ -134,7 +138,12 @@ export class SalesService {
       const saleWithTotal = await saleRepo.save(sale);
 
       const payments: Payment[] = [];
+      const seenKeys = new Set<string>();
       for (const p of dto.payments ?? []) {
+        if (p.idempotencyKey) {
+          if (seenKeys.has(p.idempotencyKey)) continue;
+          seenKeys.add(p.idempotencyKey);
+        }
         payments.push(
           await this.paymentsService.recordPayment(em, {
             farm: farm,
@@ -201,6 +210,7 @@ export class SalesService {
     let batchId: string | null = null;
     let pieceCount: number | null = null;
     let inputLotId: string | null = null;
+    let batchValidated = false;
 
     if (productType === SaleItemProductType.POULET_PIECE) {
       batchId = this.requireBatch(dto.batchId, 'poulet à la pièce');
@@ -219,6 +229,7 @@ export class SalesService {
       batch.quantityAlive -= birds;
       await batchRepo.save(batch);
       pieceCount = birds;
+      batchValidated = true;
     } else if (productType === SaleItemProductType.POULET_KG) {
       batchId = this.requireBatch(dto.batchId, 'poulet au kilo');
       if (unit !== SaleItemUnit.KG) {
@@ -240,6 +251,7 @@ export class SalesService {
       batch.quantityAlive -= dto.pieceCount;
       await batchRepo.save(batch);
       pieceCount = dto.pieceCount;
+      batchValidated = true;
     } else if (productType === SaleItemProductType.OEUFS) {
       if (unit !== SaleItemUnit.ALVEOLES) {
         throw new BadRequestException(
@@ -270,6 +282,12 @@ export class SalesService {
     } else {
       // AUTRE : aucune contrainte d'inventaire.
       batchId = dto.batchId ?? null;
+    }
+
+    // Les autres catégories (OEUFS, PROVENDE, AUTRE) n'ont pas passé loadBatch :
+    // on vérifie que le lot rattaché appartient bien à cette ferme.
+    if (batchId != null && !batchValidated) {
+      await this.assertBatchInFarm(em, farmId, batchId);
     }
 
     const amountFcfa = Math.round(quantity * price);
@@ -345,6 +363,20 @@ export class SalesService {
         'Lot de production introuvable dans cette ferme.',
       );
     return batch;
+  }
+
+  private async assertBatchInFarm(
+    em: EntityManager,
+    farmId: string,
+    batchId: string,
+  ): Promise<void> {
+    const batch = await em.getRepository(ProductionBatch).findOne({
+      where: { id: batchId, farmId },
+    });
+    if (!batch)
+      throw new BadRequestException(
+        'Lot de production introuvable dans cette ferme.',
+      );
   }
 
   /** Vérifie que l'id feed sale existe bien dans la transaction (validate). */
@@ -471,6 +503,7 @@ export class SalesService {
     await this.dataSource.transaction(async (em) => {
       const sale = await em.getRepository(Sale).findOne({
         where: { id: saleId, farmId },
+        lock: { mode: 'pessimistic_write' },
       });
       if (!sale) throw new NotFoundException('Vente introuvable.');
       if (sale.status === SaleStatus.CANCELLED) {

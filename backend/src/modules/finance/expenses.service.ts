@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { AuthUser } from '../../common/decorators/current-user.decorator.js';
 import {
   CashMovementSource,
@@ -27,13 +27,12 @@ export class ExpensesService {
   constructor(
     @InjectRepository(Expense)
     private readonly expenseRepo: Repository<Expense>,
-    @InjectRepository(CashSession)
-    private readonly sessionRepo: Repository<CashSession>,
     @InjectRepository(CashMovement)
     private readonly movementRepo: Repository<CashMovement>,
     @InjectRepository(ProductionBatch)
     private readonly batchRepo: Repository<ProductionBatch>,
     private readonly farmsService: FarmsService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async list(
@@ -65,46 +64,63 @@ export class ExpensesService {
     await this.farmsService.assertAccessible(user, farmId);
     const batch = await this.resolveBatch(farmId, dto.batchId);
 
-    let cashMovement: CashMovement | null = null;
-    if (dto.paidByCaisse) {
-      const session = await this.sessionRepo.findOne({
-        where: { farmId, status: CashSessionStatus.OPEN },
-      });
-      if (!session) {
-        throw new BadRequestException(
-          'Aucune session de caisse ouverte : impossible de payer depuis la caisse.',
+    return this.dataSource.transaction(async (em) => {
+      let cashMovement: CashMovement | null = null;
+      if (dto.paidByCaisse) {
+        const session = await em.getRepository(CashSession).findOne({
+          where: { farmId, status: CashSessionStatus.OPEN },
+        });
+        if (!session) {
+          throw new BadRequestException(
+            'Aucune session de caisse ouverte : impossible de payer depuis la caisse.',
+          );
+        }
+        const movements = await em.getRepository(CashMovement).find({
+          where: { cashSessionId: session.id },
+        });
+        let inFcfa = 0;
+        let outFcfa = 0;
+        for (const m of movements) {
+          if (m.type === CashMovementType.IN) inFcfa += m.amountFcfa;
+          else outFcfa += m.amountFcfa;
+        }
+        const available = session.openingBalanceFcfa + inFcfa - outFcfa;
+        if (dto.amountFcfa > available) {
+          throw new BadRequestException(
+            `Solde de caisse insuffisant (${available} FCFA) pour cette dépense de ${dto.amountFcfa} FCFA. Une caisse ne peut pas être négative.`,
+          );
+        }
+        cashMovement = await em.getRepository(CashMovement).save(
+          em.getRepository(CashMovement).create({
+            farmId,
+            cashSessionId: session.id,
+            type: CashMovementType.OUT,
+            source: CashMovementSource.EXPENSE,
+            amountFcfa: dto.amountFcfa,
+            reason: dto.label ?? dto.category,
+            movementDate:
+              dto.expenseDate ?? new Date().toISOString().slice(0, 10),
+            createdById: user.id,
+          }),
         );
       }
-      cashMovement = await this.movementRepo.save(
-        this.movementRepo.create({
+
+      return em.getRepository(Expense).save(
+        em.getRepository(Expense).create({
           farmId,
-          cashSessionId: session.id,
-          type: CashMovementType.OUT,
-          source: CashMovementSource.EXPENSE,
+          expenseDate: dto.expenseDate ?? new Date().toISOString().slice(0, 10),
+          category: dto.category,
           amountFcfa: dto.amountFcfa,
-          reason: dto.label ?? dto.category,
-          movementDate:
-            dto.expenseDate ?? new Date().toISOString().slice(0, 10),
+          label: dto.label ?? null,
+          supplier: dto.supplier ?? null,
+          notes: dto.notes ?? null,
+          paidByCaisse: dto.paidByCaisse ?? false,
+          batchId: batch?.id ?? null,
+          cashMovementId: cashMovement?.id ?? null,
           createdById: user.id,
         }),
       );
-    }
-
-    return this.expenseRepo.save(
-      this.expenseRepo.create({
-        farmId,
-        expenseDate: dto.expenseDate ?? new Date().toISOString().slice(0, 10),
-        category: dto.category,
-        amountFcfa: dto.amountFcfa,
-        label: dto.label ?? null,
-        supplier: dto.supplier ?? null,
-        notes: dto.notes ?? null,
-        paidByCaisse: dto.paidByCaisse ?? false,
-        batchId: batch?.id ?? null,
-        cashMovementId: cashMovement?.id ?? null,
-        createdById: user.id,
-      }),
-    );
+    });
   }
 
   async update(

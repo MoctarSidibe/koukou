@@ -6,8 +6,10 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AuthUser } from '../../common/decorators/current-user.decorator.js';
+import { AlertKind } from '../../common/enums/alert-level.enum.js';
 import { BatchStatus } from '../../common/enums/batch-type.enum.js';
 import { Species } from '../../common/enums/species.enum.js';
+import { AlertsService } from '../alerts/alerts.service.js';
 import { FarmsService } from '../farms/farms.service.js';
 import { BreedsService } from '../breeds/breeds.service.js';
 import { Building } from '../buildings/entities/building.entity.js';
@@ -33,6 +35,7 @@ export class BatchesService {
     private readonly breedsService: BreedsService,
     private readonly metricsService: MetricsService,
     private readonly advisoryEngine: AdvisoryEngine,
+    private readonly alertsService: AlertsService,
   ) {}
 
   async create(
@@ -94,6 +97,11 @@ export class BatchesService {
     });
     if (!batch)
       throw new NotFoundException('Lot introuvable dans cette ferme.');
+    if (batch.status === BatchStatus.CLOTURE) {
+      throw new BadRequestException(
+        'Un lot clôturé ne peut plus être modifié.',
+      );
+    }
     const prevBuildingId = batch.buildingId;
     if (dto.batchName !== undefined) batch.batchName = dto.batchName ?? null;
     if (dto.couvoirSupplier !== undefined)
@@ -168,6 +176,11 @@ export class BatchesService {
     });
     if (!batch)
       throw new NotFoundException('Lot introuvable dans cette ferme.');
+    if (batch.status === BatchStatus.CLOTURE) {
+      throw new BadRequestException(
+        'Un lot clôturé ne peut plus changer de type.',
+      );
+    }
 
     if (batch.type !== dto.toType) {
       await this.historyRepo.save(
@@ -193,6 +206,11 @@ export class BatchesService {
     });
     if (!batch)
       throw new NotFoundException('Lot introuvable dans cette ferme.');
+    if (batch.status === BatchStatus.CLOTURE) {
+      throw new BadRequestException(
+        'Un lot clôturé ne peut pas repasser en vente.',
+      );
+    }
     batch.status = BatchStatus.EN_VENTE;
     await this.batchRepo.save(batch);
     await this.afterChange(user, farmId, batch);
@@ -209,6 +227,12 @@ export class BatchesService {
     batch.status = BatchStatus.CLOTURE;
     await this.batchRepo.save(batch);
     await this.afterChange(user, farmId, batch);
+    // Lot clos : les suspensions de commercialisation et soins planifiés n'ont
+    // plus de sens — on purge les alertes PROPHYLAXIE / DELAI_ATTENTE du lot.
+    await Promise.all([
+      this.alertsService.clearKind(farmId, batch.id, AlertKind.PROPHYLAXIE),
+      this.alertsService.clearKind(farmId, batch.id, AlertKind.DELAI_ATTENTE),
+    ]);
     koukouBus.emit(KOUKOU_EVENTS.BATCH_CLOSED, { farmId, batchId });
     return this.findOne(user, farmId, batchId);
   }
@@ -219,6 +243,8 @@ export class BatchesService {
     batch: ProductionBatch,
   ) {
     const metrics = await this.metricsService.compute(batch);
+    batch.lastComputedFcr = metrics.fcr ?? 0;
+    await this.batchRepo.save(batch);
     await this.advisoryEngine.runForBatch(batch, metrics);
   }
 

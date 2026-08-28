@@ -11,6 +11,7 @@ import {
   SaleItemProductType,
   SaleItemUnit,
 } from '../../common/enums/sale-item-type.enum.js';
+import { InputKind } from '../../common/enums/input-kind.enum.js';
 import { FarmsService } from '../farms/farms.service.js';
 import { AlertsService } from '../alerts/alerts.service.js';
 import { ReferenceConstantsService } from '../reference-constants/reference-constants.service.js';
@@ -304,11 +305,11 @@ export class RentabiliteService {
 
     let revenueFcfa = 0;
     let kgSold = items
-      .filter((i) => i.unit === SaleItemUnit.KG)
+      .filter((i) => i.productType === SaleItemProductType.POULET_KG)
       .reduce((s, i) => s + i.quantity, 0);
     let birdsSold = items
       .filter((i) => i.productType === SaleItemProductType.POULET_PIECE)
-      .reduce((s, i) => s + i.quantity, 0);
+      .reduce((s, i) => s + (i.pieceCount ?? Math.ceil(i.quantity)), 0);
     for (const i of items) {
       revenueFcfa += i.amountFcfa;
       if (
@@ -330,10 +331,31 @@ export class RentabiliteService {
       where: { farmId, batchId },
     });
     const expensesFcfa = expenses.reduce((s, e) => s + e.amountFcfa, 0);
-    const netFcfa = revenueFcfa - expensesFcfa;
+
+    // Déduction automatique des coûts d'intrants (optionnels) : poussins et
+    // aliments liés au lot. Ne pas les ressaisir en dépenses manuelles.
+    let chickCostFcfa: number | null = null;
+    let feedLotsCostFcfa: number | null = null;
+    if (batch?.chickUnitPriceFcfa != null && batch.quantityAtStart) {
+      chickCostFcfa = batch.chickUnitPriceFcfa * batch.quantityAtStart;
+    }
+    const feedLots = await this.inputRepo.find({
+      where: { batchId, farmId, kind: InputKind.ALIMENT },
+    });
+    if (feedLots.length > 0) {
+      const total = feedLots.reduce(
+        (s, l) => s + l.quantity * (l.unitPriceFcfa ?? 0),
+        0,
+      );
+      feedLotsCostFcfa = total > 0 ? total : null;
+    }
+    const inputsCostFcfa = (chickCostFcfa ?? 0) + (feedLotsCostFcfa ?? 0);
+    const totalCostFcfa = expensesFcfa + inputsCostFcfa;
+
+    const netFcfa = revenueFcfa - totalCostFcfa;
     const marginPct = revenueFcfa > 0 ? (netFcfa / revenueFcfa) * 100 : null;
     const costPerKgFcfa =
-      kgSold > 0 ? Math.round((expensesFcfa / kgSold) * 100) / 100 : null;
+      kgSold > 0 ? Math.round((totalCostFcfa / kgSold) * 100) / 100 : null;
 
     const byExpenseMap = new Map<
       string,
@@ -370,21 +392,7 @@ export class RentabiliteService {
       byProductMap.set(it.productType, acc);
     }
 
-    // Enrichissement optionnel : coût poussins réel (si renseigné) + prix des intrants alimentaires liés.
-    let chickCostFcfa: number | null = null;
-    let feedLotsCostFcfa: number | null = null;
-    if (batch?.chickUnitPriceFcfa != null && batch.quantityAtStart) {
-      chickCostFcfa = batch.chickUnitPriceFcfa * batch.quantityAtStart;
-    }
-    const feedLots = await this.inputRepo.find({ where: { batchId, farmId } });
-    if (feedLots.length > 0) {
-      const total = feedLots.reduce(
-        (s, l) => s + l.quantity * (l.unitPriceFcfa ?? 0),
-        0,
-      );
-      feedLotsCostFcfa = total > 0 ? total : null;
-    }
-
+    // Enrichissement : coût poussins réel (si renseigné) + prix des intrants alimentaires liés.
     return {
       ...batchBase,
       revenueFcfa,
@@ -569,14 +577,14 @@ export class RentabiliteService {
         value: String(p.amountFcfa),
       })),
       {
-        label: 'Coût poussins (référence)',
+        label: 'Coût poussins (auto)',
         value:
           pnl.enrichment.chickCostFcfa != null
             ? String(pnl.enrichment.chickCostFcfa)
             : '—',
       },
       {
-        label: 'Intrants alimentaires liés',
+        label: 'Intrants alimentaires liés (auto)',
         value:
           pnl.enrichment.feedLotsCostFcfa != null
             ? String(pnl.enrichment.feedLotsCostFcfa)
@@ -589,6 +597,13 @@ export class RentabiliteService {
     ];
     const totals = [
       { label: 'Revenus', value: String(pnl.revenueFcfa) },
+      {
+        label: 'Dont coûts d’intrants déduits',
+        value: String(
+          (pnl.enrichment.chickCostFcfa ?? 0) +
+            (pnl.enrichment.feedLotsCostFcfa ?? 0),
+        ),
+      },
       { label: 'Dépenses', value: String(pnl.expensesFcfa) },
       { label: 'Résultat net', value: String(pnl.netFcfa) },
       ...(pnl.costPerKgFcfa != null

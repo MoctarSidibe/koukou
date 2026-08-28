@@ -98,6 +98,14 @@ export class CaisseService {
         'Aucune session de caisse ouverte. Ouvrir la caisse avant d’enregistrer un mouvement.',
       );
     }
+    if (dto.type === CashMovementType.OUT) {
+      const summary = await this.summary(farmId, session);
+      if (dto.amountFcfa > summary.expectedBalanceFcfa) {
+        throw new BadRequestException(
+          `Sortie de ${dto.amountFcfa} FCFA refusée : solde de caisse disponible ${summary.expectedBalanceFcfa} FCFA. Une caisse ne peut pas être négative.`,
+        );
+      }
+    }
     return this.movementRepo.save(
       this.movementRepo.create({
         farmId,

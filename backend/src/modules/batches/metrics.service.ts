@@ -35,7 +35,8 @@ export class MetricsService {
 
     const ageDays = this.computeAgeDays(batch.integrationDate);
     const totalDeaths = entries.reduce((s, e) => s + e.deaths, 0);
-    const liveCount = Math.max(0, batch.quantityAtStart - totalDeaths);
+    // quantityAlive est la source de vérité (décréments POS/abattage + reconcilées).
+    const liveCount = Math.max(0, batch.quantityAlive);
     const mortalityPercent =
       batch.quantityAtStart > 0
         ? (totalDeaths / batch.quantityAtStart) * 100
