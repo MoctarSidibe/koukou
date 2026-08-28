@@ -46,6 +46,14 @@ export class CreateSlaughterOrderDto {
   totalWeightKg?: number;
 
   @ApiPropertyOptional({
+    description: 'Poids carcasse (kg) — rendement calculé si poids vif présent',
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Le poids carcasse doit être un nombre.' })
+  @IsPositive({ message: 'Le poids carcasse doit être positif.' })
+  carcassWeightKg?: number;
+
+  @ApiPropertyOptional({
     description:
       'Code lot abattoir (saisie manuelle possible à tout moment, jamais bloquant)',
   })
@@ -85,6 +93,14 @@ export class UpdateSlaughterOrderDto {
   @IsPositive({ message: 'Le poids total doit être positif.' })
   totalWeightKg?: number;
 
+  @ApiPropertyOptional({
+    description: 'Poids carcasse (kg) — renseigné à la réception de l’abattoir',
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Le poids carcasse doit être un nombre.' })
+  @IsPositive({ message: 'Le poids carcasse doit être positif.' })
+  carcassWeightKg?: number;
+
   @ApiPropertyOptional({ description: 'Code lot abattoir (saisie manuelle)' })
   @IsOptional()
   @IsString({ message: 'Le code lot abattoir doit être une chaîne.' })
@@ -116,6 +132,14 @@ export class SendSlaughterOrderDto {
 }
 
 export class ProcessSlaughterOrderDto {
+  @ApiPropertyOptional({
+    description: 'Poids carcasse (kg) — rendement calculé si poids vif présent',
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Le poids carcasse doit être un nombre.' })
+  @IsPositive({ message: 'Le poids carcasse doit être positif.' })
+  carcassWeightKg?: number;
+
   @ApiPropertyOptional({ description: 'Code lot abattoir reçu (manuel)' })
   @IsOptional()
   @IsString({ message: 'Le code lot abattoir doit être une chaîne.' })

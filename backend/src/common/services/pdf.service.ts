@@ -38,6 +38,8 @@ export interface BordereauData {
   plannedDate: string;
   birdCount: number;
   totalWeightKg: number | null;
+  carcassWeightKg: number | null;
+  rendementPercent: number | null;
   internalBatchCode: string | null;
   abattoirLotCode: string | null;
   createdAtLabel: string;
@@ -273,7 +275,13 @@ export class PdfService {
               `Lot : ${data.batchLabel}\n` +
               `Oiseaux : ${data.birdCount}` +
               (data.totalWeightKg != null
-                ? ` — Poids total : ${data.totalWeightKg} kg`
+                ? ` — Poids vif total : ${data.totalWeightKg} kg`
+                : '') +
+              (data.carcassWeightKg != null
+                ? ` — Poids carcasse : ${data.carcassWeightKg} kg` +
+                  (data.rendementPercent != null
+                    ? ` (Rendement : ${data.rendementPercent} %)`
+                    : '')
                 : '') +
               (data.internalBatchCode
                 ? `\nCode interne (abattoir propre) : ${data.internalBatchCode}`

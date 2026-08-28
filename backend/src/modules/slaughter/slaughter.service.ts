@@ -104,11 +104,13 @@ export class SlaughterService {
       plannedDate: dto.plannedDate,
       birdCount: dto.birdCount,
       totalWeightKg: dto.totalWeightKg ?? null,
+      carcassWeightKg: dto.carcassWeightKg ?? null,
       abattoirLotCode: dto.abattoirLotCode ?? null,
       abattoirNotes: dto.abattoirNotes ?? null,
       status: SlaughterStatus.DRAFT,
       createdById: user.id,
     });
+    this.refreshRendement(order);
     await this.orderRepo.save(order);
     return this.getOne(user, farmId, order.id);
   }
@@ -152,7 +154,8 @@ export class SlaughterService {
         dto.slaughterType !== undefined ||
         dto.plannedDate !== undefined ||
         dto.birdCount !== undefined ||
-        dto.totalWeightKg !== undefined
+        dto.totalWeightKg !== undefined ||
+        dto.carcassWeightKg !== undefined
       ) {
         throw new BadRequestException(
           'Un ordre d’abattage traité ne peut plus être modifié (seul le code lot abattoir reste saisissable).',
@@ -167,6 +170,9 @@ export class SlaughterService {
     if (dto.birdCount !== undefined) order.birdCount = dto.birdCount;
     if (dto.totalWeightKg !== undefined)
       order.totalWeightKg = dto.totalWeightKg;
+    if (dto.carcassWeightKg !== undefined)
+      order.carcassWeightKg = dto.carcassWeightKg;
+    this.refreshRendement(order);
     if (dto.abattoirLotCode !== undefined)
       order.abattoirLotCode = dto.abattoirLotCode;
     if (dto.abattoirNotes !== undefined)
@@ -254,6 +260,9 @@ export class SlaughterService {
         order.abattoirLotCode = dto.abattoirLotCode;
       if (dto.abattoirNotes !== undefined)
         order.abattoirNotes = dto.abattoirNotes;
+      if (dto.carcassWeightKg !== undefined)
+        order.carcassWeightKg = dto.carcassWeightKg;
+      this.refreshRendement(order);
       order.status = SlaughterStatus.PROCESSED;
       order.processedAt = new Date();
       await em.getRepository(SlaughterOrder).save(order);
@@ -303,6 +312,8 @@ export class SlaughterService {
       plannedDate: order.plannedDate,
       birdCount: order.birdCount,
       totalWeightKg: order.totalWeightKg,
+      carcassWeightKg: order.carcassWeightKg,
+      rendementPercent: order.rendementPercent,
       internalBatchCode: order.internalBatchCode,
       abattoirLotCode: order.abattoirLotCode,
       createdAtLabel: dateLabel(order.createdAt),
@@ -434,6 +445,27 @@ export class SlaughterService {
       batch.breed?.name ??
       `Lot ${batch.id.slice(0, 8).toUpperCase()}`;
     return `${batch.species === Species.POULET ? 'Poulet' : batch.species} — ${base} (${batch.integrationDate})`;
+  }
+
+  /**
+   * Rendement d'abattage = poids carcasse / poids vif total × 100.
+   * Calculé seulement quand les deux poids sont renseignés (saisie optionnelle,
+   * jamais bloquante pour l'acte technique). La carcasse ne peut pas dépasser
+   * le poids vif : réponse 400 sinon.
+   */
+  private refreshRendement(order: SlaughterOrder): void {
+    if (order.carcassWeightKg != null && order.totalWeightKg != null) {
+      if (order.carcassWeightKg > order.totalWeightKg) {
+        throw new BadRequestException(
+          `Le poids carcasse (${order.carcassWeightKg} kg) dépasse le poids vif total (${order.totalWeightKg} kg).`,
+        );
+      }
+      order.rendementPercent = Math.round(
+        (order.carcassWeightKg / order.totalWeightKg) * 100 * 100,
+      ) / 100;
+      return;
+    }
+    order.rendementPercent = null;
   }
 
   private assertMutable(order: SlaughterOrder): void {

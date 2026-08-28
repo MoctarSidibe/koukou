@@ -54,6 +54,12 @@ export class SlaughterOrder {
   @Column({ name: 'total_weight_kg', type: 'float', nullable: true })
   totalWeightKg: number | null;
 
+  @Column({ name: 'carcass_weight_kg', type: 'float', nullable: true })
+  carcassWeightKg: number | null;
+
+  @Column({ name: 'rendement_percent', type: 'float', nullable: true })
+  rendementPercent: number | null;
+
   @Column({ name: 'internal_batch_code', type: 'varchar', nullable: true })
   internalBatchCode: string | null;
 

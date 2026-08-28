@@ -199,10 +199,80 @@ describe('Module 5 — Abattage & Traçabilité (+ passeport sanitaire, e2e)', (
       .send({ birdCount: 50 })
       .expect(400);
     await request(server)
+      .patch(`/farms/${farmId}/slaughter-orders/${externalOrderId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ carcassWeightKg: 100 })
+      .expect(400);
+    await request(server)
       .post(`/farms/${farmId}/slaughter-orders/${externalOrderId}/cancel`)
       .set('Authorization', `Bearer ${token}`)
       .send({})
       .expect(400);
+  });
+
+  it('rendement : poids carcasse renseigné au process → rendement % calculé', async () => {
+    const created = await request(server)
+      .post(`/farms/${farmId}/slaughter-orders`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        batchId,
+        slaughterType: 'ABATTU',
+        destination: 'EXTERNE',
+        plannedDate: today(),
+        birdCount: 60,
+        totalWeightKg: 210,
+      })
+      .expect(201);
+    expect(created.body.carcassWeightKg).toBeNull();
+
+    const sent = await request(server)
+      .post(`/farms/${farmId}/slaughter-orders/${created.body.id}/send`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({})
+      .expect(201);
+    expect(sent.body.status).toBe('SENT');
+
+    const processed = await request(server)
+      .post(`/farms/${farmId}/slaughter-orders/${created.body.id}/process`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ carcassWeightKg: 168 })
+      .expect(201);
+    expect(processed.body.status).toBe('PROCESSED');
+    expect(processed.body.carcassWeightKg).toBe(168);
+    expect(processed.body.rendementPercent).toBe(80);
+    expect(processed.body.processedAt).toBeTruthy();
+
+    const bordereau = await request(server)
+      .get(`/farms/${farmId}/slaughter-orders/${created.body.id}/bordereau`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(bordereau.headers['content-type']).toContain('application/pdf');
+  });
+
+  it('rendement : poids carcasse supérieur au poids vif → 400', async () => {
+    const created = await request(server)
+      .post(`/farms/${farmId}/slaughter-orders`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        batchId,
+        slaughterType: 'ABATTU',
+        destination: 'EXTERNE',
+        plannedDate: today(),
+        birdCount: 1,
+        totalWeightKg: 100,
+      })
+      .expect(201);
+    await request(server)
+      .post(`/farms/${farmId}/slaughter-orders/${created.body.id}/send`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({})
+      .expect(201);
+    const res = await request(server)
+      .post(`/farms/${farmId}/slaughter-orders/${created.body.id}/process`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ carcassWeightKg: 150 })
+      .expect(400);
+    expect(res.body.message).toMatch(/dépasse le poids vif/);
   });
 
   it('annulation d’un ordre DRAFT', async () => {
