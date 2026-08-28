@@ -16,6 +16,7 @@ import { ReferenceConstantsModule } from './modules/reference-constants/referenc
 import { SanitaryModule } from './modules/sanitary/sanitary.module.js';
 import { FeedStockModule } from './modules/feed-stock/feed-stock.module.js';
 import { FinanceModule } from './modules/finance/finance.module.js';
+import { SlaughterModule } from './modules/slaughter/slaughter.module.js';
 import { DatabaseModule } from './database/database.module.js';
 
 @Module({
@@ -49,6 +50,7 @@ import { DatabaseModule } from './database/database.module.js';
     SanitaryModule,
     FeedStockModule,
     FinanceModule,
+    SlaughterModule,
     DatabaseModule,
   ],
   controllers: [AppController],

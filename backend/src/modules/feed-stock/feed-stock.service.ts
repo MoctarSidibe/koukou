@@ -266,31 +266,25 @@ export class FeedStockService {
     quantityKg: number,
     sacKg: number,
   ): Promise<void> {
-    const lot = await (em
-      ? em.getRepository(InputLot)
-      : this.inputRepo
+    const lot = await (
+      em ? em.getRepository(InputLot) : this.inputRepo
     ).findOne({ where: { id: inputLotId } });
     if (!lot || lot.kind !== InputKind.ALIMENT) {
       throw new BadRequestException(
         'Lot d’intrant alimentaire introuvable dans cette ferme (catégorie ALIMENT uniquement).',
       );
     }
-    const entryRepo = em
-      ? em.getRepository(DailyEntry)
-      : this.entryRepo;
-    const lossRepo = em
-      ? em.getRepository(FeedStockLoss)
-      : this.lossRepo;
-    const saleRepo2 = em
-      ? em.getRepository(FeedStockSale)
-      : this.saleRepo;
+    const entryRepo = em ? em.getRepository(DailyEntry) : this.entryRepo;
+    const lossRepo = em ? em.getRepository(FeedStockLoss) : this.lossRepo;
+    const saleRepo2 = em ? em.getRepository(FeedStockSale) : this.saleRepo;
 
     const [entries, losses, feedSales] = await Promise.all([
       entryRepo.find({ where: { inputLotId } }),
       lossRepo.find({ where: { inputLotId } }),
       saleRepo2.find({ where: { inputLotId } }),
     ]);
-    const receivedKg = (lot.unit === 'KG' ? lot.quantity : lot.quantity * sacKg) || 0;
+    const receivedKg =
+      (lot.unit === 'KG' ? lot.quantity : lot.quantity * sacKg) || 0;
     const usedKg = entries.reduce((s, e) => s + e.feedQuantity, 0);
     const lostKg = losses.reduce((s, l) => s + l.quantityKg, 0);
     const soldKg = feedSales.reduce((s, x) => s + x.quantityKg, 0);

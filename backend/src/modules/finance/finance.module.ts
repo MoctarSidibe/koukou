@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { CommonModule } from '../../common/services/common.module.js';
 import { FarmsModule } from '../farms/farms.module.js';
 import { AlertsModule } from '../alerts/alerts.module.js';
 import { ReferenceConstantsModule } from '../reference-constants/reference-constants.module.js';
@@ -16,7 +17,6 @@ import { PaymentMethodConfig } from './entities/payment-method.entity.js';
 import { CashSession } from './entities/cash-session.entity.js';
 import { CashMovement } from './entities/cash-movement.entity.js';
 import { Expense } from './entities/expense.entity.js';
-import { PdfService } from './pdf.service.js';
 import { CustomersService } from './customers.service.js';
 import { PaymentsService } from './payments.service.js';
 import { CaisseService } from './caisse.service.js';
@@ -36,6 +36,7 @@ import { RentabiliteController } from './rentabilite.controller.js';
 
 @Module({
   imports: [
+    CommonModule,
     TypeOrmModule.forFeature([
       Customer,
       Sale,
@@ -65,7 +66,6 @@ import { RentabiliteController } from './rentabilite.controller.js';
     RentabiliteController,
   ],
   providers: [
-    PdfService,
     CustomersService,
     PaymentsService,
     CaisseService,

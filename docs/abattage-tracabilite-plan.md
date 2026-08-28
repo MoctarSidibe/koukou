@@ -1,6 +1,6 @@
 # Plan — Module « Abattage & Traçabilité » (base, approche légère)
 
-> Statut : **PLAN à conserver** (non implémenté). Module futur, dans la continuité du Module 1 (Gestion des Lots).
+> Statut : **IMPLÉMENTÉ** — module `backend/src/modules/slaughter/`. Décisions validées pendant l'implémentation : `batchId` **requis** à la création ; `totalWeightKg` **optionnel en v1** (imprimé sur le bordereau) ; bordereau **PDF pdfmake** (comme les reçus POS) ; `PdfService` **partagé** dans `src/common/services/pdf.service.ts` (reçu, rapport P&L, bordereau, passeport) ; **Passeport sanitaire du lot** inclus (PDF + QR certifiant la conformité sanitaire) ; préfixe `ABT` **codé en dur** comme `VTE` (la table `reference_constants` ne stocke que des valeurs numériques — un préfixe texte y serait inutilisable).
 > Messages/erreurs UI en **FRANÇAIS**, identifiants de code en **ANGLAIS** (convention du repo).
 
 ## Objectif
@@ -98,8 +98,8 @@ Route de base : `/farms/:farmId/slaughter-orders`
 - `backend/src/modules/batches/` : rien à casser — on lie par `batchId` (FK).
 - `backend/src/database/database-seed.service.ts` : constante `abattoir_reference_prefix`.
 - `backend/src/app.module.ts` : enregistrer `SlaughterModule`.
-- Génération PDF bordereau : bibliothèque simple côté backend (ex. `pdfmake`) — choix d'implémentation futur.
-- Tests e2e : `backend/test/slaughter.e2e-spec.ts`.
+- `backend/src/common/services/pdf.service.ts` : **service PDF partagé** (reçus POS, rapports P&L, bordereau, passeport sanitaire) exposé via `CommonModule`.
+- Tests e2e : `backend/test/slaughter.e2e-spec.ts` (création INTERNE/EXTERNE, envoi/processus, bordereau PDF, code abattoir manuel, annulation, passeport, 403).
 
 ## 6. Ordre d'implémentation (quand on décidera de le faire)
 

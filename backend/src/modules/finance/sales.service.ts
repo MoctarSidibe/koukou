@@ -36,7 +36,7 @@ import { Sale } from './entities/sale.entity.js';
 import { SaleItem } from './entities/sale-item.entity.js';
 import { PaymentsService } from './payments.service.js';
 import { RentabiliteService } from './rentabilite.service.js';
-import { PdfService } from './pdf.service.js';
+import { PdfService } from '../../common/services/pdf.service.js';
 import { CreatePaymentDto } from './dto/payment.dto.js';
 import { CreateSaleDto } from './dto/sale.dto.js';
 import { FeedUnit } from '../../common/enums/food-type.enum.js';
