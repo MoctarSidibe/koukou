@@ -475,6 +475,14 @@ export class DatabaseSeedService implements OnApplicationBootstrap {
         description:
           'Alerte si un lot en vente n’a pas eu d’écoulement confirmé depuis vente_invendu_days (5 j) — invendus générant du surcoût (surcharge du bâtiment).',
       },
+      {
+        code: 'task-1',
+        kind: AlertKind.TACHE,
+        category: 'EQUIPE',
+        shortLabel: 'Tâche en retard',
+        description:
+          'Alerte ROUGE de niveau ferme si une tâche de l’équipe a dépassé son échéance (statut non FAIT / non ANNULEE).',
+      },
     ];
     for (const rule of rules) {
       const existing = await this.ruleRepo.findOne({
