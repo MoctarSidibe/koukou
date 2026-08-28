@@ -7,10 +7,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, LessThan, Not, Repository } from 'typeorm';
 import { AuthUser } from '../../common/decorators/current-user.decorator.js';
-import {
-  AlertKind,
-  AlertLevel,
-} from '../../common/enums/alert-level.enum.js';
+import { AlertKind, AlertLevel } from '../../common/enums/alert-level.enum.js';
 import { TaskStatus } from '../../common/enums/task-status.enum.js';
 import { UserRole } from '../../common/enums/role.enum.js';
 import { AlertsService } from '../alerts/alerts.service.js';
@@ -66,7 +63,11 @@ export class TasksService {
     });
   }
 
-  async getOne(user: AuthUser, farmId: string, taskId: string): Promise<FarmTask> {
+  async getOne(
+    user: AuthUser,
+    farmId: string,
+    taskId: string,
+  ): Promise<FarmTask> {
     const task = await this.getScoped(user, farmId, taskId);
     return task;
   }
@@ -144,7 +145,8 @@ export class TasksService {
   ): Promise<FarmTask> {
     await this.farmsService.assertAccessible(user, farmId);
     const task = await this.taskRepo.findOne({ where: { id: taskId, farmId } });
-    if (!task) throw new NotFoundException('Tâche introuvable dans cette ferme.');
+    if (!task)
+      throw new NotFoundException('Tâche introuvable dans cette ferme.');
     if (user.role === UserRole.ELEVEUR && task.assigneeId !== user.id) {
       throw new ForbiddenException(
         'Accès refusé : vous ne pouvez accéder qu’aux tâches qui vous sont assignées.',

@@ -1,4 +1,12 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+} from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
 import type { AuthUser } from '../../common/decorators/current-user.decorator.js';
@@ -31,7 +39,8 @@ export class TasksController {
   @Get()
   @Roles(UserRole.PROPRIETAIRE, UserRole.ELEVEUR)
   @ApiOperation({
-    summary: 'Lister les tâches (Propriétaire : toutes ; Éleveur : les siennes).',
+    summary:
+      'Lister les tâches (Propriétaire : toutes ; Éleveur : les siennes).',
   })
   @ApiParam({ name: 'farmId' })
   list(@CurrentUser() user: AuthUser, @Param('farmId') farmId: string) {

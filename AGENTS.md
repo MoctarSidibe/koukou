@@ -1,6 +1,6 @@
 # KouKou Ferme — AGENTS
 
-Application mobile de gestion avicole **offline-first** pour le Gabon (SaaS, mobile-only, pas de web). Monorepo : `backend/` (NestJS, actif), `mobile/` (**vide**, phase ultérieure), `docs/`. Repo GitHub : https://github.com/MoctarSidibe/koukou. Source de référence : **Gabon avicoles 2.docx** (CDCF) — Modules 1–5 livrés ; base du Module 1 « Gestion des Lots (Suivi Technique Zootechnique) ». Plan abattage/traçabilité : `docs/abattage-tracabilite-plan.md` (**implémenté**).
+Application mobile de gestion avicole **offline-first** pour le Gabon (SaaS). Monorepo : `backend/` (NestJS, actif), `web/` (console de pilotage, actif), `mobile/` (**vide**, phase ultérieure), `docs/`. Repo GitHub : https://github.com/MoctarSidibe/koukou. Source de référence : **Gabon avicoles 2.docx** (CDCF) — Modules 1–5 livrés ; base du Module 1 « Gestion des Lots (Suivi Technique Zootechnique) ». Plan abattage/traçabilité : `docs/abattage-tracabilite-plan.md` (**implémenté**).
 
 ## Stack & commandes (depuis `backend/`)
 - **NestJS 12 + TypeORM + PostgreSQL + Swagger**. Tests : **Vitest + supertest** (pas Jest). PostGIS et FinTech/Mobile Money : prévus au CDCF, **pas encore implémentés**.
@@ -62,16 +62,42 @@ Application mobile de gestion avicole **offline-first** pour le Gabon (SaaS, mob
 
 ## Réglages (constantes de référence)
 - `GET /reference-constants` (PROPRIETAIRE + ELEVEUR) : liste des constantes (seuils, vide sanitaire, autonomie provende…).
-- `PATCH /reference-constants/:key` (PROPRIETAIRE uniquement) : change la valeur (clé existante + `isEditable` sinon 404/400 ; valeur **strictement positive** — 0 rejeté). Constantes **globales** (non par ferme) pour le MVP.
+- `PATCH /reference-constants/:key` (**PLATFORM_ADMIN uniquement**, depuis la couche plateforme) : change la valeur (clé existante + `isEditable` sinon 404/400 ; valeur **strictement positive** — 0 rejeté). Constantes **globales** (non par ferme) pour le MVP.
 
 ## Convention de langue
 - **UI / messages utilisateur / erreurs / alertes / conseils : en FRANÇAIS**
 - **Identifiants de code (variables, tables DB, fonctions) : en ANGLAIS**
 
 ## Rôles (pas de rôle Agronome)
-- **Propriétaire** : voit tout, incluant les métriques de chaque Éleveur (IPE/GMQ, etc.).
+- **Administrateur plateforme (`PLATFORM_ADMIN`)** : pilote **toute la plateforme** (toutes fermes, toutes métriques, toute la configuration). Déclencheur : utilisateur « KouKou Platform Administrator ». Compte créé **exclusivement via variables d'environnement** `PLATFORM_ADMIN_EMAIL`/`PLATFORM_ADMIN_PHONE`/`PLATFORM_ADMIN_PASSWORD` (`PLATFORM_ADMIN_NAME` optionnel) à la semence (`DatabaseSeedService.seedPlatformAdmin`, `onApplicationBootstrap`) — **aucun défaut en clair** ; si les 3 variables manquent, aucun admin n'est créé (log d'avertissement).
+- **Rôles & héritage (`RolesGuard`)** : l'Administrateur **hérite automatiquement** des droits d'un `PROPRIETAIRE` (voir `roles.guard.ts`) pour tout l'existant. Les endpoints de pilotage sont gated `@Roles(PLATFORM_ADMIN)` sur `/admin`. Un admin ne peut pas être suspendu.
+- **Propriétaire** : voit tout (ferme), incluant les métriques de chaque Éleveur (IPE/GMQ, etc.).
 - **Éleveur** : compte lié à une ferme, saisie terrain, accès restreint (403 hors ferme rattachée). Création : `POST /farms/:farmId/eleveurs` (Propriétaire) → user `ELEVEUR` + lien `farm_employees` ; au POS il vend, encaisse et consulte la caisse, mais l'**ouverture/clôture de caisse**, les mouvements manuels, les dépenses et l'annulation de vente restent Propriétaire.
+- **Suspension** : `Farm.active` (défaut `true`) et `User.active` (défaut `true`). Ferme suspendue = **lectures OK mais nouvelles ventes bloquées** (400 « ferme suspendue ») ; utilisateur suspendu = **login refusé** (401 « compte suspendu »).
 - Tab switch Propriétaire/Éleveur = préoccupation mobile (phase ultérieure).
+
+## Couche plateforme (`backend/src/modules/platform/`)
+- Contrôleur `/admin` (`PLATFORM_ADMIN` uniquement, module `PlatformModule`, importé après `WeatherModule`) :
+  - `GET /admin/metrics` (+ `?from&to` `YYYY-MM-DD`) : agrégats cross-ferme (fermes total/actives, utilisateurs par rôle + suspendus, lots actifs + cheptel vivant, ventes CA + remises, encaissé CONFIRMED, alertes actives par niveau, clients).
+  - `GET /admin/metrics/by-farm` : mêmes indicateurs détaillés **par ferme** (avec propriétaire).
+  - `GET /admin/farms` : toutes les fermes + propriétaire (pas de `passwordHash`).
+  - `POST /admin/farms` : **provisionnement** = compte `PROPRIETAIRE` + sa ferme (409 si phone/e-mail déjà pris) → `FarmsService.provision`.
+  - `PATCH /admin/farms/:farmId` : détails (nom, commune, capacités…) + `active`/`isVerified` (suspension / vérification).
+  - `GET /admin/users` / `PATCH /admin/users/:userId/suspend` (`{suspended}`) ; suspendre un admin → 400.
+  - `GET /admin/rules` : registre de règles du moteur d'alertes (actives).
+  - `PATCH /admin/payment-methods/:code` (`{enabled}`) ; **CASH non désactivable** (400).
+  - `PATCH /admin/breeds/:id` : nom (unique, 409), type, espèce, `active`.
+  - `PATCH /admin/protocols/:id` : nom, `isEditable`.
+- Faits marquants : `FarmsService.findMine`/`assertAccessible` rendent toutes les fermes à l'admin (rôle élargi) ; `PATCH /reference-constants/:key` est désormais **admin seul** (les Prop/Eleveur gardent la lecture) ; `SalesService.create` vérifie `farm.active` ; `AuthService.login` vérifie `user.active`.
+- Tests : `test/platform-admin.e2e-spec.ts` (13 tests : 403 non-admin, fermes+propriétaire, métriques + période + by-farm, users sans password, suspension utilisateur (login bloqué), admin insuspendable, rules, méthodes de paiement, breeds/protocols, ferme suspendue → vente 400, provisionnement + 409, constantes admin seul).
+
+## Console web de pilotage (`web/`)
+- Application SPA **Vite + React 18 + TypeScript strict + Tailwind v4 + react-router v6 + TanStack Query v5 + lucide-react**. UI **en français**, code **en anglais**. Ce n'est **pas** l'app mobile du CDCF : console de pilotage (Propriétaire/Éleveur/Admin plateforme).
+- Commandes (depuis `web/`) : `npm run dev` (proxy `/api` → `http://localhost:3000`, configuré dans `vite.config.ts`) · `npm run build` = `tsc --noEmit` (typecheck) **+ vite build** · `npm run lint` (**oxlint**) · `npm run format` (prettier) · `npm run types` = `openapi-typescript http://localhost:3000/api-docs-json -o src/api/schema.d.ts` (backend démarré requis ; output commité mais **non importé** — les types locaux de `src/api/types.ts` font foi).
+- Architecture : `src/api/client.ts` (fetch + token localStorage `koukou.token`, `.download()` pour les PDF) · `src/api/types.ts` (interfaces locales) · `src/auth/` (AuthContext, LoginPage, guards `RequiresAuth`/`RequiresPlatformAdmin`) · `src/app/FarmContext.tsx` (ferme active `koukou.farmId`) · `src/components/` (Shell sidebar, ui, Charts SVG maison) · `src/pages/` (Dashboard, Lots, Sanitaire, Stock, Abattage, Alertes, Ventes, Caisse, Clients, Promos, Équipe, Réglages, Cockpit Plateforme).
+- Routes : `/login` ; `/app` (Shell) → `dashboard | batches | alerts | finance(ventes/caisse/clients/promotions) | stock | sanitary | slaughter | team | settings` ; `/app/platform` gated `PLATFORM_ADMIN` (RequiresPlatformAdmin). À l'admin, le sélecteur de ferme disparaît (couche plateforme).
+- Qualité : `tsc` strict (`noUnusedLocals`/`noUnusedParameters`) + oxlint 0 warning ; génération Swagger au clair. PDF de reçus/bordereaux/passeports téléchargés via `api.download`.
+- Monorepo : `web/` s'ajoute à `backend/` (NestJS) et `mobile/` (vide, phase ultérieure).
 
 ## Module 1 — Scope verrouillé
 - **Création de lot :** date arrivée, quantité poussins, souche, **type mutable** (CHAIR | PONDEUSE, transitions loguées dans `type_history`).
@@ -99,10 +125,12 @@ Application mobile de gestion avicole **offline-first** pour le Gabon (SaaS, mob
 - FinTech / Mobile Money (escrow) : déféré.
 
 ## État d'avancement (checkpoint)
+- **Console web de pilotage (`web/`) — nouvelle** : SPA Vite/React/TS strict/Tailwind v4 livrée « tout d'un coup » (Pilotage : Dashboard + Lots + Saisies + Courbes + Alertes ; Production : Ventes/POS, Caisse, Clients, Promos, Stock, Sanitaire, Abattage ; Gestion : Équipe, Réglages ; Plateforme : Cockpit `/admin`). `tsc --noEmit` + oxlint 0 warning, build vite OK, types Swagger générés (`npm run types`).
 - **Modules 1–5 livrés sur `main`** (GitHub : https://github.com/MoctarSidibe/koukou) — commits `d8e67c2` (M2), `14b0af5` (M3), `7adabea` (M4). Module 1 (lots/advisory/métriques) et la base (auth, fermes, alertes, constantes) faisaient partie des commits antérieurs.
 - **Module 5 « Abattage & Traçabilité »** : FAIT et validé — `SlaughterOrder` (INTERNE code de suivi auto / EXTERNE bordereau PDF + code abattoir saisi manuellement), **passeport sanitaire du lot** (PDF + QR, conformité `DELAI_ATTENTE`/`PROPHYLAXIE`), `PdfService` partagé dans `common/services/`.
 - **Module 4 « Finance & Rentabilité »** : FAIT et validé — POS espèces (Mobile Money/QR « Bientôt disponible »), ventes avec décrémentation du cheptel/aliment (`POULET_PIECE`/`POULET_KG`/`PROVENDE`/`OEUFS`/`AUTRE`), clients & crédit (solde à recouvrer), caisse journalière (ouverture/clôture/écart/mouvements), dépenses CDCF (`paidByCaisse` → sortie caisse), rentabilité par lot + rapport de période **toute période** avec exports **PDF (pdfmake, QR sur reçus)**, alertes `RENTABILITE` (clôture lot) et `VENTE` (invendus).
-- **Qualité** : `npm run build` OK (sert de typecheck), **lint 100 % propre** (warning `lotBId` supprimé), **e2e 17 fichiers / 149 tests verts** (`npm run test:e2e`, PostgreSQL local) — dont `test/slaughter.e2e-spec.ts` (9 tests), 17 + 4 de régression dans `test/finance.e2e-spec.ts`, 12 dans `test/audit-fixes.e2e-spec.ts`, 11 dans `test/audit-robustesse.e2e-spec.ts`, 7 dans `test/audit-complet.e2e-spec.ts`, **14 POS dans `test/finance-pos.e2e-spec.ts`** et **15 zone clients/promos dans `test/customer-zone.e2e-spec.ts`**.
+- **Qualité** : `npm run build` OK (sert de typecheck), **lint 100 % propre** (warning `lotBId` supprimé), **e2e 18 fichiers / 162 tests verts** (`npm run test:e2e`, PostgreSQL local) — dont `test/slaughter.e2e-spec.ts` (9 tests), 17 + 4 de régression dans `test/finance.e2e-spec.ts`, 12 dans `test/audit-fixes.e2e-spec.ts`, 11 dans `test/audit-robustesse.e2e-spec.ts`, 7 dans `test/audit-complet.e2e-spec.ts`, **14 POS dans `test/finance-pos.e2e-spec.ts`**, **15 zone clients/promos dans `test/customer-zone.e2e-spec.ts`** et **13 administration plateforme dans `test/platform-admin.e2e-spec.ts`**.
+- **Couche plateforme (`PLATFORM_ADMIN`, commit à venir)** : rôle + héritage Prop dans `RolesGuard`, compte admin **env-only** (`DatabaseSeedService.seedPlatformAdmin`), `Farm.active`/`User.active` (suspension : ferme suspendue → ventes bloquées, user suspendu → login refusé), module `platform` (`/admin/…` : metrics + by-farm, farms list/provision/patch, users/suspend, rules, payment-methods, breeds, protocols) ; `PATCH /reference-constants` passé en **admin seul**. Test `platform-admin.e2e-spec.ts`.
 - **IC et CEAG (CDCF)** : vérifiés — l'Indice de Consommation est calculé (`metrics.service.ts` `fcr`), la traçabilité d'achat CEAG passe par le HACCP `InputLot` (fournisseur, n° lot, péremption). Rien à ajouter.
 - **Audit finance (commit `772e5f8`)** — bugs corrigés : listes `GET /sales` et `GET /expenses` plantaient sur `sale.created_at`/`expense.created_at` (colonnes `created_at`/`updated_at` renommées en snake_case sur toutes les entités finance + feed-stock) ; idempotence paiement maintenant scopée par `saleId` (une clé réutilisée sur une autre vente ne renvoie plus l'ancien paiement) ; alerte `VENTE` (invendus) calculée depuis les **articles** (`sale_items.batch_id`) ET la vente — une vente liée par item éteint bien l'alerte ; garde de stock provende POS (vente > stock disponible → 400 comme le cheptel) ; verrou pessimiste (`pessimistic_write`) sur le décrément du cheptel en vente ; le correctif de libellé d'une dépense payée en caisse synchronise la raison du mouvement de caisse.
 - **Inventory & P&L (commit à venir)** — robustesse :

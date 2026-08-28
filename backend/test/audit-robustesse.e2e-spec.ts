@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
+import { DataSource } from 'typeorm';
 import { AppModule } from './../src/app.module.js';
 
 function today(): string {
@@ -426,15 +427,43 @@ describe('Audit — robustesse finance/inventaire/sécurité (e2e, passe 2)', ()
       .expect(201);
   });
 
-  it('constante de référence : valeur 0 refusée (strictement positive)', async () => {
+  it('constante de référence : valeur 0 refusée (strictement positive), admin uniquement', async () => {
+    const adminEmail = `audit.rb.admin.${Date.now()}@e2e.ga`;
+    await request(server)
+      .post('/auth/register')
+      .send({
+        phone: `+24124${Date.now()}`,
+        email: adminEmail,
+        password: 'secret123',
+        fullName: 'Admin Robuste',
+      })
+      .expect(201);
+    const ds = app.get(DataSource);
+    await ds.query(
+      `UPDATE users SET role = 'PLATFORM_ADMIN' WHERE email = $1`,
+      [adminEmail],
+    );
+    const login = await request(server)
+      .post('/auth/login')
+      .send({ identifier: adminEmail, password: 'secret123' })
+      .expect(201);
+    const adminToken = login.body.accessToken;
+
+    // Un Propriétaire n’a plus le droit de modifier les constantes.
     await request(server)
       .patch('/reference-constants/default_sac_kg')
       .set('Authorization', `Bearer ${token}`)
+      .send({ value: 50 })
+      .expect(403);
+
+    await request(server)
+      .patch('/reference-constants/default_sac_kg')
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({ value: 0 })
       .expect(400);
     await request(server)
       .patch('/reference-constants/default_sac_kg')
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .send({ value: 50 })
       .expect(200);
   });

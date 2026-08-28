@@ -55,7 +55,11 @@ import {
     FeedStockModule,
     WeatherModule,
   ],
-  controllers: [BatchesController, FarmDashboardController, BatchCurveController],
+  controllers: [
+    BatchesController,
+    FarmDashboardController,
+    BatchCurveController,
+  ],
   providers: [
     BatchesService,
     MetricsService,

@@ -92,6 +92,11 @@ export class SalesService {
 
   async create(user: AuthUser, farmId: string, dto: CreateSaleDto) {
     const farm = await this.farmsService.assertAccessible(user, farmId);
+    if (farm.active === false) {
+      throw new BadRequestException(
+        'Ferme suspendue : aucune nouvelle vente ne peut être enregistrée tant que la ferme est suspendue.',
+      );
+    }
     if (!dto.items || dto.items.length === 0) {
       throw new BadRequestException('Au moins un article est requis.');
     }
@@ -220,8 +225,7 @@ export class SalesService {
       const created = await em.getRepository(Customer).save(
         em.getRepository(Customer).create({
           farmId,
-          fullName:
-            (dto.customerName ?? '').trim() || `Client ${normalized}`,
+          fullName: (dto.customerName ?? '').trim() || `Client ${normalized}`,
           phone: normalized,
           createdById: operatorId,
         }),
@@ -494,10 +498,7 @@ export class SalesService {
           productType: SaleItemProductType.OEUFS,
         },
       });
-      soldEggs = eggItems.reduce(
-        (s, i) => s + i.quantity * EGGS_PER_ALVEOL,
-        0,
-      );
+      soldEggs = eggItems.reduce((s, i) => s + i.quantity * EGGS_PER_ALVEOL, 0);
     }
     const requestedEggs = alveoles * EGGS_PER_ALVEOL;
     const availableEggs = produced - soldEggs;
@@ -705,10 +706,7 @@ export class SalesService {
           else outFcfa += m.amountFcfa;
         }
         const available = cashSession.openingBalanceFcfa + inFcfa - outFcfa;
-        const refundTotal = confirmed.reduce(
-          (s, p) => s + p.amountFcfa,
-          0,
-        );
+        const refundTotal = confirmed.reduce((s, p) => s + p.amountFcfa, 0);
         if (refundTotal > available) {
           throw new BadRequestException(
             `Remboursement de ${refundTotal} FCFA refusé : solde de caisse disponible ${available} FCFA. La caisse ne peut pas être négative.`,

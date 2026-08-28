@@ -25,7 +25,9 @@ function defaultWeatherMock(input: RequestInfo | URL): Promise<Response> {
   const u = String(input);
   if (u.includes('geocoding-api.open-meteo.com')) {
     return Promise.resolve(
-      json({ results: [{ latitude: 0.39, longitude: 9.45, name: 'Libreville' }] }),
+      json({
+        results: [{ latitude: 0.39, longitude: 9.45, name: 'Libreville' }],
+      }),
     );
   }
   if (u.includes('api.open-meteo.com')) {
@@ -45,9 +47,12 @@ function defaultWeatherMock(input: RequestInfo | URL): Promise<Response> {
   return Promise.resolve(new Response('{}', { status: 404 }));
 }
 
-(globalThis as never as { __E2E_WEATHER_MOCK__: typeof fetch }).__E2E_WEATHER_MOCK__ =
-  defaultWeatherMock as typeof fetch;
+(
+  globalThis as never as { __E2E_WEATHER_MOCK__: typeof fetch }
+).__E2E_WEATHER_MOCK__ = defaultWeatherMock as typeof fetch;
 
-globalThis.fetch = (globalThis as never as {
-  __E2E_WEATHER_MOCK__: typeof fetch;
-}).__E2E_WEATHER_MOCK__;
+globalThis.fetch = (
+  globalThis as never as {
+    __E2E_WEATHER_MOCK__: typeof fetch;
+  }
+).__E2E_WEATHER_MOCK__;

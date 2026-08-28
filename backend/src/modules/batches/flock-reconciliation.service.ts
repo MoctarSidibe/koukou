@@ -47,7 +47,10 @@ export class FlockReconciliationService {
     return Math.max(0, Number(row?.total ?? 0));
   }
 
-  async netSlaughteredBirds(batchId: string, em?: EntityManager): Promise<number> {
+  async netSlaughteredBirds(
+    batchId: string,
+    em?: EntityManager,
+  ): Promise<number> {
     const repo = em ? em.getRepository(SlaughterOrder) : this.slaughterRepo;
     const row = await repo
       .createQueryBuilder('order')

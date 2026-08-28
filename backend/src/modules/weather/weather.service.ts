@@ -2,10 +2,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AlertsService } from '../alerts/alerts.service.js';
-import {
-  AlertKind,
-  AlertLevel,
-} from '../../common/enums/alert-level.enum.js';
+import { AlertKind, AlertLevel } from '../../common/enums/alert-level.enum.js';
 import { Farm } from '../farms/entities/farm.entity.js';
 import {
   WEATHER_ZONES,
@@ -69,10 +66,7 @@ export function thiZone(thi: number): WeatherZone {
 }
 
 export function zoneLevel(zone: WeatherZone): AlertLevel | null {
-  if (
-    zone === WEATHER_ZONES.DANGER ||
-    zone === WEATHER_ZONES.SEVERE
-  ) {
+  if (zone === WEATHER_ZONES.DANGER || zone === WEATHER_ZONES.SEVERE) {
     return AlertLevel.ROUGE;
   }
   if (zone === WEATHER_ZONES.MODERE) return AlertLevel.JAUNE;
@@ -226,7 +220,8 @@ export class WeatherService {
     const base: FarmWeather = {
       farmId: farm.id,
       available: rows.length > 0,
-      reason: rows.length > 0 ? undefined : 'Coordonnées de la ferme manquantes.',
+      reason:
+        rows.length > 0 ? undefined : 'Coordonnées de la ferme manquantes.',
       latitude,
       longitude,
       source: rows.length > 0 ? source : 'INDISPONIBLE',
@@ -300,10 +295,14 @@ export class WeatherService {
       '&count=1&country=GA&format=json&language=fr';
     try {
       const data = await fetchJson(url);
-      const first = (data.results as Array<{
-        latitude: number;
-        longitude: number;
-      }> | undefined)?.[0];
+      const first = (
+        data.results as
+          | Array<{
+              latitude: number;
+              longitude: number;
+            }>
+          | undefined
+      )?.[0];
       if (!first) return null;
       return { latitude: first.latitude, longitude: first.longitude };
     } catch {

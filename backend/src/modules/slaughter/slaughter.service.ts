@@ -460,9 +460,9 @@ export class SlaughterService {
           `Le poids carcasse (${order.carcassWeightKg} kg) dépasse le poids vif total (${order.totalWeightKg} kg).`,
         );
       }
-      order.rendementPercent = Math.round(
-        (order.carcassWeightKg / order.totalWeightKg) * 100 * 100,
-      ) / 100;
+      order.rendementPercent =
+        Math.round((order.carcassWeightKg / order.totalWeightKg) * 100 * 100) /
+        100;
       return;
     }
     order.rendementPercent = null;

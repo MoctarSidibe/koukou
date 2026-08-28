@@ -50,6 +50,9 @@ export class Farm {
   @Column({ name: 'is_verified', default: false })
   isVerified: boolean;
 
+  @Column({ default: true })
+  active: boolean;
+
   @CreateDateColumn()
   createdAt: Date;
 

@@ -141,9 +141,7 @@ describe('Audit complet — immuabilité, stocks, alertes, métriques (e2e)', ()
     });
 
     const dash = await dashboard();
-    const lb = dash.body.leaderboard.find(
-      (r: any) => r.batchId === batchAId,
-    );
+    const lb = dash.body.leaderboard.find((r: any) => r.batchId === batchAId);
     expect(lb.layRatePercent).toBe(50);
     const row = dash.body.healthOverview.find(
       (r: any) => r.batchId === batchAId,

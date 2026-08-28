@@ -27,6 +27,9 @@ export class User {
   @Column({ type: 'enum', enum: UserRole, default: UserRole.PROPRIETAIRE })
   role: UserRole;
 
+  @Column({ default: true })
+  active: boolean;
+
   @CreateDateColumn()
   createdAt: Date;
 

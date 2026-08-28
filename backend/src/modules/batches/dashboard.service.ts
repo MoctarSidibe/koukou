@@ -1,4 +1,10 @@
-import { Injectable, Logger, NotFoundException, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+  OnModuleDestroy,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Not, Repository } from 'typeorm';
 import { AuthUser } from '../../common/decorators/current-user.decorator.js';
@@ -198,9 +204,7 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
       this.evaluateDailyEntryAlerts(ev.farmId),
       this.evaluateEggStockAlerts(ev.farmId),
     ]).catch((err) =>
-      this.logger.error(
-        `Réévaluation post-saisie (ferme ${ev.farmId})`, err,
-      ),
+      this.logger.error(`Réévaluation post-saisie (ferme ${ev.farmId})`, err),
     );
   };
 
@@ -237,10 +241,7 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     const activeBatches = batches.filter(
       (b) => b.status !== BatchStatus.CLOTURE,
     );
-    const liveStock = activeBatches.reduce(
-      (s, b) => s + b.quantityAlive,
-      0,
-    );
+    const liveStock = activeBatches.reduce((s, b) => s + b.quantityAlive, 0);
     let entries: DailyEntry[] = [];
     if (batches.length > 0) {
       entries = await this.entryRepo.find({
@@ -293,7 +294,8 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
       batches: {
         total: batches.length,
         actif: batches.filter((b) => b.status === BatchStatus.ACTIF).length,
-        enVente: batches.filter((b) => b.status === BatchStatus.EN_VENTE).length,
+        enVente: batches.filter((b) => b.status === BatchStatus.EN_VENTE)
+          .length,
         cloture: batches.filter((b) => b.status === BatchStatus.CLOTURE).length,
       },
       mortalityPercent,
@@ -385,27 +387,31 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
    * Évaluée de façon paresseuse (lecture dashboard) et réévaluée après chaque
    * saisie via le bus d'événements.
    */
-  private async evaluateDailyEntryAlerts(
-    farmId: string,
-  ): Promise<string[]> {
+  private async evaluateDailyEntryAlerts(farmId: string): Promise<string[]> {
     const today = todayStr();
     const active = await this.batchRepo.find({
       where: { farmId, status: In([BatchStatus.ACTIF, BatchStatus.EN_VENTE]) },
     });
     if (active.length === 0) {
-      await this.alertsService.clearKind(farmId, null, AlertKind.SAISIE_MANQUEE);
+      await this.alertsService.clearKind(
+        farmId,
+        null,
+        AlertKind.SAISIE_MANQUEE,
+      );
       return [];
     }
     const todays = await this.entryRepo.find({
       where: { batchId: In(active.map((b) => b.id)), entryDate: today },
     });
     const have = new Set(todays.map((e) => e.batchId));
-    const missingIds = active
-      .filter((b) => !have.has(b.id))
-      .map((b) => b.id);
+    const missingIds = active.filter((b) => !have.has(b.id)).map((b) => b.id);
 
     if (missingIds.length === 0) {
-      await this.alertsService.clearKind(farmId, null, AlertKind.SAISIE_MANQUEE);
+      await this.alertsService.clearKind(
+        farmId,
+        null,
+        AlertKind.SAISIE_MANQUEE,
+      );
       return [];
     }
 
@@ -440,15 +446,15 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     const rouge = alerts.filter((a) => a.level === AlertLevel.ROUGE).length;
     // SAISIE_MANQUEE est comptée via `missingEntries` pour ne pas compter deux fois.
     const jaune = alerts.filter(
-      (a) => a.level === AlertLevel.JAUNE && a.kind !== AlertKind.SAISIE_MANQUEE,
+      (a) =>
+        a.level === AlertLevel.JAUNE && a.kind !== AlertKind.SAISIE_MANQUEE,
     ).length;
     const saisiesManquantes = missingEntries.length;
     const score = Math.max(
       0,
       Math.min(100, 100 - rouge * 20 - jaune * 5 - saisiesManquantes * 10),
     );
-    const grade =
-      GRADE_TABLE.find((g) => score >= g.min)?.grade ?? 'CRITIQUE';
+    const grade = GRADE_TABLE.find((g) => score >= g.min)?.grade ?? 'CRITIQUE';
     return {
       score,
       grade,
@@ -508,7 +514,9 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
         alertesRouges,
         alertesJaunes,
         lastEntryDate,
-        lastEntryLagDays: lastEntryDate ? daysBetween(lastEntryDate, today) : null,
+        lastEntryLagDays: lastEntryDate
+          ? daysBetween(lastEntryDate, today)
+          : null,
         breedStatus: await this.metricsService.breedStatus(b),
       });
     }
@@ -531,8 +539,7 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     return batches
       .map((b) => {
         const m = b.metrics;
-        const perfIndex =
-          b.type === BatchType.CHAIR ? m.ipe : m.layRatePercent;
+        const perfIndex = b.type === BatchType.CHAIR ? m.ipe : m.layRatePercent;
         return {
           batchId: b.id,
           batchName: b.batchName,
@@ -574,9 +581,7 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     const feedPrevWeekKg = sum(prevWeek, (e) => e.feedQuantity);
 
     const pondIds = new Set(
-      batches
-        .filter((b) => b.type === BatchType.PONDEUSE)
-        .map((b) => b.id),
+      batches.filter((b) => b.type === BatchType.PONDEUSE).map((b) => b.id),
     );
     const hens = batches
       .filter((b) => pondIds.has(b.id))
@@ -617,7 +622,9 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     batchId: string,
   ): Promise<BatchCurve> {
     await this.farmsService.assertAccessible(user, farmId);
-    const batch = await this.batchRepo.findOne({ where: { id: batchId, farmId } });
+    const batch = await this.batchRepo.findOne({
+      where: { id: batchId, farmId },
+    });
     if (!batch)
       throw new NotFoundException('Lot introuvable dans cette ferme.');
 

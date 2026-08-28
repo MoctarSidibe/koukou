@@ -18,8 +18,7 @@ export const WEATHER_ZONES = {
   DANGER: 'DANGER',
 } as const;
 
-export type WeatherZone =
-  (typeof WEATHER_ZONES)[keyof typeof WEATHER_ZONES];
+export type WeatherZone = (typeof WEATHER_ZONES)[keyof typeof WEATHER_ZONES];
 
 @Entity('weather_observations')
 @Unique(['farmId', 'forecastDate'])

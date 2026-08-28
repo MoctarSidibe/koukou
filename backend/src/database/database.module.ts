@@ -7,6 +7,7 @@ import { RuleRegistry } from '../modules/alerts/entities/rule-registry.entity.js
 import { SanitaryProtocol } from '../modules/sanitary/entities/sanitary-protocol.entity.js';
 import { ProtocolStep } from '../modules/sanitary/entities/protocol-step.entity.js';
 import { PaymentMethodConfig } from '../modules/finance/entities/payment-method.entity.js';
+import { User } from '../modules/users/entities/user.entity.js';
 import { DatabaseSeedService } from './database-seed.service.js';
 
 @Module({
@@ -19,6 +20,7 @@ import { DatabaseSeedService } from './database-seed.service.js';
       SanitaryProtocol,
       ProtocolStep,
       PaymentMethodConfig,
+      User,
     ]),
   ],
   providers: [DatabaseSeedService],

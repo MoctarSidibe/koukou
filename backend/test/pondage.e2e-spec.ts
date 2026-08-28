@@ -199,7 +199,9 @@ describe('Pondage — indicateurs de ponte par lot (e2e)', () => {
 
   it('lot introuvable → 404 ; autre ferme → 403', async () => {
     await request(server)
-      .get(`/farms/${farmId}/batches/00000000-0000-4000-8000-000000000000/pondage`)
+      .get(
+        `/farms/${farmId}/batches/00000000-0000-4000-8000-000000000000/pondage`,
+      )
       .set('Authorization', `Bearer ${token}`)
       .expect(404);
     await request(server)

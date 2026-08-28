@@ -57,6 +57,11 @@ export class AuthService {
         'Identifiants invalides. Vérifiez le numéro/téléphone ou l’e-mail et le mot de passe.',
       );
     }
+    if (user.active === false) {
+      throw new UnauthorizedException(
+        'Ce compte a été suspendu. Contactez l’administrateur.',
+      );
+    }
     return this.buildAuthResponse(user);
   }
 

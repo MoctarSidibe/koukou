@@ -1,4 +1,8 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BatchType } from '../../common/enums/batch-type.enum.js';
@@ -26,8 +30,7 @@ export class BreedsService {
   /** Référentiel zootechnique de la souche (poids/IC/ponte par semaine d'âge). */
   async getStandards(breedId: string) {
     const breed = await this.findById(breedId);
-    if (!breed)
-      throw new NotFoundException('Souche introuvable.');
+    if (!breed) throw new NotFoundException('Souche introuvable.');
     const standards = await this.standardRepo.find({
       where: { breedId },
       order: { week: 'ASC' },

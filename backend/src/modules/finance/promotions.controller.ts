@@ -13,10 +13,7 @@ import type { AuthUser } from '../../common/decorators/current-user.decorator.js
 import { Roles } from '../../common/decorators/roles.decorator.js';
 import { UserRole } from '../../common/enums/role.enum.js';
 import { PromotionsService } from './promotions.service.js';
-import {
-  CreatePromotionDto,
-  UpdatePromotionDto,
-} from './dto/promotion.dto.js';
+import { CreatePromotionDto, UpdatePromotionDto } from './dto/promotion.dto.js';
 
 @ApiTags('Finance — Promotions (coupons réduction)')
 @Roles(UserRole.PROPRIETAIRE)
@@ -38,10 +35,7 @@ export class PromotionsController {
   @Get()
   @ApiOperation({ summary: 'Liste des promotions de la ferme' })
   @ApiParam({ name: 'farmId' })
-  findAll(
-    @CurrentUser() user: AuthUser,
-    @Param('farmId') farmId: string,
-  ) {
+  findAll(@CurrentUser() user: AuthUser, @Param('farmId') farmId: string) {
     return this.promotionsService.findAll(user, farmId);
   }
 

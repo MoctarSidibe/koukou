@@ -11,10 +11,7 @@ import { Customer } from './entities/customer.entity.js';
 import { Sale } from './entities/sale.entity.js';
 import { SaleItem } from './entities/sale-item.entity.js';
 import { Payment } from './entities/payment.entity.js';
-import {
-  CreateCustomerDto,
-  UpdateCustomerDto,
-} from './dto/customer.dto.js';
+import { CreateCustomerDto, UpdateCustomerDto } from './dto/customer.dto.js';
 
 export interface CustomerBalance {
   totalInvoicedFcfa: number;
@@ -251,11 +248,9 @@ export class CustomersService {
         .getRawMany(),
     ]);
     const visits = rows.length;
-    const totalSpentFcfa = rows.reduce(
-      (s, r) => s + Number(r.total),
-      0,
-    );
-    const lastPurchaseDate = visits > 0 ? String(rows[visits - 1].saleDate) : null;
+    const totalSpentFcfa = rows.reduce((s, r) => s + Number(r.total), 0);
+    const lastPurchaseDate =
+      visits > 0 ? String(rows[visits - 1].saleDate) : null;
     const balance = await this.getCustomerFinance(farmId, customerId);
     return {
       visits,

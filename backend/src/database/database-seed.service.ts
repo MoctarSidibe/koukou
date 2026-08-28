@@ -1,10 +1,13 @@
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
+import * as bcrypt from 'bcrypt';
 import { Repository } from 'typeorm';
 import { BatchType } from '../common/enums/batch-type.enum.js';
 import { Species } from '../common/enums/species.enum.js';
 import { CareType } from '../common/enums/care-type.enum.js';
 import { ReferenceKey } from '../common/enums/reference-key.enum.js';
+import { UserRole } from '../common/enums/role.enum.js';
 import { Breed } from '../modules/breeds/entities/breed.entity.js';
 import { BreedStandard } from '../modules/breeds/entities/breed-standard.entity.js';
 import { ReferenceConstant } from '../modules/reference-constants/entities/reference-constant.entity.js';
@@ -14,6 +17,7 @@ import { SanitaryProtocol } from '../modules/sanitary/entities/sanitary-protocol
 import { ProtocolStep } from '../modules/sanitary/entities/protocol-step.entity.js';
 import { PaymentMethodConfig } from '../modules/finance/entities/payment-method.entity.js';
 import { PaymentMethod } from '../common/enums/payment-method.enum.js';
+import { User } from '../modules/users/entities/user.entity.js';
 
 interface SeedConstant {
   key: ReferenceKey;
@@ -178,9 +182,7 @@ const DEFAULT_BREEDS: { name: string; type: BatchType; species: Species }[] = [
  * documentées fournisseur), utilisé par « Breed Intelligence » pour comparer
  * chaque lot à la courbe de référence de sa souche à la semaine d'âge donnée.
  */
-const CHAIR_STANDARD_ROWS = (
-  rows: Array<[number, number, number]>,
-) =>
+const CHAIR_STANDARD_ROWS = (rows: Array<[number, number, number]>) =>
   rows.map(([week, w, f]) => ({
     week,
     targetAvgWeightKg: w,
@@ -206,29 +208,91 @@ const DEFAULT_BREED_STANDARDS: Record<
   }>
 > = {
   'Cobb 500': CHAIR_STANDARD_ROWS([
-    [1, 0.18, 0.85], [2, 0.45, 1.19], [3, 0.8, 1.42], [4, 1.18, 1.58],
-    [5, 1.59, 1.71], [6, 2.01, 1.82], [7, 2.44, 1.92], [8, 2.87, 2.01],
-    [9, 3.3, 2.1], [10, 3.72, 2.2], [11, 4.14, 2.29], [12, 4.55, 2.38],
+    [1, 0.18, 0.85],
+    [2, 0.45, 1.19],
+    [3, 0.8, 1.42],
+    [4, 1.18, 1.58],
+    [5, 1.59, 1.71],
+    [6, 2.01, 1.82],
+    [7, 2.44, 1.92],
+    [8, 2.87, 2.01],
+    [9, 3.3, 2.1],
+    [10, 3.72, 2.2],
+    [11, 4.14, 2.29],
+    [12, 4.55, 2.38],
   ]),
   'Ross 308': CHAIR_STANDARD_ROWS([
-    [1, 0.165, 0.85], [2, 0.43, 1.08], [3, 0.81, 1.29], [4, 1.24, 1.48],
-    [5, 1.69, 1.64], [6, 2.14, 1.78], [7, 2.58, 1.92], [8, 3.0, 2.04],
-    [9, 3.41, 2.16], [10, 3.8, 2.27], [11, 4.18, 2.38], [12, 4.56, 2.49],
+    [1, 0.165, 0.85],
+    [2, 0.43, 1.08],
+    [3, 0.81, 1.29],
+    [4, 1.24, 1.48],
+    [5, 1.69, 1.64],
+    [6, 2.14, 1.78],
+    [7, 2.58, 1.92],
+    [8, 3.0, 2.04],
+    [9, 3.41, 2.16],
+    [10, 3.8, 2.27],
+    [11, 4.18, 2.38],
+    [12, 4.56, 2.49],
   ]),
   Hubbard: CHAIR_STANDARD_ROWS([
-    [1, 0.18, 0.85], [2, 0.46, 1.15], [3, 0.84, 1.38], [4, 1.27, 1.58],
-    [5, 1.72, 1.74], [6, 2.18, 1.88], [7, 2.63, 2.01], [8, 3.07, 2.13],
-    [9, 3.5, 2.24], [10, 3.92, 2.34], [11, 4.33, 2.44], [12, 4.74, 2.54],
+    [1, 0.18, 0.85],
+    [2, 0.46, 1.15],
+    [3, 0.84, 1.38],
+    [4, 1.27, 1.58],
+    [5, 1.72, 1.74],
+    [6, 2.18, 1.88],
+    [7, 2.63, 2.01],
+    [8, 3.07, 2.13],
+    [9, 3.5, 2.24],
+    [10, 3.92, 2.34],
+    [11, 4.33, 2.44],
+    [12, 4.74, 2.54],
   ]),
   'ISA Brown': POND_STANDARD_ROWS([
-    [18, 5], [19, 18], [20, 40], [21, 62], [22, 78], [23, 86], [24, 90],
-    [25, 92], [27, 93], [30, 92], [34, 90], [38, 88], [42, 86], [46, 83],
-    [50, 79], [54, 75], [58, 71], [62, 67], [66, 63], [70, 58], [72, 55],
+    [18, 5],
+    [19, 18],
+    [20, 40],
+    [21, 62],
+    [22, 78],
+    [23, 86],
+    [24, 90],
+    [25, 92],
+    [27, 93],
+    [30, 92],
+    [34, 90],
+    [38, 88],
+    [42, 86],
+    [46, 83],
+    [50, 79],
+    [54, 75],
+    [58, 71],
+    [62, 67],
+    [66, 63],
+    [70, 58],
+    [72, 55],
   ]),
   'Lohmann Brown': POND_STANDARD_ROWS([
-    [18, 5], [19, 15], [20, 38], [21, 60], [22, 75], [23, 85], [24, 89],
-    [26, 90], [28, 91], [32, 92], [36, 90], [40, 88], [44, 85], [48, 82],
-    [52, 78], [56, 73], [60, 68], [64, 62], [68, 56], [72, 50],
+    [18, 5],
+    [19, 15],
+    [20, 38],
+    [21, 60],
+    [22, 75],
+    [23, 85],
+    [24, 89],
+    [26, 90],
+    [28, 91],
+    [32, 92],
+    [36, 90],
+    [40, 88],
+    [44, 85],
+    [48, 82],
+    [52, 78],
+    [56, 73],
+    [60, 68],
+    [64, 62],
+    [68, 56],
+    [72, 50],
   ]),
 };
 
@@ -399,9 +463,13 @@ export class DatabaseSeedService implements OnApplicationBootstrap {
     private readonly stepRepo: Repository<ProtocolStep>,
     @InjectRepository(PaymentMethodConfig)
     private readonly paymentMethodRepo: Repository<PaymentMethodConfig>,
+    @InjectRepository(User)
+    private readonly usersRepo: Repository<User>,
+    private readonly config: ConfigService,
   ) {}
 
   async onApplicationBootstrap() {
+    await this.seedPlatformAdmin();
     await this.seedConstants();
     await this.seedBreeds();
     await this.seedBreedStandards();
@@ -409,6 +477,32 @@ export class DatabaseSeedService implements OnApplicationBootstrap {
     await this.seedProtocols();
     await this.seedPaymentMethods();
     this.logger.log('Semence des données de référence terminée.');
+  }
+
+  /** Compte administrateur plateforme (env uniquement, aucun défaut en clair). */
+  private async seedPlatformAdmin(): Promise<void> {
+    const email = this.config.get('PLATFORM_ADMIN_EMAIL');
+    const phone = this.config.get('PLATFORM_ADMIN_PHONE');
+    const password = this.config.get('PLATFORM_ADMIN_PASSWORD');
+    if (!email || !phone || !password) {
+      this.logger.warn(
+        'Variables PLATFORM_ADMIN_EMAIL/PLATFORM_ADMIN_PHONE/PLATFORM_ADMIN_PASSWORD absentes : aucun administrateur plateforme créé.',
+      );
+      return;
+    }
+    const existing = await this.usersRepo.findOne({ where: { email } });
+    if (existing) return;
+    await this.usersRepo.save(
+      this.usersRepo.create({
+        phone,
+        email,
+        passwordHash: await bcrypt.hash(password, 10),
+        fullName:
+          this.config.get('PLATFORM_ADMIN_NAME') ?? 'Administrateur Plateforme',
+        role: UserRole.PLATFORM_ADMIN,
+      }),
+    );
+    this.logger.log(`Compte administrateur plateforme prêt (${email}).`);
   }
 
   private async seedConstants() {

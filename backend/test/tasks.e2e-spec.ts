@@ -171,8 +171,7 @@ describe('Tâches & équipe — module Tâches (e2e)', () => {
     await request(server)
       .patch(`/farms/${farmId}/tasks/${assignedTaskId}`)
       .set('Authorization', `Bearer ${eleveurToken}`)
-      .send({ title: 'Renommée'}
-      )
+      .send({ title: 'Renommée' })
       .expect(403);
 
     await request(server)

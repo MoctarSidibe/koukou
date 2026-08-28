@@ -19,6 +19,7 @@ import { FinanceModule } from './modules/finance/finance.module.js';
 import { SlaughterModule } from './modules/slaughter/slaughter.module.js';
 import { TasksModule } from './modules/tasks/tasks.module.js';
 import { WeatherModule } from './modules/weather/weather.module.js';
+import { PlatformModule } from './modules/platform/platform.module.js';
 import { DatabaseModule } from './database/database.module.js';
 
 @Module({
@@ -55,6 +56,7 @@ import { DatabaseModule } from './database/database.module.js';
     SlaughterModule,
     TasksModule,
     WeatherModule,
+    PlatformModule,
     DatabaseModule,
   ],
   controllers: [AppController],

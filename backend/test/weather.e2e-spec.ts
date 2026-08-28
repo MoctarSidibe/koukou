@@ -240,8 +240,10 @@ describe('Météo & heat-stress (THI) (e2e)', () => {
   });
 
   afterAll(() => {
-    globalThis.fetch = (globalThis as never as {
-      __E2E_WEATHER_MOCK__: typeof fetch;
-    }).__E2E_WEATHER_MOCK__;
+    globalThis.fetch = (
+      globalThis as never as {
+        __E2E_WEATHER_MOCK__: typeof fetch;
+      }
+    ).__E2E_WEATHER_MOCK__;
   });
 });

@@ -21,10 +21,10 @@ export class ReferenceConstantsController {
   }
 
   @Patch(':key')
-  @Roles(UserRole.PROPRIETAIRE)
+  @Roles(UserRole.PLATFORM_ADMIN)
   @ApiOperation({
     summary:
-      'Modifier une constante de référence (réglages ferme) — Propriétaire uniquement, constantes éditables uniquement.',
+      'Modifier une constante de référence (réglages plateforme) — Administrateur plateforme uniquement, constantes éditables uniquement.',
   })
   @ApiParam({
     name: 'key',

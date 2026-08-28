@@ -26,15 +26,11 @@ describe('Module 4 — POS ferme (régression & gardes manquantes, e2e)', () => 
   }
 
   function get(url: string, auth = token) {
-    return request(server)
-      .get(url)
-      .set('Authorization', `Bearer ${auth}`);
+    return request(server).get(url).set('Authorization', `Bearer ${auth}`);
   }
 
   function del(url: string, auth = token) {
-    return request(server)
-      .delete(url)
-      .set('Authorization', `Bearer ${auth}`);
+    return request(server).delete(url).set('Authorization', `Bearer ${auth}`);
   }
 
   function openCaisse(balance = 0) {
@@ -168,10 +164,10 @@ describe('Module 4 — POS ferme (régression & gardes manquantes, e2e)', () => 
     expect(created.body.sale.status).toBe('OUTSTANDING');
     salePartialId = created.body.sale.id;
 
-    const res = await post(
-      `/farms/${farmId}/sales/${salePartialId}/payments`,
-      { method: 'CASH', amountFcfa: 7000 },
-    );
+    const res = await post(`/farms/${farmId}/sales/${salePartialId}/payments`, {
+      method: 'CASH',
+      amountFcfa: 7000,
+    });
     expect(res.status).toBe(400);
     expect(res.body.message).toContain('dépasse le solde');
   });
@@ -301,10 +297,10 @@ describe('Module 4 — POS ferme (régression & gardes manquantes, e2e)', () => 
   });
 
   it('encaissement sur une vente annulée → 400', async () => {
-    const res = await post(
-      `/farms/${farmId}/sales/${saleRefundId}/payments`,
-      { method: 'CASH', amountFcfa: 5000 },
-    );
+    const res = await post(`/farms/${farmId}/sales/${saleRefundId}/payments`, {
+      method: 'CASH',
+      amountFcfa: 5000,
+    });
     expect(res.status).toBe(400);
     expect(res.body.message).toContain('annulée');
   });

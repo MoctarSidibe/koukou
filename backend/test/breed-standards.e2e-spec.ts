@@ -85,9 +85,7 @@ describe('Référentiel souches & aperçu santé (Breed Intelligence) (e2e)', ()
     expect(res.body.breedId).toBe(cobbId);
     expect(res.body.breedName).toBe('Cobb 500');
     expect(res.body.standards).toHaveLength(12);
-    const weeks = res.body.standards.map(
-      (s: { week: number }) => s.week,
-    );
+    const weeks = res.body.standards.map((s: { week: number }) => s.week);
     expect(weeks).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
     expect(res.body.standards[0].targetAvgWeightKg).toBe(0.18);
     expect(res.body.standards[11].targetAvgWeightKg).toBe(4.55);
@@ -105,11 +103,13 @@ describe('Référentiel souches & aperçu santé (Breed Intelligence) (e2e)', ()
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
     const byWeek = new Map(
-      (res.body.standards as Array<{
-        week: number;
-        targetLayRatePercent: number | null;
-        targetAvgWeightKg: number | null;
-      }>).map((s) => [s.week, s] as const),
+      (
+        res.body.standards as Array<{
+          week: number;
+          targetLayRatePercent: number | null;
+          targetAvgWeightKg: number | null;
+        }>
+      ).map((s) => [s.week, s] as const),
     );
     expect(byWeek.get(18)?.targetLayRatePercent).toBe(5);
     expect(byWeek.get(30)?.targetLayRatePercent).toBe(92);

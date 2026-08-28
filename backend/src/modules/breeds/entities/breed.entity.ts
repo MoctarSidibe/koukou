@@ -27,6 +27,9 @@ export class Breed {
   @Column({ name: 'is_custom', default: false })
   isCustom: boolean;
 
+  @Column({ default: true })
+  active: boolean;
+
   @CreateDateColumn()
   createdAt: Date;
 

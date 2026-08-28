@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
+import { DataSource } from 'typeorm';
 import { AppModule } from './../src/app.module.js';
 
 function daysAgo(n: number): string {
@@ -425,7 +426,32 @@ describe('Audit — corrections pravide & gaps (e2e)', () => {
   });
 
   describe('Réglages — constante de référence (reference-constants)', () => {
-    it('liste les constantes et permet au Propriétaire de modifier une valeur', async () => {
+    let adminToken: string;
+
+    beforeAll(async () => {
+      const adminEmail = `audit.admin.${Date.now()}@e2e.ga`;
+      await request(server)
+        .post('/auth/register')
+        .send({
+          phone: `+2417${Date.now()}`,
+          email: adminEmail,
+          password: 'secret123',
+          fullName: 'Admin Audit',
+        })
+        .expect(201);
+      const ds = app.get(DataSource);
+      await ds.query(
+        `UPDATE users SET role = 'PLATFORM_ADMIN' WHERE email = $1`,
+        [adminEmail],
+      );
+      const login = await request(server)
+        .post('/auth/login')
+        .send({ identifier: adminEmail, password: 'secret123' })
+        .expect(201);
+      adminToken = login.body.accessToken;
+    });
+
+    it('liste les constantes ; un Propriétaire peut lire mais ne modifie plus (403)', async () => {
       const list = await request(server)
         .get('/reference-constants')
         .set('Authorization', `Bearer ${token}`)
@@ -434,9 +460,17 @@ describe('Audit — corrections pravide & gaps (e2e)', () => {
       const sac = list.body.find((c: any) => c.key === 'default_sac_kg');
       expect(sac).toBeTruthy();
 
-      const patched = await request(server)
+      await request(server)
         .patch('/reference-constants/default_sac_kg')
         .set('Authorization', `Bearer ${token}`)
+        .send({ value: 55 })
+        .expect(403);
+    });
+
+    it('l’Administrateur plateforme modifie (200), clé inconnue 404, Éleveur 403', async () => {
+      const patched = await request(server)
+        .patch('/reference-constants/default_sac_kg')
+        .set('Authorization', `Bearer ${adminToken}`)
         .send({ value: 55 })
         .expect(200);
       expect(patched.body.value).toBe(55);
@@ -451,15 +485,13 @@ describe('Audit — corrections pravide & gaps (e2e)', () => {
 
       await request(server)
         .patch('/reference-constants/default_sac_kg')
-        .set('Authorization', `Bearer ${token}`)
+        .set('Authorization', `Bearer ${adminToken}`)
         .send({ value: 50 })
         .expect(200);
-    });
 
-    it('refuse une clé inconnue (404) et le droit d’un Éleveur (403)', async () => {
       await request(server)
         .patch('/reference-constants/clé-inconnue')
-        .set('Authorization', `Bearer ${token}`)
+        .set('Authorization', `Bearer ${adminToken}`)
         .send({ value: 1 })
         .expect(404);
 

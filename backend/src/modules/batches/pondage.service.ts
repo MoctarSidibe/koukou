@@ -54,8 +54,11 @@ export class PondageService {
     batchId: string,
   ): Promise<PondageSummary> {
     await this.farmsService.assertAccessible(user, farmId);
-    const batch = await this.batchRepo.findOne({ where: { id: batchId, farmId } });
-    if (!batch) throw new NotFoundException('Lot introuvable dans cette ferme.');
+    const batch = await this.batchRepo.findOne({
+      where: { id: batchId, farmId },
+    });
+    if (!batch)
+      throw new NotFoundException('Lot introuvable dans cette ferme.');
 
     const entries = await this.entryRepo.find({
       where: { batchId },
@@ -79,7 +82,10 @@ export class PondageService {
       totals: { collected, sellable, cracked, small },
       sellableRatioPercent:
         collected > 0 ? round2((sellable / collected) * 100) : null,
-      eggsPerHen: batch.quantityAtStart > 0 ? round2(collected / batch.quantityAtStart) : null,
+      eggsPerHen:
+        batch.quantityAtStart > 0
+          ? round2(collected / batch.quantityAtStart)
+          : null,
       layRatePercent:
         batch.type === BatchType.PONDEUSE && liveCount > 0
           ? round2((collected / liveCount) * 100)
@@ -88,7 +94,10 @@ export class PondageService {
     };
   }
 
-  private buildWeekly(entries: DailyEntry[], batch: ProductionBatch): PondageWeek[] {
+  private buildWeekly(
+    entries: DailyEntry[],
+    batch: ProductionBatch,
+  ): PondageWeek[] {
     type WeekGroup = {
       weekStart: string;
       collected: number;
@@ -141,8 +150,7 @@ export class PondageService {
         cracked: w.cracked,
         small: w.small,
         daysRecorded: w.dates.size,
-        layRatePercent:
-          layRatePercent != null ? round2(layRatePercent) : null,
+        layRatePercent: layRatePercent != null ? round2(layRatePercent) : null,
       };
     });
   }

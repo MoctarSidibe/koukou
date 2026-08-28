@@ -10,10 +10,7 @@ import { AuthUser } from '../../common/decorators/current-user.decorator.js';
 import { FarmsService } from '../farms/farms.service.js';
 import { Customer } from './entities/customer.entity.js';
 import { Promotion } from './entities/promotion.entity.js';
-import {
-  CreatePromotionDto,
-  UpdatePromotionDto,
-} from './dto/promotion.dto.js';
+import { CreatePromotionDto, UpdatePromotionDto } from './dto/promotion.dto.js';
 import { PromotionType } from '../../common/enums/promotion-type.enum.js';
 
 function todayStr(): string {
@@ -138,8 +135,7 @@ export class PromotionsService {
     if (!promo)
       throw new BadRequestException(`Code promo « ${code} » invalide.`);
     const today = todayStr();
-    if (!promo.active)
-      throw new BadRequestException('Code promo inactif.');
+    if (!promo.active) throw new BadRequestException('Code promo inactif.');
     if (promo.startDate && promo.startDate > today)
       throw new BadRequestException(
         `Ce code promo n'est pas encore actif (actif à partir du ${promo.startDate}).`,
@@ -148,10 +144,7 @@ export class PromotionsService {
       throw new BadRequestException(
         `Ce code promo a expiré le ${promo.endDate}.`,
       );
-    if (
-      promo.minSubtotalFcfa != null &&
-      subtotalFcfa < promo.minSubtotalFcfa
-    ) {
+    if (promo.minSubtotalFcfa != null && subtotalFcfa < promo.minSubtotalFcfa) {
       throw new BadRequestException(
         `Montant minimum de ${promo.minSubtotalFcfa} FCFA requis pour utiliser ce code.`,
       );
@@ -172,9 +165,11 @@ export class PromotionsService {
     farmId: string,
     customerId: string,
   ): Promise<void> {
-    const customer = await this.promoRepo.manager.getRepository(Customer).findOne({
-      where: { id: customerId, farmId },
-    });
+    const customer = await this.promoRepo.manager
+      .getRepository(Customer)
+      .findOne({
+        where: { id: customerId, farmId },
+      });
     if (!customer)
       throw new BadRequestException('Client introuvable dans cette ferme.');
   }

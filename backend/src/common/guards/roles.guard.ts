@@ -26,11 +26,17 @@ export class RolesGuard implements CanActivate {
     if (!user) {
       throw new ForbiddenException('Accès refusé.');
     }
-    if (!requiredRoles.includes(user.role as UserRole)) {
-      throw new ForbiddenException(
-        'Accès refusé : vous n’avez pas le rôle requis pour cette action.',
-      );
+    // L'administrateur plateforme hérite des droits d'un Propriétaire de ferme.
+    const role = user.role as UserRole;
+    if (
+      requiredRoles.includes(role) ||
+      (role === UserRole.PLATFORM_ADMIN &&
+        requiredRoles.includes(UserRole.PROPRIETAIRE))
+    ) {
+      return true;
     }
-    return true;
+    throw new ForbiddenException(
+      'Accès refusé : vous n’avez pas le rôle requis pour cette action.',
+    );
   }
 }

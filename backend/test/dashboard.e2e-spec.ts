@@ -144,7 +144,12 @@ describe('Tableau de bord & courbes de croissance (e2e)', () => {
     expect(body.farmId).toBe(farmId);
     expect(typeof body.generatedAt).toBe('string');
     expect(body.liveStock).toBe(98);
-    expect(body.batches).toEqual({ total: 1, actif: 1, enVente: 0, cloture: 0 });
+    expect(body.batches).toEqual({
+      total: 1,
+      actif: 1,
+      enVente: 0,
+      cloture: 0,
+    });
     expect(body.mortalityPercent).toBe(2);
     expect(body.viabilityPercent).toBe(98);
     expect(body.feedAutonomyDays).toBe(25);
@@ -304,7 +309,9 @@ describe('Tableau de bord & courbes de croissance (e2e)', () => {
 
   it('accès : lot introuvable → 404 ; autre ferme → 403', async () => {
     await request(server)
-      .get(`/farms/${farmId}/batches/00000000-0000-4000-8000-000000000000/curve`)
+      .get(
+        `/farms/${farmId}/batches/00000000-0000-4000-8000-000000000000/curve`,
+      )
       .set('Authorization', `Bearer ${token}`)
       .expect(404);
     await request(server)

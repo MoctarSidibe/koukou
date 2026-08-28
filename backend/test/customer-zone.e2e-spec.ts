@@ -30,9 +30,7 @@ describe('Module 4 — Zone clients & promos (find-or-create, segments, coupons)
   }
 
   function get(url: string, auth = token) {
-    return request(server)
-      .get(url)
-      .set('Authorization', `Bearer ${auth}`);
+    return request(server).get(url).set('Authorization', `Bearer ${auth}`);
   }
 
   async function createAUTORESale(
@@ -41,7 +39,12 @@ describe('Module 4 — Zone clients & promos (find-or-create, segments, coupons)
   ) {
     return post('/farms/' + farmId + '/sales', {
       items: [
-        { productType: 'AUTRE', quantity: 1, unit: 'UNITE', unitPriceFcfa: priceFcfa },
+        {
+          productType: 'AUTRE',
+          quantity: 1,
+          unit: 'UNITE',
+          unitPriceFcfa: priceFcfa,
+        },
       ],
       payments: [{ method: 'CASH', amountFcfa: priceFcfa }],
       ...extra,
@@ -130,9 +133,7 @@ describe('Module 4 — Zone clients & promos (find-or-create, segments, coupons)
 
     const list = await get('/farms/' + farmId + '/customers');
     expect(list.status).toBe(200);
-    const aline = list.body.find(
-      (c: any) => c.phone === '+24160123456',
-    );
+    const aline = list.body.find((c: any) => c.phone === '+24160123456');
     expect(aline).toBeTruthy();
     expect(aline.fullName).toBe('Aline Ovono');
     expect(aline.segment).toBe('NOUVEAU');
@@ -227,7 +228,9 @@ describe('Module 4 — Zone clients & promos (find-or-create, segments, coupons)
   });
 
   it('GET :customerId/stats inexistant → 404', async () => {
-    const res = await get(`/farms/${farmId}/customers/00000000-0000-4000-8000-000000000000/stats`);
+    const res = await get(
+      `/farms/${farmId}/customers/00000000-0000-4000-8000-000000000000/stats`,
+    );
     expect(res.status).toBe(404);
     expect(res.body.message).toContain('Client introuvable');
   });
@@ -293,7 +296,12 @@ describe('Module 4 — Zone clients & promos (find-or-create, segments, coupons)
 
     const res = await post('/farms/' + farmId + '/sales', {
       items: [
-        { productType: 'AUTRE', quantity: 1, unit: 'UNITE', unitPriceFcfa: 10000 },
+        {
+          productType: 'AUTRE',
+          quantity: 1,
+          unit: 'UNITE',
+          unitPriceFcfa: 10000,
+        },
       ],
       promoCode: 'remise500',
       payments: [{ method: 'CASH', amountFcfa: 9500 }],
@@ -334,7 +342,14 @@ describe('Module 4 — Zone clients & promos (find-or-create, segments, coupons)
     }).expect(201);
 
     const invalide = await post('/farms/' + farmId + '/sales', {
-      items: [{ productType: 'AUTRE', quantity: 1, unit: 'UNITE', unitPriceFcfa: 1000 }],
+      items: [
+        {
+          productType: 'AUTRE',
+          quantity: 1,
+          unit: 'UNITE',
+          unitPriceFcfa: 1000,
+        },
+      ],
       promoCode: 'ZZZ',
       payments: [{ method: 'CASH', amountFcfa: 1000 }],
     });
@@ -342,7 +357,14 @@ describe('Module 4 — Zone clients & promos (find-or-create, segments, coupons)
     expect(invalide.body.message).toContain('invalide');
 
     const inactif = await post('/farms/' + farmId + '/sales', {
-      items: [{ productType: 'AUTRE', quantity: 1, unit: 'UNITE', unitPriceFcfa: 1000 }],
+      items: [
+        {
+          productType: 'AUTRE',
+          quantity: 1,
+          unit: 'UNITE',
+          unitPriceFcfa: 1000,
+        },
+      ],
       promoCode: 'INACTIF',
       payments: [{ method: 'CASH', amountFcfa: 1000 }],
     });
@@ -350,7 +372,14 @@ describe('Module 4 — Zone clients & promos (find-or-create, segments, coupons)
     expect(inactif.body.message).toContain('inactif');
 
     const expire = await post('/farms/' + farmId + '/sales', {
-      items: [{ productType: 'AUTRE', quantity: 1, unit: 'UNITE', unitPriceFcfa: 1000 }],
+      items: [
+        {
+          productType: 'AUTRE',
+          quantity: 1,
+          unit: 'UNITE',
+          unitPriceFcfa: 1000,
+        },
+      ],
       promoCode: 'EXPIRE',
       payments: [{ method: 'CASH', amountFcfa: 1000 }],
     });
@@ -358,7 +387,14 @@ describe('Module 4 — Zone clients & promos (find-or-create, segments, coupons)
     expect(expire.body.message).toContain('expiré');
 
     const futur = await post('/farms/' + farmId + '/sales', {
-      items: [{ productType: 'AUTRE', quantity: 1, unit: 'UNITE', unitPriceFcfa: 1000 }],
+      items: [
+        {
+          productType: 'AUTRE',
+          quantity: 1,
+          unit: 'UNITE',
+          unitPriceFcfa: 1000,
+        },
+      ],
       promoCode: 'FUTUR',
       payments: [{ method: 'CASH', amountFcfa: 1000 }],
     });
@@ -366,7 +402,14 @@ describe('Module 4 — Zone clients & promos (find-or-create, segments, coupons)
     expect(futur.body.message).toContain('pas encore actif');
 
     const min = await post('/farms/' + farmId + '/sales', {
-      items: [{ productType: 'AUTRE', quantity: 1, unit: 'UNITE', unitPriceFcfa: 1000 }],
+      items: [
+        {
+          productType: 'AUTRE',
+          quantity: 1,
+          unit: 'UNITE',
+          unitPriceFcfa: 1000,
+        },
+      ],
       promoCode: 'MIN20000',
       payments: [{ method: 'CASH', amountFcfa: 1000 }],
     });
@@ -389,7 +432,14 @@ describe('Module 4 — Zone clients & promos (find-or-create, segments, coupons)
     }).expect(201);
 
     const ok = await post('/farms/' + farmId + '/sales', {
-      items: [{ productType: 'AUTRE', quantity: 1, unit: 'UNITE', unitPriceFcfa: 10000 }],
+      items: [
+        {
+          productType: 'AUTRE',
+          quantity: 1,
+          unit: 'UNITE',
+          unitPriceFcfa: 10000,
+        },
+      ],
       customerPhone: birthday,
       promoCode: 'FIDELITE',
       payments: [{ method: 'CASH', amountFcfa: 8000 }],
@@ -398,7 +448,14 @@ describe('Module 4 — Zone clients & promos (find-or-create, segments, coupons)
     expect(ok.body.sale.discountAmountFcfa).toBe(2000);
 
     const denied = await post('/farms/' + farmId + '/sales', {
-      items: [{ productType: 'AUTRE', quantity: 1, unit: 'UNITE', unitPriceFcfa: 10000 }],
+      items: [
+        {
+          productType: 'AUTRE',
+          quantity: 1,
+          unit: 'UNITE',
+          unitPriceFcfa: 10000,
+        },
+      ],
       customerPhone: lucky,
       promoCode: 'FIDELITE',
       payments: [{ method: 'CASH', amountFcfa: 8000 }],
@@ -420,7 +477,12 @@ describe('Module 4 — Zone clients & promos (find-or-create, segments, coupons)
     for (const subtotal of [10000, 20000]) {
       const res = await post('/farms/' + farmId + '/sales', {
         items: [
-          { productType: 'AUTRE', quantity: 1, unit: 'UNITE', unitPriceFcfa: subtotal },
+          {
+            productType: 'AUTRE',
+            quantity: 1,
+            unit: 'UNITE',
+            unitPriceFcfa: subtotal,
+          },
         ],
         promoCode: code,
         payments: [{ method: 'CASH', amountFcfa: subtotal - subtotal / 10 }],
@@ -444,11 +506,22 @@ describe('Module 4 — Zone clients & promos (find-or-create, segments, coupons)
     );
     expect(denied.status).toBe(403);
 
-    const res = await post('/farms/' + farmId + '/sales', {
-      customerPhone: `+24169${Date.now().toString().slice(-6)}`,
-      items: [{ productType: 'AUTRE', quantity: 1, unit: 'UNITE', unitPriceFcfa: 1000 }],
-      payments: [{ method: 'CASH', amountFcfa: 1000 }],
-    }, empToken);
+    const res = await post(
+      '/farms/' + farmId + '/sales',
+      {
+        customerPhone: `+24169${Date.now().toString().slice(-6)}`,
+        items: [
+          {
+            productType: 'AUTRE',
+            quantity: 1,
+            unit: 'UNITE',
+            unitPriceFcfa: 1000,
+          },
+        ],
+        payments: [{ method: 'CASH', amountFcfa: 1000 }],
+      },
+      empToken,
+    );
     expect(res.status).toBe(201);
     expect(res.body.sale.customerId).toBeTruthy();
   });

@@ -61,51 +61,54 @@ export class DailyEntriesService {
       }
     }
 
-    return this.dataSource.transaction(async (em) => {
-      const entryRepo = em.getRepository(DailyEntry);
-      const existing = await entryRepo.findOne({
-        where: { batchId, entryDate: dto.entryDate },
-      });
+    return this.dataSource
+      .transaction(async (em) => {
+        const entryRepo = em.getRepository(DailyEntry);
+        const existing = await entryRepo.findOne({
+          where: { batchId, entryDate: dto.entryDate },
+        });
 
-      // Seuls les champs réellement fournis sont appliqués (l'upsert ne doit pas
-      // écraser les saisies du jour quand on ne met à jour qu'un seul champ).
-      const data: Partial<DailyEntry> = {
-        batchId,
-        entryDate: dto.entryDate,
-        createdById: user.id,
-      };
-      if (dto.deaths !== undefined) data.deaths = dto.deaths;
-      if (dto.feedQuantity !== undefined || dto.feedBags !== undefined) {
-        data.feedQuantity = this.toKg(dto, batch);
-      }
-      if (dto.feedUnit !== undefined) data.feedUnit = dto.feedUnit ?? null;
-      if (dto.feedType !== undefined) data.feedType = dto.feedType ?? null;
-      if (dto.inputLotId !== undefined)
-        data.inputLotId = dto.inputLotId ?? null;
-      if (dto.waterL !== undefined) data.waterL = dto.waterL;
-      if (dto.avgWeightKg !== undefined)
-        data.avgWeightKg = dto.avgWeightKg ?? null;
-      if (dto.eggsCollected !== undefined)
-        data.eggsCollected = dto.eggsCollected;
-      if (dto.eggsSellable !== undefined) data.eggsSellable = dto.eggsSellable;
-      if (dto.eggsCracked !== undefined) data.eggsCracked = dto.eggsCracked;
-      if (dto.eggsSmall !== undefined) data.eggsSmall = dto.eggsSmall;
-      if (dto.source !== undefined) data.source = dto.source;
+        // Seuls les champs réellement fournis sont appliqués (l'upsert ne doit pas
+        // écraser les saisies du jour quand on ne met à jour qu'un seul champ).
+        const data: Partial<DailyEntry> = {
+          batchId,
+          entryDate: dto.entryDate,
+          createdById: user.id,
+        };
+        if (dto.deaths !== undefined) data.deaths = dto.deaths;
+        if (dto.feedQuantity !== undefined || dto.feedBags !== undefined) {
+          data.feedQuantity = this.toKg(dto, batch);
+        }
+        if (dto.feedUnit !== undefined) data.feedUnit = dto.feedUnit ?? null;
+        if (dto.feedType !== undefined) data.feedType = dto.feedType ?? null;
+        if (dto.inputLotId !== undefined)
+          data.inputLotId = dto.inputLotId ?? null;
+        if (dto.waterL !== undefined) data.waterL = dto.waterL;
+        if (dto.avgWeightKg !== undefined)
+          data.avgWeightKg = dto.avgWeightKg ?? null;
+        if (dto.eggsCollected !== undefined)
+          data.eggsCollected = dto.eggsCollected;
+        if (dto.eggsSellable !== undefined)
+          data.eggsSellable = dto.eggsSellable;
+        if (dto.eggsCracked !== undefined) data.eggsCracked = dto.eggsCracked;
+        if (dto.eggsSmall !== undefined) data.eggsSmall = dto.eggsSmall;
+        if (dto.source !== undefined) data.source = dto.source;
 
-      const entry = existing
-        ? entryRepo.merge(existing, data)
-        : entryRepo.create(data);
-      await entryRepo.save(entry);
-      await this.recomputeLiveCount(em, batch.id);
-      return entry;
-    }).then((entry) => {
-      koukouBus.emit(KOUKOU_EVENTS.DAILY_ENTRY_CREATED, {
-        farmId,
-        batchId,
-        entryDate: dto.entryDate,
+        const entry = existing
+          ? entryRepo.merge(existing, data)
+          : entryRepo.create(data);
+        await entryRepo.save(entry);
+        await this.recomputeLiveCount(em, batch.id);
+        return entry;
+      })
+      .then((entry) => {
+        koukouBus.emit(KOUKOU_EVENTS.DAILY_ENTRY_CREATED, {
+          farmId,
+          batchId,
+          entryDate: dto.entryDate,
+        });
+        return entry;
       });
-      return entry;
-    });
   }
 
   async listForBatch(user: AuthUser, farmId: string, batchId: string) {
