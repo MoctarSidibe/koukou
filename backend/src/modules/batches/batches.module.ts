@@ -18,6 +18,7 @@ import { FlockReconciliationService } from './flock-reconciliation.service.js';
 import { ProductionBatch } from './entities/production-batch.entity.js';
 import { TypeHistoryEntry } from './entities/type-history-entry.entity.js';
 import { MetricsService } from './metrics.service.js';
+import { PondageService } from './pondage.service.js';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { MetricsService } from './metrics.service.js';
     MetricsService,
     AdvisoryEngine,
     FlockReconciliationService,
+    PondageService,
   ],
   exports: [MetricsService, BatchesService, FlockReconciliationService],
 })

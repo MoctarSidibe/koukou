@@ -6,6 +6,7 @@ import { Roles } from '../../common/decorators/roles.decorator.js';
 import { UserRole } from '../../common/enums/role.enum.js';
 import { FarmsService } from '../farms/farms.service.js';
 import { BatchesService } from './batches.service.js';
+import { PondageService } from './pondage.service.js';
 import { ChangeTypeDto } from './dto/change-type.dto.js';
 import { CreateBatchDto } from './dto/create-batch.dto.js';
 import { UpdateBatchDto } from './dto/update-batch.dto.js';
@@ -16,6 +17,7 @@ export class BatchesController {
   constructor(
     private readonly batchesService: BatchesService,
     private readonly farmsService: FarmsService,
+    private readonly pondageService: PondageService,
   ) {}
 
   @Post()
@@ -47,6 +49,21 @@ export class BatchesController {
     @Param('batchId') batchId: string,
   ) {
     return this.batchesService.findOne(user, farmId, batchId);
+  }
+
+  @Get(':batchId/pondage')
+  @Roles(UserRole.PROPRIETAIRE, UserRole.ELEVEUR)
+  @ApiOperation({
+    summary:
+      'Pondage du lot : totaux par classe (commercialisables/fêlés/petits), œufs/poule et série hebdo du taux de ponte.',
+  })
+  @ApiParam({ name: 'farmId' })
+  pondage(
+    @CurrentUser() user: AuthUser,
+    @Param('farmId') farmId: string,
+    @Param('batchId') batchId: string,
+  ) {
+    return this.pondageService.summary(user, farmId, batchId);
   }
 
   @Patch(':batchId')

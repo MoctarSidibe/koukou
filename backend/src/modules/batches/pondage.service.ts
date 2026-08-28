@@ -1,0 +1,149 @@
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { AuthUser } from '../../common/decorators/current-user.decorator.js';
+import { BatchType } from '../../common/enums/batch-type.enum.js';
+import { isoWeekStart } from '../../common/utils/date.utils.js';
+import { DailyEntry } from '../daily-entries/entities/daily-entry.entity.js';
+import { FarmsService } from '../farms/farms.service.js';
+import { ProductionBatch } from './entities/production-batch.entity.js';
+
+export interface PondageWeek {
+  weekStart: string;
+  collected: number;
+  sellable: number;
+  cracked: number;
+  small: number;
+  daysRecorded: number;
+  layRatePercent: number | null;
+}
+
+export interface PondageSummary {
+  batchId: string;
+  type: BatchType;
+  quantityAtStart: number;
+  quantityAlive: number;
+  daysRecorded: number;
+  totals: {
+    collected: number;
+    sellable: number;
+    cracked: number;
+    small: number;
+  };
+  sellableRatioPercent: number | null;
+  eggsPerHen: number | null;
+  layRatePercent: number | null;
+  weekly: PondageWeek[];
+}
+
+const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+@Injectable()
+export class PondageService {
+  constructor(
+    @InjectRepository(DailyEntry)
+    private readonly entryRepo: Repository<DailyEntry>,
+    @InjectRepository(ProductionBatch)
+    private readonly batchRepo: Repository<ProductionBatch>,
+    private readonly farmsService: FarmsService,
+  ) {}
+
+  async summary(
+    user: AuthUser,
+    farmId: string,
+    batchId: string,
+  ): Promise<PondageSummary> {
+    await this.farmsService.assertAccessible(user, farmId);
+    const batch = await this.batchRepo.findOne({ where: { id: batchId, farmId } });
+    if (!batch) throw new NotFoundException('Lot introuvable dans cette ferme.');
+
+    const entries = await this.entryRepo.find({
+      where: { batchId },
+      order: { entryDate: 'ASC' },
+    });
+
+    const collected = entries.reduce((s, e) => s + e.eggsCollected, 0);
+    const sellable = entries.reduce((s, e) => s + e.eggsSellable, 0);
+    const cracked = entries.reduce((s, e) => s + e.eggsCracked, 0);
+    const small = entries.reduce((s, e) => s + e.eggsSmall, 0);
+    const daysRecorded = entries.filter((e) => e.eggsCollected > 0).length;
+
+    const liveCount = Math.max(0, batch.quantityAlive);
+
+    return {
+      batchId: batch.id,
+      type: batch.type,
+      quantityAtStart: batch.quantityAtStart,
+      quantityAlive: liveCount,
+      daysRecorded,
+      totals: { collected, sellable, cracked, small },
+      sellableRatioPercent:
+        collected > 0 ? round2((sellable / collected) * 100) : null,
+      eggsPerHen: batch.quantityAtStart > 0 ? round2(collected / batch.quantityAtStart) : null,
+      layRatePercent:
+        batch.type === BatchType.PONDEUSE && liveCount > 0
+          ? round2((collected / liveCount) * 100)
+          : null,
+      weekly: this.buildWeekly(entries, batch),
+    };
+  }
+
+  private buildWeekly(entries: DailyEntry[], batch: ProductionBatch): PondageWeek[] {
+    type WeekGroup = {
+      weekStart: string;
+      collected: number;
+      sellable: number;
+      cracked: number;
+      small: number;
+      deaths: number;
+      dates: Set<string>;
+    };
+    const byWeek = new Map<string, WeekGroup>();
+    for (const e of entries) {
+      if (e.eggsCollected <= 0 && e.deaths <= 0) continue;
+      const weekStart = isoWeekStart(e.entryDate);
+      let group = byWeek.get(weekStart);
+      if (!group) {
+        group = {
+          weekStart,
+          collected: 0,
+          sellable: 0,
+          cracked: 0,
+          small: 0,
+          deaths: 0,
+          dates: new Set(),
+        };
+        byWeek.set(weekStart, group);
+      }
+      group.collected += e.eggsCollected;
+      group.sellable += e.eggsSellable;
+      group.cracked += e.eggsCracked;
+      group.small += e.eggsSmall;
+      group.deaths += e.deaths;
+      group.dates.add(e.entryDate);
+    }
+
+    const weeks = [...byWeek.values()].sort((a, b) =>
+      a.weekStart.localeCompare(b.weekStart),
+    );
+    let deathsBefore = 0;
+    return weeks.map((w) => {
+      const hens = Math.max(0, batch.quantityAtStart - deathsBefore);
+      const layRatePercent =
+        hens > 0 && w.dates.size > 0
+          ? (w.collected / (hens * w.dates.size)) * 100
+          : null;
+      deathsBefore += w.deaths;
+      return {
+        weekStart: w.weekStart,
+        collected: w.collected,
+        sellable: w.sellable,
+        cracked: w.cracked,
+        small: w.small,
+        daysRecorded: w.dates.size,
+        layRatePercent:
+          layRatePercent != null ? round2(layRatePercent) : null,
+      };
+    });
+  }
+}
