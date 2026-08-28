@@ -223,6 +223,11 @@ export class SalesService {
           'Pour un poulet à la pièce, l’unité doit être PIECE.',
         );
       }
+      if (!Number.isInteger(quantity)) {
+        throw new BadRequestException(
+          'Pour un poulet à la pièce, la quantité doit être un nombre entier de pièces.',
+        );
+      }
       const birds = Math.ceil(quantity);
       const batch = await this.loadBatch(batchRepo, farmId, batchId);
       if (batch.quantityAlive < birds) {
@@ -270,7 +275,12 @@ export class SalesService {
           'Pour la provende, l’unité doit être SAC ou KG.',
         );
       }
-      inputLotId = dto.inputLotId ?? null;
+      if (!dto.inputLotId) {
+        throw new BadRequestException(
+          'Vente de provende : rattacher un lot d’intrant (inputLotId) pour tracer la déduction de stock HACCP.',
+        );
+      }
+      inputLotId = dto.inputLotId;
       if (inputLotId != null) {
         const lot = await em.getRepository(InputLot).findOne({
           where: { id: inputLotId, farmId },
@@ -521,6 +531,7 @@ export class SalesService {
     const result = await this.dataSource.transaction(async (em) => {
       const sale = await em.getRepository(Sale).findOne({
         where: { id: saleId, farmId },
+        lock: { mode: 'pessimistic_write' },
       });
       if (!sale) throw new NotFoundException('Vente introuvable.');
       if (sale.status === SaleStatus.CANCELLED) {
@@ -588,9 +599,12 @@ export class SalesService {
             item.productType === SaleItemProductType.POULET_KG) &&
           item.batchId
         ) {
-          const batch = await batchRepo.findOne({
-            where: { id: item.batchId },
-          });
+          const batch = await batchRepo
+            .createQueryBuilder('batch')
+            .setLock('pessimistic_write')
+            .where('batch.id = :id', { id: item.batchId })
+            .andWhere('batch.farm_id = :farmId', { farmId })
+            .getOne();
           if (batch) {
             if (batch.status === BatchStatus.CLOTURE) {
               throw new BadRequestException(
@@ -613,16 +627,40 @@ export class SalesService {
         await this.feedStockService.revertFeedSale(item.id, em);
       }
 
-      const cashSession = await em.getRepository(CashSession).findOne({
-        where: { farmId, status: CashSessionStatus.OPEN },
-      });
       const confirmed = await em.getRepository(Payment).find({
         where: { saleId, status: PaymentStatus.CONFIRMED },
       });
-      for (const payment of confirmed) {
-        payment.status = PaymentStatus.REFUNDED;
-        await em.getRepository(Payment).save(payment);
-        if (cashSession) {
+      if (confirmed.length > 0) {
+        const cashSession = await em.getRepository(CashSession).findOne({
+          where: { farmId, status: CashSessionStatus.OPEN },
+        });
+        if (!cashSession) {
+          throw new BadRequestException(
+            `Impossible d’annuler : ouvrir une session de caisse pour tracer le remboursement (${confirmed.length} paiement(s) confirmé(s)).`,
+          );
+        }
+        const movements = await em.getRepository(CashMovement).find({
+          where: { cashSessionId: cashSession.id },
+        });
+        let inFcfa = 0;
+        let outFcfa = 0;
+        for (const m of movements) {
+          if (m.type === CashMovementType.IN) inFcfa += m.amountFcfa;
+          else outFcfa += m.amountFcfa;
+        }
+        const available = cashSession.openingBalanceFcfa + inFcfa - outFcfa;
+        const refundTotal = confirmed.reduce(
+          (s, p) => s + p.amountFcfa,
+          0,
+        );
+        if (refundTotal > available) {
+          throw new BadRequestException(
+            `Remboursement de ${refundTotal} FCFA refusé : solde de caisse disponible ${available} FCFA. La caisse ne peut pas être négative.`,
+          );
+        }
+        for (const payment of confirmed) {
+          payment.status = PaymentStatus.REFUNDED;
+          await em.getRepository(Payment).save(payment);
           await em.getRepository(CashMovement).save(
             em.getRepository(CashMovement).create({
               farmId,

@@ -457,6 +457,12 @@ describe('Module 4 — Finance & Rentabilité (POS ferme, e2e)', () => {
   });
 
   it('annulation d’une vente (PROPRIÉTAIRE) : remboursement + réintégration du stock provende', async () => {
+    await request(server)
+      .post(`/farms/${farmId}/caisse/open`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ openingBalanceFcfa: 240000 })
+      .expect(201);
+
     const res = await request(server)
       .delete(
         `/farms/${farmId}/sales/${saleCId}?reason=${encodeURIComponent('Client sans fonds')}`,
@@ -480,6 +486,12 @@ describe('Module 4 — Finance & Rentabilité (POS ferme, e2e)', () => {
     const dem = stock.body.byType.find((t: any) => t.foodType === 'DEMARRAGE');
     expect(dem.availableKg).toBe(500);
     expect(dem.soldKg).toBe(0);
+
+    await request(server)
+      .post(`/farms/${farmId}/caisse/close`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ declaredBalanceFcfa: 210000 })
+      .expect(201);
   });
 
   it('idempotence scopée par vente : une clé réutilisée sur une autre vente ne renvoie pas l’ancien paiement', async () => {

@@ -35,9 +35,10 @@ export class CaisseController {
   }
 
   @Post('open')
-  @Roles(UserRole.PROPRIETAIRE, UserRole.ELEVEUR)
+  @Roles(UserRole.PROPRIETAIRE)
   @ApiOperation({
-    summary: 'Ouvrir la caisse journalière (fonds de caisse initial)',
+    summary:
+      'Ouvrir la caisse journalière (PROPRIÉTAIRE) : fonds de caisse initial.',
   })
   @ApiParam({ name: 'farmId' })
   open(
