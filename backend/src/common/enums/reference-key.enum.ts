@@ -22,4 +22,7 @@ export enum ReferenceKey {
   RENTABILITE_MARGE_MIN_PCT = 'rentabilite_marge_min_pct',
   VENTE_INVENDUS_DAYS = 'vente_invendu_days',
   EGG_STOCK_WARN_ALVEOLES = 'egg_stock_warn_alveoles',
+  CUSTOMER_SEGMENT_TOP_MIN_VISITS = 'customer_segment_top_min_visits',
+  CUSTOMER_SEGMENT_TOP_MIN_FCFA = 'customer_segment_top_min_fcfa',
+  CUSTOMER_SEGMENT_REGULAR_MIN_VISITS = 'customer_segment_regular_min_visits',
 }

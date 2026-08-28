@@ -47,6 +47,48 @@ export class CustomersController {
     return this.customersService.update(user, farmId, customerId, dto);
   }
 
+  @Get(':customerId')
+  @Roles(UserRole.PROPRIETAIRE, UserRole.ELEVEUR)
+  @ApiOperation({
+    summary: 'Profil d’un client (coordonnées + solde + segment)',
+  })
+  @ApiParam({ name: 'farmId' })
+  getOne(
+    @CurrentUser() user: AuthUser,
+    @Param('farmId') farmId: string,
+    @Param('customerId') customerId: string,
+  ) {
+    return this.customersService.getOne(user, farmId, customerId);
+  }
+
+  @Get(':customerId/history')
+  @Roles(UserRole.PROPRIETAIRE, UserRole.ELEVEUR)
+  @ApiOperation({
+    summary: 'Historique d’achats d’un client (articles + paiements)',
+  })
+  @ApiParam({ name: 'farmId' })
+  history(
+    @CurrentUser() user: AuthUser,
+    @Param('farmId') farmId: string,
+    @Param('customerId') customerId: string,
+  ) {
+    return this.customersService.history(user, farmId, customerId);
+  }
+
+  @Get(':customerId/stats')
+  @Roles(UserRole.PROPRIETAIRE, UserRole.ELEVEUR)
+  @ApiOperation({
+    summary: 'Statistiques d’un client (visites, dépenses, favoris, segment)',
+  })
+  @ApiParam({ name: 'farmId' })
+  stats(
+    @CurrentUser() user: AuthUser,
+    @Param('farmId') farmId: string,
+    @Param('customerId') customerId: string,
+  ) {
+    return this.customersService.stats(user, farmId, customerId);
+  }
+
   @Get(':customerId/balance')
   @Roles(UserRole.PROPRIETAIRE, UserRole.ELEVEUR)
   @ApiOperation({

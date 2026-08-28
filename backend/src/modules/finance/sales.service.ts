@@ -38,6 +38,8 @@ import { Sale } from './entities/sale.entity.js';
 import { SaleItem } from './entities/sale-item.entity.js';
 import { PaymentsService } from './payments.service.js';
 import { RentabiliteService } from './rentabilite.service.js';
+import { PromotionsService } from './promotions.service.js';
+import { normalizePhone } from './customers.service.js';
 import { PdfService } from '../../common/services/pdf.service.js';
 import { koukouBus, KOUKOU_EVENTS } from '../../common/utils/event-bus.js';
 import { CreatePaymentDto } from './dto/payment.dto.js';
@@ -79,6 +81,7 @@ export class SalesService {
     private readonly farmsService: FarmsService,
     private readonly paymentsService: PaymentsService,
     private readonly rentabiliteService: RentabiliteService,
+    private readonly promotionsService: PromotionsService,
     private readonly feedStockService: FeedStockService,
     private readonly batchesService: BatchesService,
     private readonly alertsService: AlertsService,
@@ -98,13 +101,12 @@ export class SalesService {
     const result = await this.dataSource.transaction(async (em) => {
       const saleRepo = em.getRepository(Sale);
 
-      if (dto.customerId) {
-        const customer = await em.getRepository(Customer).findOne({
-          where: { id: dto.customerId, farmId },
-        });
-        if (!customer)
-          throw new BadRequestException('Client introuvable dans cette ferme.');
-      }
+      const resolvedCustomerId = await this.resolveCustomer(
+        em,
+        farmId,
+        user.id,
+        dto,
+      );
 
       if (dto.batchId) {
         await this.assertBatchInFarm(em, farmId, dto.batchId);
@@ -117,7 +119,7 @@ export class SalesService {
           saleDate: dto.saleDate ?? todayStr(),
           totalAmountFcfa: 0,
           status: SaleStatus.SETTLED,
-          customerId: dto.customerId ?? null,
+          customerId: resolvedCustomerId,
           batchId: dto.batchId ?? null,
           createdById: user.id,
         }),
@@ -138,7 +140,22 @@ export class SalesService {
         if (item.batchId) involvedBatches.add(item.batchId);
       }
 
-      sale.totalAmountFcfa = total;
+      let discountAmountFcfa = 0;
+      let promotionId: string | null = null;
+      if (dto.promoCode) {
+        const applied = await this.promotionsService.applyCode(
+          em,
+          farmId,
+          dto.promoCode,
+          total,
+          resolvedCustomerId,
+        );
+        discountAmountFcfa = applied.discountFcfa;
+        promotionId = applied.promotion.id;
+      }
+      sale.totalAmountFcfa = total - discountAmountFcfa;
+      sale.discountAmountFcfa = discountAmountFcfa;
+      sale.promotionId = promotionId;
       const saleWithTotal = await saleRepo.save(sale);
 
       const payments: Payment[] = [];
@@ -173,6 +190,45 @@ export class SalesService {
     await this.afterSaleChange(farmId, [...involvedBatches]);
 
     return this.assembleResult(result.savedSale, result.items, result.payments);
+  }
+
+  /** Trouve ou crée le client (jamais bloquant : la vente aboutit toujours). */
+  private async resolveCustomer(
+    em: EntityManager,
+    farmId: string,
+    operatorId: string,
+    dto: CreateSaleDto,
+  ): Promise<string | null> {
+    if (dto.customerId) {
+      const customer = await em.getRepository(Customer).findOne({
+        where: { id: dto.customerId, farmId },
+      });
+      if (!customer)
+        throw new BadRequestException('Client introuvable dans cette ferme.');
+      return customer.id;
+    }
+    if (dto.customerPhone) {
+      const normalized = normalizePhone(dto.customerPhone);
+      const candidates = await em.getRepository(Customer).find({
+        where: { farmId },
+        order: { createdAt: 'ASC' },
+      });
+      const existing = candidates.find(
+        (c) => c.phone != null && normalizePhone(c.phone) === normalized,
+      );
+      if (existing) return existing.id;
+      const created = await em.getRepository(Customer).save(
+        em.getRepository(Customer).create({
+          farmId,
+          fullName:
+            (dto.customerName ?? '').trim() || `Client ${normalized}`,
+          phone: normalized,
+          createdById: operatorId,
+        }),
+      );
+      return created.id;
+    }
+    return null;
   }
 
   private async nextReference(em: EntityManager): Promise<string> {
@@ -713,6 +769,7 @@ export class SalesService {
         amountFcfa: item.amountFcfa,
       })),
       totalAmountFcfa: info.totalAmountFcfa,
+      discountAmountFcfa: info.discountAmountFcfa,
       paidAmountFcfa: paid,
       remainingFcfa: Math.max(0, info.totalAmountFcfa - paid),
       method: confirmed[0]?.method ?? 'ESPECES',

@@ -17,6 +17,7 @@ import { PaymentMethodConfig } from './entities/payment-method.entity.js';
 import { CashSession } from './entities/cash-session.entity.js';
 import { CashMovement } from './entities/cash-movement.entity.js';
 import { Expense } from './entities/expense.entity.js';
+import { Promotion } from './entities/promotion.entity.js';
 import { CustomersService } from './customers.service.js';
 import { PaymentsService } from './payments.service.js';
 import { CaisseService } from './caisse.service.js';
@@ -24,6 +25,7 @@ import { ExpensesService } from './expenses.service.js';
 import { RentabiliteService } from './rentabilite.service.js';
 import { SalesService } from './sales.service.js';
 import { FinanceEventsService } from './finance-events.service.js';
+import { PromotionsService } from './promotions.service.js';
 import { CustomersController } from './customers.controller.js';
 import { SalesController } from './sales.controller.js';
 import {
@@ -33,6 +35,7 @@ import {
 import { CaisseController } from './caisse.controller.js';
 import { ExpensesController } from './expenses.controller.js';
 import { RentabiliteController } from './rentabilite.controller.js';
+import { PromotionsController } from './promotions.controller.js';
 
 @Module({
   imports: [
@@ -46,6 +49,7 @@ import { RentabiliteController } from './rentabilite.controller.js';
       CashSession,
       CashMovement,
       Expense,
+      Promotion,
       ProductionBatch,
       InputLot,
       Farm,
@@ -64,6 +68,7 @@ import { RentabiliteController } from './rentabilite.controller.js';
     CaisseController,
     ExpensesController,
     RentabiliteController,
+    PromotionsController,
   ],
   providers: [
     CustomersService,
@@ -73,6 +78,7 @@ import { RentabiliteController } from './rentabilite.controller.js';
     RentabiliteService,
     SalesService,
     FinanceEventsService,
+    PromotionsService,
   ],
 })
 export class FinanceModule {}

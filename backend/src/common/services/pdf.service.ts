@@ -14,6 +14,7 @@ export interface ReceiptData {
   customerName: string | null;
   items: ReceiptItemData[];
   totalAmountFcfa: number;
+  discountAmountFcfa: number;
   paidAmountFcfa: number;
   remainingFcfa: number;
   method: string;
@@ -146,6 +147,12 @@ export class PdfService {
           layout: 'lightHorizontalLines',
         },
         { text: '', margin: [0, 10, 0, 0] },
+        data.discountAmountFcfa > 0
+          ? {
+              text: `Réduction : -${data.discountAmountFcfa} FCFA`,
+              style: 'total',
+            }
+          : {},
         { text: `TOTAL : ${data.totalAmountFcfa} FCFA`, style: 'total' },
         { text: `Payé : ${data.paidAmountFcfa} FCFA`, style: 'total' },
         data.remainingFcfa > 0

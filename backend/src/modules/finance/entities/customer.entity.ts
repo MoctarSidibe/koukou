@@ -12,6 +12,7 @@ import { Farm } from '../../farms/entities/farm.entity.js';
 import { User } from '../../users/entities/user.entity.js';
 
 @Entity('customers')
+@Index('IDX_customers_farm_phone', ['farmId', 'phone'])
 export class Customer {
   @PrimaryGeneratedColumn('uuid')
   id: string;

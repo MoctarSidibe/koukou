@@ -11,6 +11,7 @@ import {
   IsPositive,
   IsString,
   IsUUID,
+  Matches,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -96,6 +97,23 @@ export class CreateSaleDto {
   @IsOptional()
   @IsUUID('4', { message: 'Identifiant client invalide.' })
   customerId?: string;
+
+  @IsOptional()
+  @IsString({ message: 'Le téléphone client doit être une chaîne.' })
+  @Matches(/^\+?[0-9\s-]{6,20}$/, {
+    message: 'Numéro de téléphone client invalide.',
+  })
+  customerPhone?: string;
+
+  @IsOptional()
+  @IsString({ message: 'Le nom du client doit être une chaîne.' })
+  @IsNotEmpty({ message: 'Le nom du client ne doit pas être vide.' })
+  customerName?: string;
+
+  @IsOptional()
+  @IsString({ message: 'Le code promo doit être une chaîne.' })
+  @IsNotEmpty({ message: 'Le code promo ne doit pas être vide.' })
+  promoCode?: string;
 
   @IsOptional()
   @IsUUID('4', { message: 'Identifiant de lot de production invalide.' })

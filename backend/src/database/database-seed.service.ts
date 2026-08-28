@@ -145,6 +145,24 @@ const DEFAULT_CONSTANTS: SeedConstant[] = [
     description:
       'Stock œufs : alerte JAUNE dès que le stock non vendu atteint N alvéoles (avant péremption)',
   },
+  {
+    key: ReferenceKey.CUSTOMER_SEGMENT_TOP_MIN_VISITS,
+    value: 6,
+    description:
+      'Clients : segment TOP dès ce nombre de visites (achats non annulés)',
+  },
+  {
+    key: ReferenceKey.CUSTOMER_SEGMENT_TOP_MIN_FCFA,
+    value: 100000,
+    description:
+      'Clients : segment TOP dès ce total dépensé en FCFA (achats non annulés)',
+  },
+  {
+    key: ReferenceKey.CUSTOMER_SEGMENT_REGULAR_MIN_VISITS,
+    value: 2,
+    description:
+      'Clients : segment RÉGULIER dès ce nombre de visites (achats non annulés)',
+  },
 ];
 
 const DEFAULT_BREEDS: { name: string; type: BatchType; species: Species }[] = [

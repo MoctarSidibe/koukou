@@ -13,6 +13,7 @@ import { SaleStatus } from '../../../common/enums/sale-status.enum.js';
 import { Farm } from '../../farms/entities/farm.entity.js';
 import { ProductionBatch } from '../../batches/entities/production-batch.entity.js';
 import { Customer } from './customer.entity.js';
+import { Promotion } from './promotion.entity.js';
 import { SaleItem } from './sale-item.entity.js';
 
 @Entity('sales')
@@ -37,6 +38,17 @@ export class Sale {
 
   @Column({ name: 'total_amount_fcfa', type: 'int' })
   totalAmountFcfa: number;
+
+  @Column({ name: 'discount_amount_fcfa', type: 'int', default: 0 })
+  discountAmountFcfa: number;
+
+  @ManyToOne(() => Promotion, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'promotion_id' })
+  promotion: Promotion | null;
+
+  @Column({ name: 'promotion_id', type: 'uuid', nullable: true })
+  @Index()
+  promotionId: string | null;
 
   @Column({ type: 'enum', enum: SaleStatus, default: SaleStatus.SETTLED })
   status: SaleStatus;
