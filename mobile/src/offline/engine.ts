@@ -1,13 +1,22 @@
 import { ApiError } from '@/api/client';
 import {
+  cancelOrder,
   createDailyEntry,
   createInput,
+  createOrder,
+  createPointOfSale,
   createSale,
+  deletePointOfSale,
+  deliverOrder,
   ensureCashOpen,
   recordFeedLoss,
+  recordOrderPayment,
+  updatePointOfSale,
   type CreateInputLotInput,
+  type CreateOrderInput,
   type DailyEntryPayload,
   type InvoiceFields,
+  type PointOfSaleInput,
   type RecordFeedLossInput,
   type SalePayload,
 } from '@/api/mutations';
@@ -147,6 +156,167 @@ async function lossQueued(farmId: string, payload: RecordFeedLossInput): Promise
   }
 }
 
+// ── Commandes (acompte / livraison / annulation) ─────────────
+
+/** Création de commande (bon de commande) : mise en file si hors ligne. */
+export async function createOrderQueued(
+  farmId: string,
+  input: CreateOrderInput,
+): Promise<SendResult> {
+  try {
+    await createOrder(farmId, input);
+    void flushQueue();
+    return { status: 'sent' };
+  } catch (e) {
+    if (shouldQueue(e)) {
+      enqueueOp({
+        id: nextId('order-create'),
+        kind: 'order-create',
+        farmId,
+        payload: input,
+        createdAt: new Date().toISOString(),
+      });
+      return { status: 'queued' };
+    }
+    throw e;
+  }
+}
+
+/** Acompte sur commande : mis en file si hors ligne (idempotence via idempotencyKey). */
+export async function recordOrderPaymentQueued(
+  farmId: string,
+  orderId: string,
+  amountFcfa: number,
+): Promise<SendResult> {
+  try {
+    await ensureCashOpen(farmId);
+    await recordOrderPayment(farmId, orderId, amountFcfa);
+    void flushQueue();
+    return { status: 'sent' };
+  } catch (e) {
+    if (shouldQueue(e)) {
+      const opId = nextId('order-payment');
+      enqueueOp({
+        id: opId,
+        kind: 'order-payment',
+        farmId,
+        payload: { orderId, amountFcfa, idempotencyKey: opId },
+        createdAt: new Date().toISOString(),
+      });
+      return { status: 'queued' };
+    }
+    throw e;
+  }
+}
+
+/** Livraison de commande : mise en file si hors ligne (rejouée à la connexion). */
+export async function deliverOrderQueued(farmId: string, orderId: string): Promise<SendResult> {
+  try {
+    await deliverOrder(farmId, orderId);
+    void flushQueue();
+    return { status: 'sent' };
+  } catch (e) {
+    if (shouldQueue(e)) {
+      enqueueOp({
+        id: nextId('order-deliver'),
+        kind: 'order-deliver',
+        farmId,
+        payload: { orderId },
+        createdAt: new Date().toISOString(),
+      });
+      return { status: 'queued' };
+    }
+    throw e;
+  }
+}
+
+/** Annulation de commande : mise en file si hors ligne. */
+export async function cancelOrderQueued(farmId: string, orderId: string, reason: string): Promise<SendResult> {
+  try {
+    await cancelOrder(farmId, orderId, reason);
+    void flushQueue();
+    return { status: 'sent' };
+  } catch (e) {
+    if (shouldQueue(e)) {
+      enqueueOp({
+        id: nextId('order-cancel'),
+        kind: 'order-cancel',
+        farmId,
+        payload: { orderId, reason },
+        createdAt: new Date().toISOString(),
+      });
+      return { status: 'queued' };
+    }
+    throw e;
+  }
+}
+
+// ── Points de vente (configuration) ──────────────────────────
+
+export async function createPointOfSaleQueued(farmId: string, input: PointOfSaleInput): Promise<SendResult> {
+  try {
+    await createPointOfSale(farmId, input);
+    void flushQueue();
+    return { status: 'sent' };
+  } catch (e) {
+    if (shouldQueue(e)) {
+      enqueueOp({
+        id: nextId('pdv-create'),
+        kind: 'pdv-create',
+        farmId,
+        payload: input,
+        createdAt: new Date().toISOString(),
+      });
+      return { status: 'queued' };
+    }
+    throw e;
+  }
+}
+
+export async function updatePointOfSaleQueued(
+  farmId: string,
+  pointOfSaleId: string,
+  input: Partial<PointOfSaleInput>,
+): Promise<SendResult> {
+  try {
+    await updatePointOfSale(farmId, pointOfSaleId, input);
+    void flushQueue();
+    return { status: 'sent' };
+  } catch (e) {
+    if (shouldQueue(e)) {
+      enqueueOp({
+        id: nextId('pdv-update'),
+        kind: 'pdv-update',
+        farmId,
+        payload: { pointOfSaleId, input },
+        createdAt: new Date().toISOString(),
+      });
+      return { status: 'queued' };
+    }
+    throw e;
+  }
+}
+
+export async function deletePointOfSaleQueued(farmId: string, pointOfSaleId: string): Promise<SendResult> {
+  try {
+    await deletePointOfSale(farmId, pointOfSaleId);
+    void flushQueue();
+    return { status: 'sent' };
+  } catch (e) {
+    if (shouldQueue(e)) {
+      enqueueOp({
+        id: nextId('pdv-delete'),
+        kind: 'pdv-delete',
+        farmId,
+        payload: { pointOfSaleId },
+        createdAt: new Date().toISOString(),
+      });
+      return { status: 'queued' };
+    }
+    throw e;
+  }
+}
+
 async function processOne(op: OfflineOp): Promise<'ok' | 'retry' | 'dropped'> {
   try {
     if (op.kind === 'daily-entry') {
@@ -155,6 +325,24 @@ async function processOne(op: OfflineOp): Promise<'ok' | 'retry' | 'dropped'> {
       await createInput(op.farmId, op.payload as CreateInputLotInput);
     } else if (op.kind === 'stock-loss') {
       await recordFeedLoss(op.farmId, op.payload as RecordFeedLossInput);
+    } else if (op.kind === 'order-create') {
+      await createOrder(op.farmId, op.payload as CreateOrderInput);
+    } else if (op.kind === 'order-payment') {
+      const p = op.payload as { orderId: string; amountFcfa: number; idempotencyKey?: string };
+      await ensureCashOpen(op.farmId);
+      await recordOrderPayment(op.farmId, p.orderId, p.amountFcfa, { idempotencyKey: p.idempotencyKey });
+    } else if (op.kind === 'order-deliver') {
+      await deliverOrder(op.farmId, (op.payload as { orderId: string }).orderId);
+    } else if (op.kind === 'order-cancel') {
+      const p = op.payload as { orderId: string; reason: string };
+      await cancelOrder(op.farmId, p.orderId, p.reason);
+    } else if (op.kind === 'pdv-create') {
+      await createPointOfSale(op.farmId, op.payload as PointOfSaleInput);
+    } else if (op.kind === 'pdv-update') {
+      const p = op.payload as { pointOfSaleId: string; input: Partial<PointOfSaleInput> };
+      await updatePointOfSale(op.farmId, p.pointOfSaleId, p.input);
+    } else if (op.kind === 'pdv-delete') {
+      await deletePointOfSale(op.farmId, (op.payload as { pointOfSaleId: string }).pointOfSaleId);
     } else {
       await ensureCashOpen(op.farmId);
       await createSale(op.farmId, op.payload as SalePayload);

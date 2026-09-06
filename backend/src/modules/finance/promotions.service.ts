@@ -42,6 +42,11 @@ export class PromotionsService {
     if (dto.customerId) {
       await this.assertCustomerInFarm(farmId, dto.customerId);
     }
+    if (dto.type === PromotionType.PCT && dto.value > 100) {
+      throw new BadRequestException(
+        'Un pourcentage de réduction ne peut pas dépasser 100%.',
+      );
+    }
     return this.promoRepo.save(
       this.promoRepo.create({
         farmId,
@@ -94,6 +99,11 @@ export class PromotionsService {
     if (dto.label != null) promo.label = dto.label.trim();
     if (dto.type != null) promo.type = dto.type;
     if (dto.value != null) promo.value = dto.value;
+    if (promo.type === PromotionType.PCT && promo.value > 100) {
+      throw new BadRequestException(
+        'Un pourcentage de réduction ne peut pas dépasser 100%.',
+      );
+    }
     if (dto.active != null) promo.active = dto.active;
     if (dto.startDate != null) promo.startDate = dto.startDate;
     if (dto.endDate != null) promo.endDate = dto.endDate;
@@ -156,7 +166,10 @@ export class PromotionsService {
     }
     const discount =
       promo.type === PromotionType.PCT
-        ? Math.min(Math.round((subtotalFcfa * promo.value) / 100), subtotalFcfa)
+        ? Math.min(
+            Math.round((subtotalFcfa * Math.min(promo.value, 100)) / 100),
+            subtotalFcfa,
+          )
         : Math.min(promo.value, subtotalFcfa);
     return { promotion: promo, discountFcfa: discount };
   }

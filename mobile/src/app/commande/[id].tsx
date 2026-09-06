@@ -16,8 +16,8 @@ import { useAuth } from '@/auth/AuthContext';
 import { fetchOrder, fetchPointsOfSale } from '@/api';
 import { downloadPdf } from '@/api/pdf';
 import { invalidateFarmQueries } from '@/api/invalidate';
-import { cancelOrder, deliverOrder, recordOrderPayment } from '@/api/mutations';
 import { canManageFarm } from '@/api/roles';
+import { cancelOrderQueued, deliverOrderQueued, recordOrderPaymentQueued } from '@/offline/engine';
 import type { OrderFull } from '@/api/types';
 import { color, palette, radii, spacing, fmt, fmtFcfa } from '@/constants/theme';
 
@@ -95,7 +95,7 @@ function DepositSheet({ order, onClose }: { order: OrderFull; onClose: () => voi
     setBusy(true);
     setError(null);
     try {
-      await recordOrderPayment(farmId, order.id, amount);
+      await recordOrderPaymentQueued(farmId, order.id, amount);
       invalidateFarmQueries(queryClient, { farmId });
       await queryClient.invalidateQueries({ queryKey: ['order', farmId, order.id] });
       onClose();
@@ -174,7 +174,7 @@ export default function CommandeDetailScreen() {
         style: 'destructive',
         onPress: () => {
           setBusy(true);
-          cancelOrder(farmId, order.id, 'Annulée sur demande de la ferme')
+          cancelOrderQueued(farmId, order.id, 'Annulée sur demande de la ferme')
             .then(async () => {
               await invalidateFarmQueries(queryClient, { farmId });
               await orderQuery.refetch();
@@ -197,7 +197,7 @@ export default function CommandeDetailScreen() {
         text: 'Livrer',
         onPress: () => {
           setBusy(true);
-          deliverOrder(farmId, order.id)
+          deliverOrderQueued(farmId, order.id)
             .then(async () => {
               await invalidateFarmQueries(queryClient, { farmId });
               await orderQuery.refetch();

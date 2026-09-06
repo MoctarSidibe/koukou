@@ -1,6 +1,17 @@
 import { storage } from './storage';
 
-export type OfflineKind = 'daily-entry' | 'sale' | 'feed-input' | 'stock-loss';
+export type OfflineKind =
+  | 'daily-entry'
+  | 'sale'
+  | 'feed-input'
+  | 'stock-loss'
+  | 'order-create'
+  | 'order-payment'
+  | 'order-deliver'
+  | 'order-cancel'
+  | 'pdv-create'
+  | 'pdv-update'
+  | 'pdv-delete';
 
 export interface OfflineOp {
   id: string;

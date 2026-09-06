@@ -5,11 +5,18 @@ import { invalidateFarmQueries } from '@/api/invalidate';
 import type { DailyEntryPayload, InvoiceFields, SaleItemPayload } from '@/api/mutations';
 
 import {
+  cancelOrderQueued,
   createDailyEntryQueued,
   createFeedInputQueued,
+  createOrderQueued,
+  createPointOfSaleQueued,
   createSaleQueued,
+  deletePointOfSaleQueued,
+  deliverOrderQueued,
   flushQueue,
+  recordOrderPaymentQueued,
   recordStockLossQueued,
+  updatePointOfSaleQueued,
   type FlushSummary,
   type SendResult,
 } from './engine';
@@ -18,7 +25,19 @@ import { clearQueue, getQueueVersion, loadOps, subscribeQueue, type OfflineOp } 
 export { clearQueue, flushQueue };
 export type { FlushSummary, OfflineOp, SendResult };
 
-export { createDailyEntryQueued, createFeedInputQueued, createSaleQueued, recordStockLossQueued };
+export {
+  cancelOrderQueued,
+  createDailyEntryQueued,
+  createFeedInputQueued,
+  createOrderQueued,
+  createPointOfSaleQueued,
+  createSaleQueued,
+  deletePointOfSaleQueued,
+  deliverOrderQueued,
+  recordOrderPaymentQueued,
+  recordStockLossQueued,
+  updatePointOfSaleQueued,
+};
 
 export interface OfflineQueueState {
   pending: OfflineOp[];

@@ -46,8 +46,6 @@ const EGGS_PER_ALVEOL = 30;
 const ORDERABLE_TYPES = [
   SaleItemProductType.POULET_PIECE,
   SaleItemProductType.POULET_KG,
-  SaleItemProductType.ABATTU_PIECE,
-  SaleItemProductType.ABATTU_KG,
   SaleItemProductType.OEUFS,
 ];
 const ITEM_LABELS: Record<SaleItemProductType, string> = {
@@ -153,7 +151,7 @@ export class OrdersService {
       for (const it of dto.items) {
         if (!ORDERABLE_TYPES.includes(it.productType)) {
           throw new BadRequestException(
-            'Les commandes concernent la volaille (pièce / au kilo / abattu) et les œufs. Vente de provende ou article divers : passer par la vente directe (POS).',
+            'Les commandes concernent la volaille sur pied (pièce / au kilo) et les œufs. Vente d’abattu, provende ou article divers : passer par la vente directe (POS).',
           );
         }
         const unit = it.unit ?? defaultUnit(it.productType);

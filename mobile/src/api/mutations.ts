@@ -704,10 +704,14 @@ export function recordOrderPayment(
   farmId: string,
   orderId: string,
   amountFcfa: number,
+  opts?: { idempotencyKey?: string },
 ): Promise<unknown> {
   return apiFetch(`/farms/${farmId}/orders/${orderId}/deposit`, {
     method: 'POST',
-    body: { amountFcfa },
+    body: {
+      amountFcfa,
+      ...(opts?.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
+    },
   });
 }
 

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { MapPin, Plus, Star, Store, Trash2 } from 'lucide-react-native';
 
@@ -14,7 +14,8 @@ import { Spinner } from '@/components/ui/Spinner';
 import { useAuth } from '@/auth/AuthContext';
 import { fetchPointsOfSale } from '@/api';
 import { invalidateFarmQueries } from '@/api/invalidate';
-import { createPointOfSale, deletePointOfSale, updatePointOfSale, type PointOfSaleInput } from '@/api/mutations';
+import type { PointOfSaleInput } from '@/api/mutations';
+import { createPointOfSaleQueued, deletePointOfSaleQueued, updatePointOfSaleQueued } from '@/offline/engine';
 import { canManageFarm } from '@/api/roles';
 import type { PointOfSale } from '@/api/types';
 import { color, palette, radii, spacing } from '@/constants/theme';
@@ -28,7 +29,7 @@ function PdvForm({
   initial?: PointOfSale;
   onClose: () => void;
 }) {
-  const { farmId } = useAuth();
+  const { farmId, mode } = useAuth();
   const queryClient = useQueryClient();
   const [name, setName] = useState(initial?.name ?? '');
   const [kind, setKind] = useState<'FERME' | 'BOUTIQUE'>(initial?.kind ?? 'BOUTIQUE');
@@ -56,13 +57,19 @@ function PdvForm({
         : {}),
     };
     try {
-      if (initial) {
-        await updatePointOfSale(farmId, initial.id, input);
-      } else {
-        await createPointOfSale(farmId, input);
+      if (mode === 'demo') {
+        invalidateFarmQueries(queryClient, { farmId });
+        onClose();
+        return;
       }
+      const res = initial
+        ? await updatePointOfSaleQueued(farmId, initial.id, input)
+        : await createPointOfSaleQueued(farmId, input);
       invalidateFarmQueries(queryClient, { farmId });
       onClose();
+      if (res.status === 'queued') {
+        setBusy(false);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erreur lors de l’enregistrement.');
       setBusy(false);
@@ -149,7 +156,7 @@ function PdvForm({
 }
 
 export default function PointsVenteScreen() {
-  const { farmId, user } = useAuth();
+  const { farmId, user, mode } = useAuth();
   const queryClient = useQueryClient();
   const canManage = canManageFarm(user.role);
   const pdvQuery = useQuery({ queryKey: ['points-of-sale', farmId], queryFn: () => fetchPointsOfSale(farmId) });
@@ -167,12 +174,21 @@ export default function PointsVenteScreen() {
     if (!confirmDelete) return;
     setDeleting(true);
     try {
-      await deletePointOfSale(farmId, confirmDelete.id);
+      if (mode === 'demo') {
+        invalidateFarmQueries(queryClient, { farmId });
+        setConfirmDelete(null);
+        return;
+      }
+      const res = await deletePointOfSaleQueued(farmId, confirmDelete.id);
       invalidateFarmQueries(queryClient, { farmId });
       setConfirmDelete(null);
-    } catch {
+      Alert.alert(
+        'Point de vente supprimé',
+        res.status === 'queued' ? 'Suppression mise en file, synchronisation en attente.' : 'Le point de vente a été retiré de la liste.',
+      );
+    } catch (e) {
       setConfirmDelete(null);
-      // completion via alert
+      Alert.alert('Suppression impossible', e instanceof Error ? e.message : 'Erreur inattendue.');
     } finally {
       setDeleting(false);
     }

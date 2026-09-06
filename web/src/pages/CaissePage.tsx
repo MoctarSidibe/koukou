@@ -6,15 +6,21 @@ import { useFarm } from '../app/FarmContext';
 import { Card, EmptyState, Loading, PageHeader, StatusBadge, Th, Td } from '../components/ui';
 import { classNames, dateFr, dateTimeFr, fcfa } from '../lib/format';
 
-interface Movement {
+interface CashMovement {
   id: string;
-  sessionId: string;
-  type: string;
+  cashSessionId: string | null;
+  type: 'IN' | 'OUT';
   amountFcfa: number;
-  balanceAfterFcfa: number | null;
   reason: string | null;
   movementDate: string;
 }
+
+type CaisseSummary = CashSession & {
+  movements: CashMovement[];
+  expectedBalanceFcfa: number;
+  inFcfa: number;
+  outFcfa: number;
+};
 
 const inputCls =
   'w-full rounded-lg border border-slate-300 px-2.5 py-2 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100';
@@ -25,7 +31,7 @@ export function CaissePage() {
 
   const current = useQuery({
     queryKey: ['caisse-current', farmId],
-    queryFn: () => api.get<CashSession>(`/farms/${farmId}/caisse/current`),
+    queryFn: () => api.get<CaisseSummary>(`/farms/${farmId}/caisse/current`),
     enabled: !!farmId,
     retry: false,
   });
@@ -36,16 +42,9 @@ export function CaissePage() {
     enabled: !!farmId,
   });
 
-  const movements = useQuery({
-    queryKey: ['caisse-movements', farmId],
-    queryFn: () => api.get<Movement[]>(`/farms/${farmId}/caisse/movements`),
-    enabled: !!farmId,
-  });
-
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['caisse-current', farmId] });
     void queryClient.invalidateQueries({ queryKey: ['caisse-sessions', farmId] });
-    void queryClient.invalidateQueries({ queryKey: ['caisse-movements', farmId] });
   };
 
   const openSession = useMutation({
@@ -57,6 +56,12 @@ export function CaissePage() {
   const closeSession = useMutation({
     mutationFn: (declaredBalanceFcfa: number) =>
       api.post<CashSession>(`/farms/${farmId}/caisse/close`, { declaredBalanceFcfa }),
+    onSuccess: invalidate,
+  });
+
+  const createMovement = useMutation({
+    mutationFn: (body: { type: 'IN' | 'OUT'; amountFcfa: number; reason?: string }) =>
+      api.post<CashMovement>(`/farms/${farmId}/caisse/movements`, body),
     onSuccess: invalidate,
   });
 
@@ -139,7 +144,7 @@ export function CaissePage() {
 
         <Card className="overflow-hidden">
           <div className="border-b border-slate-100 px-4 py-3">
-            <h2 className="text-sm font-semibold text-slate-700">Mouvements récents</h2>
+            <h2 className="text-sm font-semibold text-slate-700">Mouvements</h2>
           </div>
           <div className="max-h-[300px] overflow-y-auto">
             <table className="w-full">
@@ -152,7 +157,7 @@ export function CaissePage() {
                 </tr>
               </thead>
               <tbody>
-                {(movements.data ?? [])
+                {(current.data?.movements ?? [])
                   .slice()
                   .sort((a, b) => b.movementDate.localeCompare(a.movementDate))
                   .slice(0, 15)
@@ -167,14 +172,58 @@ export function CaissePage() {
                       <Td className="max-w-[180px] truncate">{m.reason ?? '—'}</Td>
                     </tr>
                   ))}
-                {!movements.data?.length ? (
+                {!current.data?.movements?.length ? (
                   <tr>
-                    <Td className="py-8 text-center text-slate-400">Aucun mouvement.</Td>
+                    <Td className="py-8 text-center text-slate-400">
+                      {current.data ? 'Aucun mouvement.' : 'Ouvrez la caisse pour suivre les mouvements de la session.'}
+                    </Td>
                   </tr>
                 ) : null}
               </tbody>
             </table>
           </div>
+          {current.data ? (
+            <form
+              className="border-t border-slate-100 p-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const f = new FormData(e.currentTarget);
+                const type = f.get('mvType') === 'IN' ? 'IN' : 'OUT';
+                const amount = Number(f.get('mvAmount'));
+                const reason = String(f.get('mvReason') ?? '').trim();
+                createMovement.mutate({ type, amountFcfa: amount, ...(reason ? { reason } : {}) });
+                e.currentTarget.reset();
+              }}
+            >
+              <div className="flex flex-wrap items-end gap-2">
+                <label className="text-xs">
+                  <span className="mb-1 block font-medium text-slate-600">Mouvement manuel</span>
+                  <select name="mvType" className={inputCls} defaultValue="IN">
+                    <option value="IN">Entrée (+)</option>
+                    <option value="OUT">Sortie (−)</option>
+                  </select>
+                </label>
+                <label className="text-xs">
+                  <span className="mb-1 block font-medium text-slate-600">Montant (FCFA)</span>
+                  <input name="mvAmount" type="number" min={1} required placeholder="500" className={classNames(inputCls, 'w-32')} />
+                </label>
+                <label className="text-xs">
+                  <span className="mb-1 block font-medium text-slate-600">Motif</span>
+                  <input name="mvReason" type="text" placeholder="Ex. petit matériel" className={classNames(inputCls, 'w-44')} />
+                </label>
+                <button
+                  type="submit"
+                  disabled={createMovement.isPending}
+                  className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50"
+                >
+                  Ajouter
+                </button>
+              </div>
+              {createMovement.isError ? (
+                <p className="mt-2 text-sm text-red-600">{(createMovement.error as Error).message}</p>
+              ) : null}
+            </form>
+          ) : null}
         </Card>
       </div>
 

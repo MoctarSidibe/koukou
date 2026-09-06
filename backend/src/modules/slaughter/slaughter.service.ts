@@ -224,7 +224,7 @@ export class SlaughterService {
     dto: ProcessSlaughterOrderDto,
   ): Promise<SlaughterOrder> {
     await this.farmsService.assertAccessible(user, farmId);
-    const order = await this.getOne(user, farmId, orderId);
+    let order = await this.getOne(user, farmId, orderId);
     if (order.status === SlaughterStatus.CANCELLED) {
       throw new BadRequestException('Un ordre annulé ne peut pas être traité.');
     }
@@ -240,6 +240,27 @@ export class SlaughterService {
     // Synchronisation avec le cheptel : on ne peut abattre que les oiseaux
     // réellement présents sur le lot (verrou pessimiste, dans la transaction).
     return this.dataSource.transaction(async (em) => {
+      // Re-lecture de l'ordre sous verrou pessimiste : deux traitements
+      // concurrents ne peuvent pas décrémenter le cheptel deux fois.
+      const locked = await em
+        .getRepository(SlaughterOrder)
+        .createQueryBuilder('o')
+        .setLock('pessimistic_write')
+        .where('o.id = :id', { id: orderId })
+        .andWhere('o.farm_id = :farmId', { farmId })
+        .getOne();
+      if (!locked) {
+        throw new NotFoundException(
+          'Ordre d’abattage introuvable dans cette ferme.',
+        );
+      }
+      if (locked.status !== SlaughterStatus.SENT) {
+        throw new BadRequestException(
+          'Cet ordre d’abattage doit être envoyé (SENT) et n’avoir pas changé d’état depuis la demande : traitement refusé.',
+        );
+      }
+      order = locked;
+
       const batch = await em
         .getRepository(ProductionBatch)
         .createQueryBuilder('batch')
@@ -288,17 +309,30 @@ export class SlaughterService {
     dto?: CancelSlaughterOrderDto,
   ): Promise<SlaughterOrder> {
     await this.farmsService.assertAccessible(user, farmId);
-    const order = await this.getOne(user, farmId, orderId);
-    this.assertMutable(order);
-    if (dto?.reason) {
-      const suffix = dto.reason.trim();
-      order.abattoirNotes = order.abattoirNotes
-        ? `${order.abattoirNotes} — Annulé : ${suffix}`
-        : `Annulé : ${suffix}`;
-    }
-    order.status = SlaughterStatus.CANCELLED;
-    await this.orderRepo.save(order);
-    return order;
+    return this.dataSource.transaction(async (em) => {
+      const order = await em
+        .getRepository(SlaughterOrder)
+        .createQueryBuilder('o')
+        .setLock('pessimistic_write')
+        .where('o.id = :id', { id: orderId })
+        .andWhere('o.farm_id = :farmId', { farmId })
+        .getOne();
+      if (!order) {
+        throw new NotFoundException(
+          'Ordre d’abattage introuvable dans cette ferme.',
+        );
+      }
+      this.assertMutable(order);
+      if (dto?.reason) {
+        const suffix = dto.reason.trim();
+        order.abattoirNotes = order.abattoirNotes
+          ? `${order.abattoirNotes} — Annulé : ${suffix}`
+          : `Annulé : ${suffix}`;
+      }
+      order.status = SlaughterStatus.CANCELLED;
+      await em.getRepository(SlaughterOrder).save(order);
+      return order;
+    });
   }
 
   async generateBordereau(

@@ -18,7 +18,8 @@ import { orderCanalLabel, orderStatusLabel, orderStatusTone, productLabel } from
 import { useAuth } from '@/auth/AuthContext';
 import { fetchBatches, fetchOrders, fetchPointsOfSale } from '@/api';
 import { invalidateFarmQueries } from '@/api/invalidate';
-import { createOrder, DEFAULT_AVG_WEIGHT_KG, type SaleProductType, type SaleUnit } from '@/api/mutations';
+import { createOrderQueued } from '@/offline/engine';
+import { DEFAULT_AVG_WEIGHT_KG, type SaleProductType, type SaleUnit } from '@/api/mutations';
 import { canManageFarm } from '@/api/roles';
 import type { OrderFull, OrderStatus } from '@/api/types';
 import { color, palette, radii, spacing, fmt, fmtFcfa } from '@/constants/theme';
@@ -31,7 +32,7 @@ const FILTERS: { key: OrderStatus | 'ALL'; label: string }[] = [
   { key: 'CANCELLED', label: 'Annulées' },
 ];
 
-type OrderProductKey = 'PIECE' | 'KG' | 'ABATTU_PIECE' | 'ABATTU_KG' | 'OEUF';
+type OrderProductKey = 'PIECE' | 'KG' | 'OEUF';
 
 interface DraftItem {
   productType: SaleProductType;
@@ -56,8 +57,20 @@ function nextExpectedDate(): Date {
   return d;
 }
 
+const DEFAULT_PRICES: Record<OrderProductKey, number> = {
+  PIECE: 2500,
+  KG: 2200,
+  OEUF: 2500,
+};
+
+/** Date locale (YYYY-MM-DD) : évite le décalage d'un jour de toISOString() (UTC). */
+function toLocalDateString(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 function CreateOrderSheet({ onClose }: { onClose: () => void }) {
-  const { farmId } = useAuth();
+  const { farmId, mode } = useAuth();
   const queryClient = useQueryClient();
   const batchesQuery = useQuery({ queryKey: ['batches', farmId], queryFn: () => fetchBatches(farmId) });
   const pdvQuery = useQuery({ queryKey: ['points-of-sale', farmId], queryFn: () => fetchPointsOfSale(farmId) });
@@ -76,7 +89,7 @@ function CreateOrderSheet({ onClose }: { onClose: () => void }) {
   const [product, setProduct] = useState<OrderProductKey>('PIECE');
   const [lotId, setLotId] = useState('');
   const [qty, setQty] = useState(0);
-  const [price, setPrice] = useState(160000);
+  const [price, setPrice] = useState(DEFAULT_PRICES.PIECE);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -105,21 +118,18 @@ function CreateOrderSheet({ onClose }: { onClose: () => void }) {
       setError('Une commande ne peut porter que sur un seul lot.');
       return;
     }
-    const birdQty = product === 'KG' || product === 'ABATTU_KG' ? qty : qty;
-    const kg = Math.round(birdQty * DEFAULT_AVG_WEIGHT_KG * 100) / 100;
-    const isKg = product === 'KG' || product === 'ABATTU_KG';
+    const kg = Math.round(qty * DEFAULT_AVG_WEIGHT_KG * 100) / 100;
+    const isKg = product === 'KG';
     const draft: DraftItem = {
       productType:
         product === 'PIECE' ? 'POULET_PIECE' :
-        product === 'KG' ? 'POULET_KG' :
-        product === 'ABATTU_PIECE' ? 'ABATTU_PIECE' :
-        product === 'ABATTU_KG' ? 'ABATTU_KG' : 'OEUFS',
-      label: productLabel(product === 'PIECE' ? 'POULET_PIECE' : product === 'KG' ? 'POULET_KG' : product === 'ABATTU_PIECE' ? 'ABATTU_PIECE' : product === 'ABATTU_KG' ? 'ABATTU_KG' : 'OEUFS'),
+        product === 'KG' ? 'POULET_KG' : 'OEUFS',
+      label: productLabel(product === 'PIECE' ? 'POULET_PIECE' : product === 'KG' ? 'POULET_KG' : 'OEUFS'),
       quantity: isKg ? kg : qty,
       unitPriceFcfa: price,
       ...(product === 'OEUF' ? {} : { batchId: lotId }),
       ...(isKg ? { pieceCount: qty } : {}),
-      unit: (product === 'PIECE' || product === 'ABATTU_PIECE' ? 'PIECE' : isKg ? 'KG' : 'ALVEOLES') as SaleUnit,
+      unit: (product === 'PIECE' ? 'PIECE' : isKg ? 'KG' : 'ALVEOLES') as SaleUnit,
       amountFcfa: isKg ? Math.round(kg * price) : qty * price,
     };
     setItems((prev) => [...prev, draft]);
@@ -136,14 +146,18 @@ function CreateOrderSheet({ onClose }: { onClose: () => void }) {
       setError('L’acompte ne peut pas dépasser le total.');
       return;
     }
+    if (mode === 'demo') {
+      onClose();
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const res = await createOrder(farmId, {
+      const res = await createOrderQueued(farmId, {
         ...(customerName.trim() ? { customerName: customerName.trim() } : {}),
         ...(customerPhone.trim() ? { customerPhone: customerPhone.trim() } : {}),
         canal,
-        expectedDate: expectedDate.toISOString().slice(0, 10),
+        expectedDate: toLocalDateString(expectedDate),
         ...(delivery === 'PDV' && pdvId ? { pointOfSaleId: pdvId } : {}),
         ...(address.trim() ? { address: address.trim() } : {}),
         items: items.map((i) => ({
@@ -159,14 +173,16 @@ function CreateOrderSheet({ onClose }: { onClose: () => void }) {
       });
       invalidateFarmQueries(queryClient, { farmId });
       onClose();
-      void res;
+      if (res.status === 'queued') {
+        setBusy(false);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erreur lors de la création.');
       setBusy(false);
     }
   };
 
-  const isKg = product === 'KG' || product === 'ABATTU_KG';
+  const isKg = product === 'KG';
   const maxQty = product === 'OEUF' ? 200 : sellable.find((b) => b.id === lotId)?.quantityAlive ?? 1000;
 
   return (
@@ -237,7 +253,7 @@ function CreateOrderSheet({ onClose }: { onClose: () => void }) {
           <Pressable onPress={() => setShowDate(true)} style={styles.dateBtn} accessibilityRole="button">
             <CalendarDays size={16} color={color.brand[600]} />
             <AppText size="body" weight="semibold" color="text">
-              {expectedDate.toISOString().slice(0, 10).split('-').reverse().join('/')}
+              {toLocalDateString(expectedDate).split('-').reverse().join('/')}
             </AppText>
           </Pressable>
           {showDate ? (
@@ -261,7 +277,7 @@ function CreateOrderSheet({ onClose }: { onClose: () => void }) {
           </AppText>
           <View style={styles.rowWrap}>
             {ORDER_PRODUCTS.map((p) => (
-              <Pressable key={p.key} onPress={() => { setProduct(p.key); setError(null); }} accessibilityRole="button">
+              <Pressable key={p.key} onPress={() => { setProduct(p.key); setPrice(DEFAULT_PRICES[p.key]); setError(null); }} accessibilityRole="button">
                 <Chip label={p.label} tone="accent" selected={p.key === product} />
               </Pressable>
             ))}

@@ -98,9 +98,8 @@ export function PosLineSheet({ visible, lots, pools, committed, initial, presetB
   const pool = poolList.find((p) => p.id === poolId);
   const lot = sellable.find((b) => b.id === lotId);
 
-  const productsWithoutSlaughter = (l: PosLine) => l.product !== 'ABATTU_PIECE' && l.product !== 'ABATTU_KG';
   const flockUsed = (committed ?? [])
-    .filter((l) => l.uid !== initial?.uid && l.batchId === lotId && productsWithoutSlaughter(l))
+    .filter((l) => l.uid !== initial?.uid && l.batchId === lotId && l.slaughterOrderId == null)
     .reduce((a, l) => a + l.qty, 0);
   const poolUsed = (committed ?? [])
     .filter((l) => l.uid !== initial?.uid && l.slaughterOrderId === poolId)
@@ -109,8 +108,9 @@ export function PosLineSheet({ visible, lots, pools, committed, initial, presetB
   const maxQty =
     product === 'OEUF' ? 200 :
     product === 'AUTRE' ? 1000 :
-    abattuMode === 'pool' ? Math.max((pool?.carcassesAvailable ?? 0) - poolUsed, 0) :
-    Math.max((lot?.quantityAlive ?? 0) - flockUsed, 0) || (product === 'KG' || product === 'ABATTU_KG' ? 1000 : 200);
+    abattuMode === 'pool' ? Math.max((poolList.find((p) => p.id === poolId)?.carcassesAvailable ?? 0) - poolUsed, 0) :
+    lot != null ? Math.max(lot.quantityAlive - flockUsed, 0) :
+    (product === 'KG' || product === 'ABATTU_KG' ? 1000 : 200);
 
   const preview = (() => {
     const previewLine: PosLine = {
@@ -150,6 +150,10 @@ export function PosLineSheet({ visible, lots, pools, committed, initial, presetB
     }
     if (isAbattu && abattuMode === 'pool' && !pool) {
       setError('Sélectionnez un lot de carcasses (abattoir).');
+      return;
+    }
+    if (isAbattu && abattuMode === 'direct' && !lotId) {
+      setError('Sélectionnez un lot.');
       return;
     }
     if ((product === 'PIECE' || product === 'KG') && !lotId) {
