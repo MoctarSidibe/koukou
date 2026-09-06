@@ -12,6 +12,7 @@ import { SectionHeader } from '@/components/ui/SectionHeader';
 import { Segmented } from '@/components/ui/Segmented';
 import { Spinner } from '@/components/ui/Spinner';
 import { Stepper } from '@/components/ui/Stepper';
+import { SlaughterStats } from '@/components/slaughter/SlaughterStats';
 import { useAuth } from '@/auth/AuthContext';
 import { fetchBatches, fetchSlaughterOrders } from '@/api';
 import { invalidateFarmQueries } from '@/api/invalidate';
@@ -269,6 +270,8 @@ export default function SlaughterScreen() {
               </AppText>
             </Card>
           )}
+
+          <SlaughterStats orders={orders} lot={lot} />
 
           <SectionHeader title="Ordres d’abattage" subtitle={orders.length > 0 ? `${orders.length} ordre(s)` : undefined} />
           <View style={{ gap: 10 }}>
