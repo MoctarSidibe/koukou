@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Alert, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarX, Check, FileText, Scale, Send } from 'lucide-react-native';
+import { CalendarX, Check, FileText, Printer, Scale, Send } from 'lucide-react-native';
 
 import { Screen, ScreenHeader } from '@/components/ui/Screen';
 import { AppText } from '@/components/ui/AppText';
@@ -25,7 +25,7 @@ import {
   sendSlaughterOrder,
   todayStr,
 } from '@/api/mutations';
-import type { SlaughterDestination, SlaughterOrder, SlaughterStatus, SlaughterType } from '@/api/types';
+import type { ProductionBatch, SlaughterDestination, SlaughterOrder, SlaughterStatus, SlaughterType } from '@/api/types';
 import { color, palette } from '@/constants/theme';
 
 const STATUS_LABEL: Record<SlaughterStatus, string> = {
@@ -82,6 +82,22 @@ export default function SlaughterScreen() {
     try {
       await downloadPdf(`/farms/${farmId}/slaughter-orders/${order.id}/bordereau`, `${order.referenceNumber}.pdf`);
       Alert.alert('Bordereau téléchargé', `Partagez « ${order.referenceNumber}.pdf » avec l’abattoir.`);
+    } catch (e) {
+      Alert.alert('Téléchargement impossible', e instanceof Error ? e.message : 'Erreur inattendue.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const downloadPasseport = async (b: ProductionBatch) => {
+    if (mode === 'demo') {
+      Alert.alert('Disponible en mode connecté', 'Le passeport sanitaire PDF est généré par le serveur. Connectez-vous à votre ferme pour le télécharger.');
+      return;
+    }
+    setBusy(b.id);
+    try {
+      await downloadPdf(`/farms/${farmId}/batches/${b.id}/passeport`, `passeport-${b.batchName ?? b.id}.pdf`);
+      Alert.alert('Passeport sanitaire', `« passeport-${b.batchName ?? b.id}.pdf » enregistré : il certifie la conformité sanitaire du lot pour l’abattoir.`);
     } catch (e) {
       Alert.alert('Téléchargement impossible', e instanceof Error ? e.message : 'Erreur inattendue.');
     } finally {
@@ -172,9 +188,12 @@ export default function SlaughterScreen() {
         <>
           {canManage ? (
             <>
-              <AppText size="label" color="muted" style={{ marginBottom: 6 }}>
-                LOT À ABATTRE
-              </AppText>
+              <View style={styles.lotHead}>
+                <AppText size="label" color="muted">
+                  LOT À ABATTRE
+                </AppText>
+                <Button label="Passeport sanitaire" tone="ghost" size="md" block={false} icon={Printer} onPress={() => lot && void downloadPasseport(lot)} disabled={busy !== null} loading={busy === lot?.id} />
+              </View>
               <View style={styles.rowWrap}>
                 {lots.map((b) => (
                   <Pressable key={b.id} onPress={() => setLotId(b.id)} accessibilityRole="button">
@@ -366,6 +385,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 6,
+  },
+  lotHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
   },
   chip: {
     marginBottom: 2,
