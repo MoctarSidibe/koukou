@@ -3,13 +3,16 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { AuthUser } from '../../common/decorators/current-user.decorator.js';
 import { AlertKind, AlertLevel } from '../../common/enums/alert-level.enum.js';
+import { BatchType } from '../../common/enums/batch-type.enum.js';
 import { CareType } from '../../common/enums/care-type.enum.js';
+import { FeedEntryType } from '../../common/enums/feed-entry-type.enum.js';
 import { ProphylaxisStatus } from '../../common/enums/prophylaxis-status.enum.js';
 import { ReferenceKey } from '../../common/enums/reference-key.enum.js';
+import { ScheduleSource } from '../../common/enums/schedule-source.enum.js';
 import { Species } from '../../common/enums/species.enum.js';
 import { FarmsService } from '../farms/farms.service.js';
 import { AlertsService } from '../alerts/alerts.service.js';
@@ -28,6 +31,9 @@ import {
   ProtocolStepInput,
 } from './dto/create-protocol.dto.js';
 import { CreateTreatmentDto } from './dto/create-treatment.dto.js';
+import { GenerateProgramDto } from './dto/generate-program.dto.js';
+import { CreateManualScheduleDto } from './dto/create-manual-schedule.dto.js';
+import { UpdateScheduleDto } from './dto/update-schedule.dto.js';
 
 function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
@@ -42,6 +48,8 @@ function addDays(date: string, days: number): string {
 @Injectable()
 export class SanitaryService {
   constructor(
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
     @InjectRepository(SanitaryProtocol)
     private readonly protocolRepo: Repository<SanitaryProtocol>,
     @InjectRepository(ProtocolStep)
@@ -84,6 +92,27 @@ export class SanitaryService {
     return { ...protocol, steps };
   }
 
+  /**
+   * Protocole par défaut pour une espèce/type donné. Pour les espèces sans
+   * protocole dédié (Pintade, Dinde, Caille…), on retombe sur le protocole
+   * POULET générique du type — jamais bloquant pour l'éleveur.
+   */
+  private async resolveDefaultProtocol(
+    species: Species,
+    type: BatchType,
+  ): Promise<SanitaryProtocol | null> {
+    const exact = await this.protocolRepo.findOne({
+      where: { species, type, isDefault: true },
+      order: { createdAt: 'ASC' },
+    });
+    if (exact) return exact;
+    if (species === Species.POULET) return null;
+    return this.protocolRepo.findOne({
+      where: { species: Species.POULET, type, isDefault: true },
+      order: { createdAt: 'ASC' },
+    });
+  }
+
   async createProtocol(
     dto: CreateSanitaryProtocolDto,
   ): Promise<SanitaryProtocol & { steps: ProtocolStep[] }> {
@@ -122,10 +151,7 @@ export class SanitaryService {
 
     const protocol = protocolId
       ? await this.protocolRepo.findOne({ where: { id: protocolId } })
-      : await this.protocolRepo.findOne({
-          where: { species: batch.species, type: batch.type, isDefault: true },
-          order: { createdAt: 'ASC' },
-        });
+      : await this.resolveDefaultProtocol(batch.species, batch.type);
     if (!protocol) {
       throw new BadRequestException(
         'Aucun protocole sanitaire défini pour ce type de lot (espèce/type). Créez-en un d’abord.',
@@ -338,6 +364,295 @@ export class SanitaryService {
     });
   }
 
+  // ---------- Programmes & échéances (Traitements) ----------
+
+  /**
+   * Applique un programme pré-chargé (calendrier vaccinal Gabon) à un ou
+   * plusieurs lots. Non bloquant : les étapes dont la date d'application est
+   * déjà passée, ou déjà planifiées/réalisées, sont **sautées** avec une
+   * raison (remontée en `skippedSteps`), jamais bloquantes.
+   */
+  async generateVaccineProgram(
+    user: AuthUser,
+    farmId: string,
+    dto: GenerateProgramDto,
+  ): Promise<{
+    protocolId: string;
+    programName: string;
+    planned: number;
+    skipped: number;
+    perLot: {
+      batchId: string;
+      batchName: string;
+      planned: number;
+      skipped: number;
+      skippedSteps: { step: string; date: string | null; reason: string }[];
+    }[];
+    events: ProphylaxisEvent[];
+  }> {
+    await this.farmsService.assertAccessible(user, farmId);
+    const protocol = await this.protocolRepo.findOne({
+      where: { id: dto.protocolId },
+    });
+    if (!protocol)
+      throw new NotFoundException('Programme de vaccination introuvable.');
+    const steps = await this.stepRepo.find({
+      where: { protocolId: protocol.id, active: true },
+      order: { stepOrder: 'ASC' },
+    });
+    if (steps.length === 0) {
+      throw new BadRequestException(
+        'Ce programme ne contient aucune étape active.',
+      );
+    }
+
+    const today = todayStr();
+    const events: ProphylaxisEvent[] = [];
+    const perLot: {
+      batchId: string;
+      batchName: string;
+      planned: number;
+      skipped: number;
+      skippedSteps: { step: string; date: string | null; reason: string }[];
+    }[] = [];
+    let planned = 0;
+    let skipped = 0;
+
+    for (const lotId of dto.lotIds) {
+      const lot = await this.assertBatchInFarm(farmId, lotId);
+      const existing = await this.eventRepo.find({ where: { batchId: lotId } });
+      const existingByStep = new Map(
+        existing
+          .filter((e) => e.protocolStepId)
+          .map((e) => [e.protocolStepId as string, e]),
+      );
+
+      let lotPlanned = 0;
+      let lotSkipped = 0;
+      const skippedSteps: {
+        step: string;
+        date: string | null;
+        reason: string;
+      }[] = [];
+
+      for (const step of steps) {
+        const scheduledDate = addDays(lot.integrationDate, step.dayFrom);
+        const already = existingByStep.get(step.id);
+        if (already) {
+          const reason =
+            already.status === ProphylaxisStatus.FAIT
+              ? 'Étape déjà réalisée'
+              : 'Étape déjà planifiée';
+          skippedSteps.push({ step: step.name, date: scheduledDate, reason });
+          skipped += 1;
+          lotSkipped += 1;
+          continue;
+        }
+        if (scheduledDate < today) {
+          skippedSteps.push({
+            step: step.name,
+            date: scheduledDate,
+            reason:
+              'Date d’application déjà passée — étape sautée, non bloquante',
+          });
+          skipped += 1;
+          lotSkipped += 1;
+          continue;
+        }
+        const event = await this.eventRepo.save(
+          this.eventRepo.create({
+            farmId,
+            batchId: lotId,
+            buildingId: lot.buildingId,
+            protocolStepId: step.id,
+            source: ScheduleSource.PROGRAM,
+            careType: step.careType,
+            name: step.name,
+            dosage: step.dosage,
+            route: step.route,
+            withdrawalDays: step.withdrawalDays,
+            scheduledDate,
+            status: ProphylaxisStatus.PLANIFIE,
+          }),
+        );
+        events.push(event);
+        planned += 1;
+        lotPlanned += 1;
+      }
+
+      await this.refreshProphylaxis(lotId);
+      perLot.push({
+        batchId: lotId,
+        batchName: lot.batchName ?? lotId,
+        planned: lotPlanned,
+        skipped: lotSkipped,
+        skippedSteps,
+      });
+    }
+
+    return {
+      protocolId: protocol.id,
+      programName: protocol.name,
+      planned,
+      skipped,
+      perLot,
+      events,
+    };
+  }
+
+  /**
+   * Planifie un soin unique (vaccin ou médicament) sur un ou plusieurs lots.
+   * Pour un médicament choisi « Sortir du stock » : la quantité (dose) est
+   * déduite une seule fois au niveau de la ferme (verrou pessimiste, jamais
+   * de stock négatif) et le soin « porteur » la restitue s'il est annulé.
+   */
+  async createManualSchedule(
+    user: AuthUser,
+    farmId: string,
+    dto: CreateManualScheduleDto,
+  ): Promise<ProphylaxisEvent[]> {
+    await this.farmsService.assertAccessible(user, farmId);
+    if (
+      dto.careType !== CareType.VACCIN &&
+      dto.careType !== CareType.MEDICAMENT
+    ) {
+      throw new BadRequestException(
+        'Type de soin invalide : choisissez Vaccin ou Médicament.',
+      );
+    }
+
+    const decrementStock = dto.decrementStock === true;
+    if (decrementStock) {
+      if (dto.careType !== CareType.MEDICAMENT) {
+        throw new BadRequestException(
+          'Seul un médicament peut être sorti du stock.',
+        );
+      }
+      if (!dto.medicationLotId || (dto.medicationQty ?? 0) <= 0) {
+        throw new BadRequestException(
+          'Sélectionnez le lot de médicament et indiquez la quantité à sortir du stock.',
+        );
+      }
+      await this.consumeMedicationStock(
+        farmId,
+        dto.medicationLotId,
+        dto.medicationQty ?? 0,
+      );
+    }
+
+    const created: ProphylaxisEvent[] = [];
+    for (const lotId of dto.lotIds) {
+      const lot = await this.assertBatchInFarm(farmId, lotId);
+      const event = await this.eventRepo.save(
+        this.eventRepo.create({
+          farmId,
+          batchId: lotId,
+          buildingId: lot.buildingId,
+          protocolStepId: null,
+          source: ScheduleSource.MANUEL,
+          careType: dto.careType,
+          name: dto.name,
+          dosage: dto.dosage ?? null,
+          route: dto.route ?? null,
+          withdrawalDays: dto.withdrawalDays ?? 0,
+          scheduledDate: dto.scheduledDate,
+          status: ProphylaxisStatus.PLANIFIE,
+          notes: dto.notes ?? null,
+          decrementStock,
+          medicationLotId: dto.medicationLotId ?? null,
+          medicationQty: decrementStock ? (dto.medicationQty ?? null) : null,
+          medicationUnit: dto.medicationUnit ?? null,
+          stockConsumedAt:
+            decrementStock && created.length === 0 ? new Date() : null,
+        }),
+      );
+      created.push(event);
+      await this.refreshProphylaxis(lotId);
+    }
+    return created;
+  }
+
+  /**
+   * Édite un soin planifié (vaccin ↔ médicament, intitulé, voie, dosage,
+   * délai d'attente, notes, date). Un soin déjà réalisé reste immuable
+   * (historique HACCP). Une nouvelle date replace le soin en PLANIFIE.
+   */
+  async updateSchedule(
+    user: AuthUser,
+    farmId: string,
+    batchId: string,
+    eventId: string,
+    dto: UpdateScheduleDto,
+  ): Promise<ProphylaxisEvent> {
+    await this.farmsService.assertAccessible(user, farmId);
+    const event = await this.assertEvent(farmId, batchId, eventId);
+    if (event.status === ProphylaxisStatus.FAIT) {
+      throw new BadRequestException(
+        'Un soin déjà réalisé est immuable (histoire HACCP).',
+      );
+    }
+    if (dto.careType) {
+      if (
+        dto.careType !== CareType.VACCIN &&
+        dto.careType !== CareType.MEDICAMENT
+      ) {
+        throw new BadRequestException(
+          'Type de soin invalide : choisissez Vaccin ou Médicament.',
+        );
+      }
+      event.careType = dto.careType;
+    }
+    if (dto.name != null && dto.name.trim().length > 0) {
+      event.name = dto.name.trim();
+    }
+    if ('route' in dto) event.route = dto.route ?? null;
+    if ('dosage' in dto) event.dosage = dto.dosage ?? null;
+    if ('notes' in dto) event.notes = dto.notes ?? null;
+    if (dto.withdrawalDays != null) event.withdrawalDays = dto.withdrawalDays;
+    if (dto.scheduledDate) {
+      event.scheduledDate = dto.scheduledDate;
+      event.status = ProphylaxisStatus.PLANIFIE;
+    }
+    await this.eventRepo.save(event);
+    await this.refreshProphylaxis(batchId);
+    return event;
+  }
+
+  /**
+   * Supprime définitivement un soin planifié (Propriétaire). Restaure le
+   * stock si ce soin portait la sortie de stock d'un médicament. Les soins
+   * déjà réalisés ne sont jamais supprimés (historique HACCP).
+   */
+  async deleteSchedule(
+    user: AuthUser,
+    farmId: string,
+    batchId: string,
+    eventId: string,
+  ): Promise<{ deleted: boolean }> {
+    await this.farmsService.assertAccessible(user, farmId);
+    const event = await this.assertEvent(farmId, batchId, eventId);
+    if (event.status === ProphylaxisStatus.FAIT) {
+      throw new BadRequestException(
+        'Impossible de supprimer un soin déjà réalisé (historique HACCP) : annulez-le plutôt.',
+      );
+    }
+    if (
+      event.decrementStock &&
+      event.stockConsumedAt &&
+      event.medicationLotId &&
+      event.medicationQty
+    ) {
+      await this.restoreMedicationStock(
+        farmId,
+        event.medicationLotId,
+        event.medicationQty,
+      );
+    }
+    await this.eventRepo.delete({ id: eventId });
+    await this.refreshProphylaxis(batchId);
+    return { deleted: true };
+  }
+
   // ---------- Évaluation des alertes (advisory) ----------
 
   /**
@@ -380,7 +695,7 @@ export class SanitaryService {
         {
           kind: AlertKind.PROPHYLAXIE,
           level: AlertLevel.ROUGE,
-          message: `Soin(s) prophylactique(s) en retard sur le lot : ${names}. Un retard de vaccination expose la bande aux maladies.`,
+          message: `Soin(s) prophylactique(s) en retard sur le lot : ${names}. Un retard de vaccination expose le lot aux maladies.`,
           recommendation:
             'Réaliser le soin dès que possible ou reporter explicitement la date. En cas de doute, contacter le vétérinaire.',
           context: { overdueCount: overdue.length },
@@ -499,6 +814,63 @@ export class SanitaryService {
       throw new BadRequestException(
         'Lot d’intrant (médicament) introuvable dans cette ferme.',
       );
+  }
+
+  /**
+   * Déduit une quantité (dose) du stock d'un lot d'intrant MEDICAMENT.
+   * Transaction + verrou pessimiste : jamais de stock négatif (400 sinon).
+   */
+  private async consumeMedicationStock(
+    farmId: string,
+    medicationLotId: string,
+    qty: number,
+  ): Promise<void> {
+    await this.dataSource.transaction(async (em) => {
+      const lot = await em
+        .getRepository(InputLot)
+        .createQueryBuilder('lot')
+        .setLock('pessimistic_write')
+        .where('lot.id = :id', { id: medicationLotId })
+        .andWhere('lot.farmId = :farmId', { farmId })
+        .getOne();
+      if (!lot)
+        throw new BadRequestException(
+          'Lot d’intrant (médicament) introuvable dans cette ferme.',
+        );
+      if (lot.entryType !== FeedEntryType.MEDICAMENT)
+        throw new BadRequestException(
+          'Ce lot d’intrant n’est pas un médicament : sortie de stock impossible.',
+        );
+      const available = Math.max(0, lot.quantity ?? 0);
+      if (qty <= 0 || qty > available) {
+        throw new BadRequestException(
+          `Sortie de stock impossible : il ne reste que ${available} ${lot.unit ?? lot.doseUnit ?? ''} de « ${lot.productName} » (jamais de quantité négative). Réapprovisionnez le stock ou choisissez « Externe au stock ».`,
+        );
+      }
+      lot.quantity = Math.round((available - qty) * 1000) / 1000;
+      await em.getRepository(InputLot).save(lot);
+    });
+  }
+
+  /** Restitue la quantité au lot MEDICAMENT (annulation/suppression du soin). */
+  private async restoreMedicationStock(
+    farmId: string,
+    medicationLotId: string,
+    qty: number,
+  ): Promise<void> {
+    await this.dataSource.transaction(async (em) => {
+      const lot = await em
+        .getRepository(InputLot)
+        .createQueryBuilder('lot')
+        .setLock('pessimistic_write')
+        .where('lot.id = :id', { id: medicationLotId })
+        .andWhere('lot.farmId = :farmId', { farmId })
+        .getOne();
+      if (!lot || lot.entryType !== FeedEntryType.MEDICAMENT) return;
+      lot.quantity =
+        Math.round((Math.max(0, lot.quantity ?? 0) + (qty ?? 0)) * 1000) / 1000;
+      await em.getRepository(InputLot).save(lot);
+    });
   }
 
   private async saveSteps(

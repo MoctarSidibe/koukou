@@ -78,35 +78,33 @@ describe('Météo & heat-stress (THI) (e2e)', () => {
     await app.init();
     server = app.getHttpServer();
 
-    const email = `owner.weather.${Date.now()}@e2e.ga`;
+    const phone = `+24167${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24167${Date.now()}`,
-        email,
-        password: 'secret123',
+        phone,
         fullName: 'Proprio Météo',
+        code: 'secret123',
       })
       .expect(201);
     const login = await request(server)
       .post('/auth/login')
-      .send({ identifier: email, password: 'secret123' })
+      .send({ phone, code: 'secret123' })
       .expect(201);
     token = login.body.accessToken;
 
-    const otherEmail = `other.weather.${Date.now()}@e2e.ga`;
+    const otherPhone = `+24168${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24168${Date.now()}`,
-        email: otherEmail,
-        password: 'secret123',
+        phone: otherPhone,
         fullName: 'Autre Proprio Météo',
+        code: 'secret123',
       })
       .expect(201);
     const otherLogin = await request(server)
       .post('/auth/login')
-      .send({ identifier: otherEmail, password: 'secret123' })
+      .send({ phone: otherPhone, code: 'secret123' })
       .expect(201);
     otherToken = otherLogin.body.accessToken;
 

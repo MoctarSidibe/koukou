@@ -1,30 +1,50 @@
-import React, { useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Alert, Animated, Easing, Pressable, StyleSheet, View } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { Image } from 'expo-image';
-import { Alert } from 'react-native';
-import { Bird, AlertTriangle, Wheat, Egg, Banknote, BarChart3, MapPin, ShieldCheck, Activity, TrendingUp, Scale, Thermometer, Users, Medal, Maximize2, Store, ChevronDown, Droplets, Building, ArrowRight, Stethoscope } from 'lucide-react-native';
+import { Bird, AlertTriangle, Wheat, Egg, Banknote, BarChart3, MapPin, ShieldCheck, Activity, TrendingUp, TrendingDown, Scale, Thermometer, Users, Medal, Maximize2, Store, ChevronDown, ChevronLeft, ChevronRight, Clock, Droplets, Building, ArrowRight, Stethoscope, Check } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Svg, { Circle } from 'react-native-svg';
 
 import { Screen } from '@/components/ui/Screen';
 import { AppText } from '@/components/ui/AppText';
 import { Card } from '@/components/ui/Card';
-import { Chip } from '@/components/ui/Chip';
 import { MetricTile } from '@/components/ui/MetricTile';
 import { SectionHeader } from '@/components/ui/SectionHeader';
-import { Spinner } from '@/components/ui/Spinner';
 import { LotCard } from '@/components/LotCard';
 import { EggStockCard, buildEggDailyData } from '@/components/EggStockCard';
 import { Button } from '@/components/ui/Button';
 import { useQuickCapture } from '@/components/capture/QuickCaptureProvider';
 import { useAuth } from '@/auth/AuthContext';
-import { givenName } from '@/api/format';
+import { givenName, speciesLabel } from '@/api/format';
 import { color, emoji, fmt, fmtFcfa, gradeColor, palette, radii } from '@/constants/theme';import { fetchAdvisory, fetchDashboard, fetchBatches, fetchSlaughterOrders } from '@/api';
+import { Sheet } from '@/components/ui/Sheet';
+import { Spinner } from '@/components/ui/Spinner';
 import { MetricInfoSheet } from '@/components/MetricInfoSheet';
 import type { MetricKey } from '@/components/MetricInfoSheet';
+import { CheptelModal } from '@/components/CheptelModal';
+import { PickerFieldM } from '@/components/ui/PeriodBar';
 import type { HealthGrade } from '@/api/types';
+
+// Bornes de dates stables (références constantes sur la journée) : empêcher
+// les re-renders de repousser un nouveau Date() au picker natif (sinon le
+// calendrier « saute » au mois courant pendant la navigation).
+function buildStableDates() {
+  const now = new Date();
+  return {
+    today: new Date(now.getFullYear(), now.getMonth(), now.getDate()),
+    dayMin: new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()),
+    dayMax: new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59),
+  };
+}
+
+function useStableDates() {
+  const ref = useRef<{ key: string } & ReturnType<typeof buildStableDates> | null>(null);
+  const key = new Date().toDateString();
+  if (!ref.current || ref.current.key !== key) ref.current = { key, ...buildStableDates() };
+  return ref.current;
+}
 
 
 export default function AccueilScreen() {
@@ -33,11 +53,65 @@ export default function AccueilScreen() {
   const { user, farms, farmId } = useAuth();
   const [statsExpanded, setStatsExpanded] = useState(false);
   const [healthExpanded, setHealthExpanded] = useState(false);
+  const [cheptelOpen, setCheptelOpen] = useState(false);
   const [metricInfo, setMetricInfo] = useState<MetricKey | null>(null);
+  const [dataAt, setDataAt] = useState<Date | null>(null);
+  const [liveNow, setLiveNow] = useState(new Date());
+  const [showPicker, setShowPicker] = useState(false);
+  const [spanDays, setSpanDays] = useState<number | 'all'>(30);
+
+  useEffect(() => {
+    const id = setInterval(() => setLiveNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Null dataAt = live/real-time mode, otherwise the applied filter.
+  const selectedAt = dataAt ?? liveNow;
+  const now = liveNow;
+  const isFiltered = dataAt != null;
+  const isToday = selectedAt.toDateString() === now.toDateString();
+
+  const formatDateFull = (d: Date) =>
+    d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+  const formatDayShort = (d: Date) =>
+    d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  const formatHour = (d: Date) =>
+    d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+  const applyFilter = (d: Date) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    setDataAt(d);
+    setShowPicker(false);
+  };
+  const clearFilter = () => {
+    Haptics.selectionAsync().catch(() => {});
+    setDataAt(null);
+    setShowPicker(false);
+  };
+  const shiftDay = (delta: number) => {
+    const base = dataAt ?? now;
+    const copy = new Date(base);
+    copy.setDate(copy.getDate() + delta);
+    if (copy.getTime() > Date.now()) return;
+    Haptics.selectionAsync().catch(() => {});
+    setDataAt(copy);
+  };
 
 
 
-  const dashboard = useQuery({ queryKey: ['dashboard', farmId], queryFn: () => fetchDashboard(farmId) });
+  // Query params: in live mode we snap to the current minute so the dashboard
+  // only refetches once per minute instead of every second (clock ticks in the UI).
+  const queryAt = dataAt ?? (() => {
+    const n = new Date(liveNow);
+    n.setSeconds(0, 0);
+    return n;
+  })();
+  const selectedDateStr = queryAt.toISOString().slice(0, 10);
+  const selectedTimeStr = `${String(queryAt.getHours()).padStart(2, '0')}:${String(queryAt.getMinutes()).padStart(2, '0')}`;
+  const dashboard = useQuery({
+    queryKey: ['dashboard', farmId, selectedDateStr, selectedTimeStr],
+    queryFn: () => fetchDashboard(farmId, selectedDateStr, selectedTimeStr),
+  });
   const advisory = useQuery({ queryKey: ['advisory', farmId], queryFn: () => fetchAdvisory(farmId) });
   const batchesQuery = useQuery({ queryKey: ['batches', farmId], queryFn: () => fetchBatches(farmId) });
   const slaughterQuery = useQuery({ queryKey: ['slaughter-orders', farmId], queryFn: () => fetchSlaughterOrders(farmId) });
@@ -95,6 +169,13 @@ export default function AccueilScreen() {
 
   // --- Max density across active batches ---
   const maxDensity = activeBatches.reduce((max, b) => Math.max(max, b.metrics.densityPerM2 ?? 0), 0);
+  // --- Average age (days) across active batches ---
+  const avgAgeDays = activeBatches.length > 0
+    ? Math.round(activeBatches.reduce((s, b) => s + b.metrics.ageDays, 0) / activeBatches.length)
+    : null;
+  // --- Total feed consumed (kg) across active batches ---
+  const totalFeedKg = activeBatches.reduce((s, b) => s + (b.metrics.totalFeedKg ?? 0), 0);
+  const avgFeedPerBird = totalLive > 0 ? Math.round(totalFeedKg / totalLive) : null;
 
   // --- Best breed status deviation (closest to target) ---
   const breedEntries = (d?.healthOverview ?? []).filter((h) => h.breedStatus != null);
@@ -139,7 +220,7 @@ export default function AccueilScreen() {
   return (
     <Screen
       bottomPad={120}
-      refreshing={dashboard.isFetching || advisory.isFetching}
+      refreshing={false}
       onRefresh={refresh}
       header={
         <>
@@ -182,22 +263,55 @@ export default function AccueilScreen() {
                 </>
               ) : null}
             </View>
-            {d?.weather ? (
-              <View style={styles.weatherPill}>
-                <View style={styles.weatherIconWrap}>
-                  <AppText style={{ fontSize: 24 }}>{emoji(d.weather.condition ?? '')}</AppText>
-                </View>
-                <View style={{ maxWidth: 92 }}>
-                  <AppText size='body' weight='bold' color='text' numberOfLines={1}>
-                    {d.weather.temperatureC ?? '—'} °C
-                  </AppText>
-                  <AppText size='caption' color='muted' numberOfLines={1}>
-                    {d.weather.condition ?? 'Prévision météo'}
-                  </AppText>
-                </View>
+            <View style={styles.encaissePill}>
+              <Banknote size={14} color={palette.accent[500]} />
+              <View>
+                <AppText size='body' weight='bold' color='text' numberOfLines={1}>
+                  {fmtFcfa(d?.collectedTodayFcfa ?? 0)}
+                </AppText>
+                <AppText size='caption' color='muted' numberOfLines={1}>
+                  {isToday ? "Encaissé aujourd'hui" : `Encaissé le ${formatDayShort(selectedAt)}`}
+                </AppText>
               </View>
-            ) : null}
+            </View>
           </View>
+          {/* ── Date & heure : barre compacte ── */}
+          <View style={styles.dateBar}>
+            <Pressable
+              onPress={() => shiftDay(-1)}
+              accessibilityRole='button'
+              accessibilityLabel='Jour précédent'
+              style={({ pressed }) => [styles.dateArrow, pressed && styles.dateArrowPressed]}>
+              <ChevronLeft size={16} color={palette.brand[600]} />
+            </Pressable>
+
+            <Pressable
+              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); setShowPicker(true); }}
+              accessibilityRole='button'
+              style={({ pressed }) => [styles.datePill, pressed && styles.datePillPressed]}>
+              <AppText size='small' weight='semibold' color='text'>
+                {formatDateFull(selectedAt)}
+              </AppText>
+              <View style={styles.datePillSep} />
+              {!isFiltered && <PulsingLiveDot />}
+              <Clock size={11} color={palette.brand[500]} />
+              <AppText size='small' weight='bold' color='brand'>{formatHour(selectedAt)}</AppText>
+            </Pressable>
+
+            <Pressable
+              onPress={() => shiftDay(1)}
+              accessibilityRole='button'
+              accessibilityLabel='Jour suivant'
+              disabled={isToday}
+              style={({ pressed }) => [styles.dateArrow, pressed && styles.dateArrowPressed, isToday && styles.dateArrowDisabled]}>
+              <ChevronRight size={16} color={palette.brand[600]} />
+            </Pressable>
+          </View>
+
+          {/* ── Date & heure picker ── */}
+          <Sheet visible={showPicker} title='Date & heure' onClose={() => setShowPicker(false)}>
+            <DateTimeSheet selected={selectedAt} onApply={applyFilter} onNow={clearFilter} span={spanDays} onSelectSpan={setSpanDays} />
+          </Sheet>
         </>
       }
     >
@@ -210,72 +324,104 @@ export default function AccueilScreen() {
           <Button label='Réessayer' tone='brand' onPress={refresh} />
         </View>
       ) : loading || !d ? (
-        <Spinner label='KouKou prépare votre ferme…' />
+        <Spinner label="Chargement de votre ferme…" />
       ) : (
         <>
-          {/* ── Top row: Encaissé + POS ── */}
+          {/* ── Cheptel + Lots ── */}
           <View style={styles.metricGrid}>
-            <MetricTile
-              label={"Encaissé aujourd'hui"}
-              value={fmtFcfa(d.collectedTodayFcfa)}
-              sub={d.deltas.mortalityDelta !== 0 ? `Mortalité ${d.deltas.mortalityDelta > 0 ? '+' : ''}${(d.deltas.mortalityDelta * 100).toFixed(1)}% vs semaine` : undefined}
-              tone='accent'
-              icon={Banknote}
-              compact
-            />
-            <MetricTile
-              label='Point de vente'
-              value='POS'
-              sub='Ouvrir la caisse'
-              tone='green'
-              icon={Store}
-              onPress={() => router.push('/caisse')}
-              compact
-              subHighlight
-            />
+            <MetricTile label='Cheptel vivant' value={fmt(d.liveStock)} sub={`${d.batches.actif} lot${d.batches.actif > 1 ? 's' : ''}`} tone='green' iconImage={require('@/assets/images/chiken.jpg')} narrowStats onPress={() => setCheptelOpen(true)} compact />
+            <MetricTile label='Lots actifs' value={String(d.batches.actif)} sub={`${d.batches.enVente} en vente`} tone='brand' iconImage={require('@/assets/images/poussin33.jpg')} onPress={() => router.push('/lots')} compact />
           </View>
-          {/* ── Health card ── */}
+          {/* ── Health card — Pro View ── */}
           <Pressable
             onPress={() => { Haptics.selectionAsync().catch(() => {}); setHealthExpanded(!healthExpanded); }}
-            style={({ pressed }) => [styles.healthCard, healthExpanded && styles.healthCardExpanded, pressed && styles.healthCardPressed]}
+            style={({ pressed }) => [
+              styles.healthCard,
+              { borderColor: gradeColor[d.health.grade] + '40' },
+              healthExpanded && styles.healthCardExpanded,
+              pressed && styles.healthCardPressed,
+            ]}
             accessibilityRole="button"
             accessibilityState={{ expanded: healthExpanded }}>
-            <HealthRing score={d.health.score} grade={d.health.grade} />
-            <View style={styles.healthMain}>
-              <View style={styles.healthTitleRow}>
-                <AppText size="body" weight="semibold" color="text">Santé</AppText>
-                <AppText size="small" color="muted">{activeBatches.length} lot{activeBatches.length > 1 ? 's' : ''}</AppText>
-                <View style={{ flex: 1 }} />
-                <Pressable
-                  onPress={(e) => { e.stopPropagation(); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); router.push('/sanitary'); }}
-                  accessibilityRole="button"
-                  style={({ pressed }) => [styles.healthDetailBtn, pressed && styles.healthDetailBtnPressed]}>
-                  <Stethoscope size={12} color={color.brand[600]} />
-                  <AppText size="small" weight="semibold" color="brand">Sanitaire</AppText>
-                  <ArrowRight size={12} color={color.brand[600]} />
-                </Pressable>
-                <View style={[styles.healthToggle, healthExpanded && styles.healthToggleActive]}>
-                  <AppText size="small" weight="bold" color={healthExpanded ? 'surface' : 'brand'}>
-                    {healthExpanded ? '−' : '+'}
-                  </AppText>
+            {/* Top section: Ring + Title + Toggle */}
+            <View style={styles.healthTopRow}>
+              <HealthRing score={d.health.score} grade={d.health.grade} />
+              <View style={styles.healthTopInfo}>
+                <View style={styles.healthTitleRow}>
+                  <AppText size="body" weight="bold" color="text">Santé</AppText>
+                  <View style={{ flex: 1 }} />
+                  <View style={[styles.healthToggle, healthExpanded && styles.healthToggleActive]}>
+                    <AppText size="small" weight="bold" color={healthExpanded ? 'surface' : 'brand'}>
+                      {healthExpanded ? '−' : '+'}
+                    </AppText>
+                  </View>
                 </View>
+                {/* Grade label */}
+                <AppText size="small" weight="semibold" style={{ color: gradeColor[d.health.grade] }}>
+                  {d.health.grade === 'EXCELLENT' ? '🟢 Excellent' : d.health.grade === 'BON' ? '🟢 Bon' : d.health.grade === 'MOYEN' ? '🟡 Moyen' : '🔴 Critique'}
+                </AppText>
               </View>
-              <View style={styles.healthStats}>
-                <View style={styles.healthStat}>
-                  <AppText size="body" weight="bold" color="danger">{d.health.breakdown.rouge}</AppText>
-                  <AppText size="small" color="muted">Rouge</AppText>
-                </View>
-                <View style={styles.healthStat}>
-                  <AppText size="body" weight="bold" color="warn">{d.health.breakdown.jaune}</AppText>
-                  <AppText size="small" color="muted">Jaune</AppText>
-                </View>
-                <View style={styles.healthStat}>
-                  <AppText size="body" weight="bold" color={d.mortalityPercent != null && d.mortalityPercent > 5 ? 'danger' : 'text'}>
-                    {d.mortalityPercent != null ? `${d.mortalityPercent.toFixed(1)}%` : '—'}
-                  </AppText>
-                  <AppText size="small" color="muted">Mortalité</AppText>
-                </View>
+            </View>
+            {/* Alert badges row */}
+            <View style={styles.healthAlertRow}>
+              <View style={[styles.healthAlertBadge, { backgroundColor: palette.red[50], borderColor: palette.red[200] }]}>
+                <View style={[styles.healthAlertDot, { backgroundColor: palette.red[500] }]} />
+                <AppText size="small" weight="semibold" color="danger">{d.health.breakdown.rouge}</AppText>
+                <AppText size="small" color="muted">Rouge</AppText>
               </View>
+              <View style={[styles.healthAlertBadge, { backgroundColor: palette.amber[50], borderColor: palette.amber[200] }]}>
+                <View style={[styles.healthAlertDot, { backgroundColor: palette.amber[500] }]} />
+                <AppText size="small" weight="semibold" color="warn">{d.health.breakdown.jaune}</AppText>
+                <AppText size="small" color="muted">Jaune</AppText>
+              </View>
+              <View style={[styles.healthAlertBadge, {
+                backgroundColor: (d.mortalityPercent ?? 0) > 5 ? palette.red[50] : palette.green[50],
+                borderColor: (d.mortalityPercent ?? 0) > 5 ? palette.red[200] : palette.green[200],
+              }]}>
+                <View style={[styles.healthAlertDot, {
+                  backgroundColor: (d.mortalityPercent ?? 0) > 5 ? palette.red[500] : palette.green[500],
+                }]} />
+                <AppText size="small" weight="semibold"
+                  color={(d.mortalityPercent ?? 0) > 5 ? 'danger' : 'success'}>
+                  {d.mortalityPercent != null ? `${d.mortalityPercent.toFixed(1)}%` : '—'}
+                </AppText>
+                <AppText size="small" color="muted">Mort.</AppText>
+              </View>
+            </View>
+            {/* Mortality progress bar */}
+            <View style={styles.healthMortalityBar}>
+              <View style={styles.healthMortalityTrack}>
+                <View style={[styles.healthMortalityFill, {
+                  width: `${Math.min(100, (d.mortalityPercent ?? 0) / 10 * 100)}%`,
+                  backgroundColor: (d.mortalityPercent ?? 0) > 5 ? palette.red[500] : (d.mortalityPercent ?? 0) > 3 ? palette.amber[500] : palette.green[500],
+                }]} />
+              </View>
+              <AppText size="small" color="muted">Mortalité</AppText>
+            </View>
+            {/* Bottom row: Meteo + Centre Sanitaire — compact */}
+            <View style={styles.healthBottomRow}>
+              {d?.weather && (
+                <View style={styles.weatherPill}>
+                  <AppText style={{ fontSize: 13 }}>{emoji(d.weather.condition ?? '')}</AppText>
+                  <AppText size='small' weight='bold' color='text'>{d.weather.temperatureC ?? '—'}°C</AppText>
+                  {d.weather.humidityPct != null && (
+                    <View style={styles.weatherHumidity}>
+                      <Droplets size={9} color={palette.brand[500]} />
+                      <AppText size='small' weight='semibold' color='brand'>{d.weather.humidityPct}%</AppText>
+                    </View>
+                  )}
+                </View>
+              )}
+              <View style={{ flex: 1 }} />
+              <Pressable
+                onPress={(e) => { e.stopPropagation(); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); router.push('/sanitary'); }}
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.healthSanitaireBtn, pressed && { opacity: 0.7 }]}
+              >
+                <Stethoscope size={13} color={palette.surface} strokeWidth={2.4} />
+                <AppText size='small' weight='semibold' color='surface' numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>Centre Sanitaire</AppText>
+                <ArrowRight size={12} color={palette.surface} />
+              </Pressable>
             </View>
           </Pressable>
           {healthExpanded && (
@@ -334,7 +480,7 @@ export default function AccueilScreen() {
           <SectionHeader
             title='Statistiques'
             right={
-              <Pressable onPress={() => setStatsExpanded(!statsExpanded)} accessibilityRole='button' style={[styles.expandBtn, statsExpanded && styles.expandBtnActive]}>
+              <Pressable onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); setStatsExpanded(!statsExpanded); }} accessibilityRole='button' style={[styles.expandBtn, statsExpanded && styles.expandBtnActive]}>
                 <AppText size='small' weight='semibold' color={statsExpanded ? 'surface' : 'brand'}>
                   {statsExpanded ? 'Moins' : 'Plus'}
                 </AppText>
@@ -342,13 +488,9 @@ export default function AccueilScreen() {
               </Pressable>
             }
           />
-          {/* ── Core: Cheptel + Lots (always visible) ── */}
-          <View style={styles.metricGrid}>
-            <MetricTile label='Cheptel vivant' value={fmt(d.liveStock)} sub={`${d.batches.actif} lot${d.batches.actif > 1 ? 's' : ''}`} tone='green' icon={Bird} onPress={() => router.push('/lots')} compact />
-            <MetricTile label='Lots actifs' value={String(d.batches.actif)} sub={`${d.batches.total} total · ${d.batches.enVente} en vente`} tone='brand' icon={BarChart3} onPress={() => router.push('/lots')} compact />
-          </View>
-          {/* ── Performance row: IC, GMQ, IPE ── */}
-          <View style={styles.metricGrid}>
+
+          {/* ── Performance row: IC, GMQ, IPE — always one row ── */}
+          <View style={styles.metricGridNoWrap}>
             <MetricTile
               label='IC (FCR)'
               value={avgFcr != null && avgFcr > 0 ? avgFcr.toFixed(2) : '—'}
@@ -377,30 +519,197 @@ export default function AccueilScreen() {
               threeCol
             />
           </View>
-          {/* ── Expanded: Provende, Équipe, Bâtiments, Eau, Abattage ── */}
+          {/* ── Expanded: Grouped farm details ── */}
           {statsExpanded && (
-            <Card tone='brand' style={styles.expandedCard}>
-              <View style={styles.expandedHeader}>
-                <AppText size='small' weight='semibold' color='brand'>Détails de la ferme</AppText>
+            <Card tone='default' style={styles.statsExpandedCard}>
+              {/* ── Group: Lots ── */}
+              <View style={styles.statsGroup}>
+                <View style={[styles.statsGroupLabel, { borderLeftColor: palette.brand[500] }]}>
+                  <BarChart3 size={13} color={palette.brand[600]} />
+                  <AppText size='small' weight='bold' color='text'>Lots</AppText>
+                </View>
+                <View style={styles.statsGroupRow}>
+                  <View style={styles.statsItem}>
+                    <AppText size='small' color='muted'>Âge moyen</AppText>
+                    <AppText size='bodyM' weight='bold' color='brand'>{avgAgeDays != null ? `${avgAgeDays} j` : '—'}</AppText>
+                    <AppText size='small' color='faint'>{activeBatches.length} lot{activeBatches.length > 1 ? 's' : ''}</AppText>
+                  </View>
+                  <View style={styles.statsVerticalDivider} />
+                  <View style={styles.statsItem}>
+                    <AppText size='small' color='muted'>Densité max</AppText>
+                    <View style={styles.statsValueRow}>
+                      <AppText size='bodyM' weight='bold'
+                        color={maxDensity > 18 ? palette.red[500] : maxDensity > 15 ? palette.amber[500] : palette.green[600]}>
+                        {maxDensity > 0 ? `${maxDensity.toFixed(1)}` : '—'}
+                      </AppText>
+                      <AppText size='small' color='faint'>/m²</AppText>
+                    </View>
+                    <AppText size='small' color='faint'>oiseaux max</AppText>
+                  </View>
+                </View>
               </View>
-              <View style={[styles.metricGrid, { marginTop: 0 }]}>
-                <MetricTile label='Autonomie provende' value={d.feedAutonomyDays != null ? `${d.feedAutonomyDays} j` : '—'} sub={d.feedAutonomyDays != null && d.feedAutonomyDays < 3 ? '⚠ Critique' : d.feedAutonomyDays != null && d.feedAutonomyDays < 5 ? 'Stock bas' : 'Suffisant'} tone={d.feedAutonomyDays != null && d.feedAutonomyDays < 3 ? 'red' : d.feedAutonomyDays != null && d.feedAutonomyDays < 5 ? 'amber' : 'green'} icon={Wheat} onPress={() => router.push('/provende')} compact />
-                <MetricTile label='Équipe' value={String(d.teamCount)} sub={d.teamCount === 1 ? 'Éleveur' : `${d.teamCount} éleveurs`} tone='brand' icon={Users} compact />
-                <MetricTile label='Bâtiments' value={String(d.buildingsCount ?? 0)} sub={d.farmDensityPerM2 != null ? `Densité ${d.farmDensityPerM2.toFixed(1)}/m²` : d.totalAreaM2 != null ? `${d.totalAreaM2} m² total` : 'Aucun bâtiment'} tone={d.farmDensityPerM2 != null && d.farmDensityPerM2 > 18 ? 'red' : d.farmDensityPerM2 != null && d.farmDensityPerM2 > 15 ? 'amber' : 'green'} icon={Building} compact />
-                <MetricTile
-                  label='Eau (jour)'
-                  value={d.waterConsumptionTodayL != null ? `${Math.round(d.waterConsumptionTodayL)} L` : '—'}
-                  sub={d.waterDropPercent != null ? (d.waterDropPercent > 25 ? '⚠ Chute critique' : d.waterDropPercent > 10 ? '⚠ Baisse' : d.waterDropPercent < -5 ? 'En hausse' : 'Stable') : 'Pas de données'}
-                  tone={d.waterDropPercent != null && d.waterDropPercent > 25 ? 'red' : d.waterDropPercent != null && d.waterDropPercent > 10 ? 'amber' : 'green'}
-                  icon={Droplets}
-                  compact
-                />
-                <MetricTile label='Abattages' value={String(slaughterProcessed.length)} sub={totalBirdsSlaughtered > 0 ? `${fmt(totalBirdsSlaughtered)} oiseaux` : 'Aucun'} tone='accent' icon={Store} compact />
-                <MetricTile label='Poids total' value={totalWeightKg > 0 ? `${Math.round(totalWeightKg)} kg` : '—'} sub={avgRendement != null ? `Rdt ${avgRendement.toFixed(0)}%` : 'Sans rendement'} tone='accent' icon={Scale} compact />
+              <View style={styles.statsGroupDivider} />
+              {/* ── Group: Alimentation ── */}
+              <View style={styles.statsGroup}>
+                <View style={[styles.statsGroupLabel, { borderLeftColor: palette.green[500] }]}>
+                  <Wheat size={13} color={palette.green[600]} />
+                  <AppText size='small' weight='bold' color='text'>Alimentation</AppText>
+                </View>
+                <View style={styles.statsGroupRow}>
+                  <View style={styles.statsItem}>
+                    <AppText size='small' color='muted'>Autonomie</AppText>
+                    <View style={styles.statsValueRow}>
+                      <AppText size='bodyM' weight='bold'
+                        color={d.feedAutonomyDays != null && d.feedAutonomyDays < 3 ? palette.red[500] : d.feedAutonomyDays != null && d.feedAutonomyDays < 5 ? palette.amber[500] : palette.green[600]}>
+                        {d.feedAutonomyDays != null ? `${d.feedAutonomyDays} j` : '—'}
+                      </AppText>
+                      {d.feedAutonomyDays != null && (
+                        <View style={[styles.statsChip, {
+                          backgroundColor: d.feedAutonomyDays < 3 ? palette.red[50] : d.feedAutonomyDays < 5 ? palette.amber[50] : palette.green[50],
+                          borderColor: d.feedAutonomyDays < 3 ? palette.red[200] : d.feedAutonomyDays < 5 ? palette.amber[200] : palette.green[200],
+                        }]}>
+                          <AppText size='small' weight='semibold' color={d.feedAutonomyDays < 3 ? 'danger' : d.feedAutonomyDays < 5 ? 'warn' : 'success'}>
+                            {d.feedAutonomyDays < 3 ? 'Critique' : d.feedAutonomyDays < 5 ? 'Bas' : 'OK'}
+                          </AppText>
+                        </View>
+                      )}
+                    </View>
+                    <AppText size='small' color='faint'>Capacité stock</AppText>
+                  </View>
+                  <View style={styles.statsVerticalDivider} />
+                  <View style={styles.statsItem}>
+                    <AppText size='small' color='muted'>Consommation</AppText>
+                    <AppText size='bodyM' weight='bold' color='text'>{avgFeedPerBird != null ? `${avgFeedPerBird} g` : '—'}</AppText>
+                    <AppText size='small' color='faint'>/ oiseau</AppText>
+                  </View>
+                </View>
+              </View>
+              <View style={styles.statsGroupDivider} />
+              {/* ── Group: Tendances (weekly deltas) ── */}
+              <View style={styles.statsGroup}>
+                <View style={[styles.statsGroupLabel, { borderLeftColor: palette.amber[500] }]}>
+                  <TrendingUp size={13} color={palette.amber[600]} />
+                  <AppText size='small' weight='bold' color='text'>Tendances semaine</AppText>
+                </View>
+                <View style={styles.statsGroupRow}>
+                  <View style={styles.statsItem}>
+                    <AppText size='small' color='muted'>Mortalité</AppText>
+                    <View style={styles.statsValueRow}>
+                      <AppText size='bodyM' weight='bold'
+                        color={d.deltas.mortalityDelta > 0 ? palette.red[500] : d.deltas.mortalityDelta < 0 ? palette.green[600] : 'text'}>
+                        {d.deltas.mortalityThisWeek.toFixed(1)}%
+                      </AppText>
+                      {d.deltas.mortalityDelta !== 0 && (
+                        <View style={[styles.statsChip, {
+                          backgroundColor: d.deltas.mortalityDelta > 0 ? palette.red[50] : palette.green[50],
+                          borderColor: d.deltas.mortalityDelta > 0 ? palette.red[200] : palette.green[200],
+                        }]}>
+                          {d.deltas.mortalityDelta > 0
+                            ? <TrendingDown size={10} color={palette.red[500]} />
+                            : <TrendingUp size={10} color={palette.green[500]} />
+                          }
+                          <AppText size='small' weight='semibold'
+                            color={d.deltas.mortalityDelta > 0 ? 'danger' : 'success'}>
+                            {d.deltas.mortalityDelta > 0 ? '+' : ''}{d.deltas.mortalityDelta.toFixed(1)}%
+                          </AppText>
+                        </View>
+                      )}
+                    </View>
+                    <AppText size='small' color='faint'>vs semaine passée</AppText>
+                  </View>
+                  <View style={styles.statsVerticalDivider} />
+                  <View style={styles.statsItem}>
+                    <AppText size='small' color='muted'>Provende</AppText>
+                    <View style={styles.statsValueRow}>
+                      <AppText size='bodyM' weight='bold' color='text'>
+                        {d.deltas.feedThisWeekKg > 0 ? `${Math.round(d.deltas.feedThisWeekKg)} kg` : '—'}
+                      </AppText>
+                      {d.deltas.feedDeltaKg !== 0 && (
+                        <View style={[styles.statsChip, {
+                          backgroundColor: d.deltas.feedDeltaKg > 0 ? palette.amber[50] : palette.green[50],
+                          borderColor: d.deltas.feedDeltaKg > 0 ? palette.amber[200] : palette.green[200],
+                        }]}>
+                          {d.deltas.feedDeltaKg > 0
+                            ? <TrendingUp size={10} color={palette.amber[500]} />
+                            : <TrendingDown size={10} color={palette.green[500]} />
+                          }
+                          <AppText size='small' weight='semibold'
+                            color={d.deltas.feedDeltaKg > 0 ? 'warn' : 'success'}>
+                            {d.deltas.feedDeltaKg > 0 ? '+' : ''}{Math.round(d.deltas.feedDeltaKg)} kg
+                          </AppText>
+                        </View>
+                      )}
+                    </View>
+                    <AppText size='small' color='faint'>vs semaine passée</AppText>
+                  </View>
+                </View>
+              </View>
+              <View style={styles.statsGroupDivider} />
+              {/* ── Group: Infrastructures ── */}
+              <View style={styles.statsGroup}>
+                <View style={[styles.statsGroupLabel, { borderLeftColor: palette.ink[400] }]}>
+                  <Building size={13} color={palette.ink[600]} />
+                  <AppText size='small' weight='bold' color='text'>Infrastructures</AppText>
+                </View>
+                <View style={styles.statsGroupRow}>
+                  <View style={styles.statsItem}>
+                    <AppText size='small' color='muted'>Bâtiments</AppText>
+                    <View style={styles.statsValueRow}>
+                      <AppText size='bodyM' weight='bold' color='text'>{d.buildingsCount ?? 0}</AppText>
+                      {d.totalAreaM2 != null && (
+                        <AppText size='small' color='faint'>{d.totalAreaM2} m²</AppText>
+                      )}
+                    </View>
+                    <AppText size='small' color='faint'>
+                      {d.farmDensityPerM2 != null ? `Densité ${d.farmDensityPerM2.toFixed(1)}/m²` : 'Surface totale'}
+                    </AppText>
+                  </View>
+                  <View style={styles.statsVerticalDivider} />
+                  <View style={styles.statsItem}>
+                    <AppText size='small' color='muted'>Eau (jour)</AppText>
+                    <View style={styles.statsValueRow}>
+                      <AppText size='bodyM' weight='bold'
+                        color={d.waterDropPercent != null && d.waterDropPercent > 25 ? palette.red[500] : d.waterDropPercent != null && d.waterDropPercent > 10 ? palette.amber[500] : 'text'}>
+                        {d.waterConsumptionTodayL != null ? `${Math.round(d.waterConsumptionTodayL)} L` : '—'}
+                      </AppText>
+                    </View>
+                    <AppText size='small' color='faint'>
+                      {d.waterDropPercent != null ? (d.waterDropPercent > 25 ? '⚠ Chute critique' : d.waterDropPercent > 10 ? '⚠ Baisse' : d.waterDropPercent < -5 ? '↑ Hausse' : 'Stable') : 'Pas de données'}
+                    </AppText>
+                  </View>
+                </View>
+              </View>
+              <View style={styles.statsGroupDivider} />
+              {/* ── Group: Production ── */}
+              <View style={styles.statsGroup}>
+                <View style={[styles.statsGroupLabel, { borderLeftColor: palette.accent[500] }]}>
+                  <Store size={13} color={palette.accent[600]} />
+                  <AppText size='small' weight='bold' color='text'>Abattage & Vente</AppText>
+                </View>
+                <View style={styles.statsGroupRow}>
+                  <View style={styles.statsItem}>
+                    <AppText size='small' color='muted'>Abattages</AppText>
+                    <AppText size='bodyM' weight='bold' color='accent'>{slaughterProcessed.length}</AppText>
+                    <AppText size='small' color='faint'>
+                      {totalBirdsSlaughtered > 0 ? `${fmt(totalBirdsSlaughtered)} oiseaux` : 'Aucun'}
+                    </AppText>
+                  </View>
+                  <View style={styles.statsVerticalDivider} />
+                  <View style={styles.statsItem}>
+                    <AppText size='small' color='muted'>Poids total</AppText>
+                    <AppText size='bodyM' weight='bold' color='accent'>
+                      {totalWeightKg > 0 ? `${Math.round(totalWeightKg)} kg` : '—'}
+                    </AppText>
+                    <AppText size='small' color='faint'>
+                      {avgRendement != null ? `Rdt ${avgRendement.toFixed(0)}%` : 'Sans rendement'}
+                    </AppText>
+                  </View>
+                </View>
               </View>
             </Card>
           )}
           <EggStockCard
+            selectedDate={selectedAt}
             availableEggs={d.eggStock.availableEggs}
             availableAlveoles={d.eggStock.availableAlveoles}
             layRatePercent={avgLayRate}
@@ -414,7 +723,7 @@ export default function AccueilScreen() {
               <MetricTile
                 label='🏆 Meilleur lot'
                 value={topPerf.batchName ?? '—'}
-                sub={topPerf.type === 'CHAIR' && topPerf.ipe != null ? `IPE ${fmt(Math.round(topPerf.ipe))}` : topPerf.layRatePercent != null ? `Ponte ${topPerf.layRatePercent.toFixed(0)}%` : `IC ${topPerf.fcr?.toFixed(2) ?? '—'}`}
+                sub={`${topPerf.species && topPerf.species !== 'POULET' ? `${topPerf.species === 'AUTRE' && topPerf.customSpecies ? topPerf.customSpecies : speciesLabel(topPerf.species)} · ` : ''}${topPerf.type === 'CHAIR' && topPerf.ipe != null ? `IPE ${fmt(Math.round(topPerf.ipe))}` : topPerf.layRatePercent != null ? `Ponte ${topPerf.layRatePercent.toFixed(0)}%` : `IC ${topPerf.fcr?.toFixed(2) ?? '—'}`}`}
                 tone='green'
                 icon={Medal}
                 onPress={() => router.push(`/lot/${topPerf.batchId}`)}
@@ -434,13 +743,231 @@ export default function AccueilScreen() {
         </>
       )}
       <MetricInfoSheet metric={metricInfo} onClose={() => setMetricInfo(null)} />
+      <CheptelModal visible={cheptelOpen} batches={activeBatches} onClose={() => setCheptelOpen(false)} />
     </Screen>
   );
 }
 
+function PulsingLiveDot({ size = 8 }: { size?: number }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const ring = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(scale, {
+          toValue: 1.4,
+          duration: 600,
+          easing: Easing.out(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(scale, {
+          toValue: 1,
+          duration: 600,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    const ripple = Animated.loop(
+      Animated.sequence([
+        Animated.timing(ring, {
+          toValue: 1,
+          duration: 900,
+          easing: Easing.out(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(ring, {
+          toValue: 0,
+          duration: 0,
+          useNativeDriver: true,
+        }),
+        Animated.delay(300),
+      ]),
+    );
+    pulse.start();
+    ripple.start();
+    return () => {
+      pulse.stop();
+      ripple.stop();
+    };
+  }, [scale, ring]);
+
+  const ringScale = ring.interpolate({ inputRange: [0, 1], outputRange: [1, 2.6] });
+  const ringOpacity = ring.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0] });
+
+  const box = { width: size, height: size, borderRadius: size / 2 };
+  const color = palette.green[500];
+
+  return (
+    <View style={{ width: size * 2.6, height: size * 2.6, alignItems: 'center', justifyContent: 'center' }}>
+      <Animated.View
+        pointerEvents='none'
+        style={[box, {
+          position: 'absolute',
+          borderWidth: 1.5,
+          borderColor: color,
+          opacity: ringOpacity,
+          transform: [{ scale: ringScale }],
+        }]} />
+      <Animated.View style={[box, { backgroundColor: color, transform: [{ scale }] }]} />
+    </View>
+  );
+}
+
+function DateTimeSheet({ selected, onApply, onNow, span, onSelectSpan }: {
+  selected: Date; onApply: (d: Date) => void; onNow: () => void;
+  span: number | 'all'; onSelectSpan: (s: number | 'all') => void;
+}) {
+  const stable = useStableDates();
+  const [date, setDate] = useState(new Date(selected));
+  const [time, setTime] = useState(new Date(selected));
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
+
+  // Références figées à l'ouverture de chaque champ : le picker memoïsé ne
+  // re-rend jamais pendant la session (molette iOS = aucune ré-application de
+  // `value`, même avec les ticks « en direct » du parent).
+  const dateSeed = useRef(new Date(selected));
+  const timeSeed = useRef(new Date(selected));
+  const closeDate = useCallback(() => setShowDatePicker(false), []);
+  const closeTime = useCallback(() => setShowTimePicker(false), []);
+
+  const handleNow = () => {
+    const n = new Date();
+    setDate(n);
+    setTime(n);
+    Haptics.selectionAsync().catch(() => {});
+    onNow();
+  };
+
+  const handleConfirm = () => {
+    const result = new Date(date);
+    result.setHours(time.getHours(), time.getMinutes(), 0, 0);
+    if (result.getTime() > Date.now()) {
+      const n = new Date();
+      result.setDate(n.getDate());
+      result.setHours(n.getHours(), n.getMinutes(), 0, 0);
+    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    onApply(result);
+  };
+
+  const fmtDate = (d: Date) =>
+    d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+  const fmtTime = (d: Date) =>
+    d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+  return (
+    <View style={dts.wrap}>
+      <Pressable onPress={handleNow} style={dts.nowBtn}>
+        <Clock size={14} color={palette.brand[600]} />
+        <AppText size='small' weight='bold' color='brand'>En direct — heure actuelle</AppText>
+      </Pressable>
+
+      <View style={dts.spanWrap}>
+        <AppText size='label' weight='semibold' color='muted'>Fenêtre financière</AppText>
+        <View style={dts.spanRow}>
+          {SPAN_CHOICES.map((c) => {
+            const active = span === c.value;
+            return (
+              <Pressable
+                key={String(c.value)}
+                onPress={() => onSelectSpan(c.value)}
+                style={[dts.spanChip, active && dts.spanChipActive]}>
+                <AppText size='small' weight={active ? 'bold' : 'medium'} color={active ? 'brand' : 'muted'}>{c.label}</AppText>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+
+      <View style={dts.field}>
+        <AppText size='label' weight='semibold' color='muted'>Date</AppText>
+        <Pressable
+          onPress={() => {
+            dateSeed.current = new Date(date);
+            setShowDatePicker((v) => !v);
+          }}
+          style={dts.fieldBtn}>
+          <AppText size='body' weight='bold' color='text'>{fmtDate(date)}</AppText>
+          <ChevronDown size={14} color={palette.brand[500]} />
+        </Pressable>
+        <View style={dts.timeRow}>
+          <AppText size='label' weight='semibold' color='muted'>Heure</AppText>
+          <Pressable
+            onPress={() => {
+              timeSeed.current = new Date(time);
+              setShowTimePicker((v) => !v);
+            }}
+            style={dts.timeBtn}>
+            <Clock size={12} color={palette.brand[500]} />
+            <AppText size='body' weight='bold' color='text'>{fmtTime(time)}</AppText>
+          </Pressable>
+        </View>
+        {showDatePicker && (
+          <PickerFieldM seed={dateSeed.current} mode='date' maximumDate={stable.today} minimumDate={stable.dayMin} onSelect={setDate} onDismiss={closeDate} />
+        )}
+        {showTimePicker && (
+          <PickerFieldM seed={timeSeed.current} mode='time' maximumDate={stable.dayMax} minuteInterval={1} onSelect={setTime} onDismiss={closeTime} />
+        )}
+      </View>
+
+      <Pressable onPress={handleConfirm} style={dts.confirmBtn}>
+        <Check size={16} color='#fff' />
+        <AppText size='body' weight='bold' color='surface'>
+          Filtrer — {fmtDate(date)} à {fmtTime(time)}
+        </AppText>
+      </Pressable>
+    </View>
+  );
+}
+
+// Fenêtre financière (choix visuels dans la feuille Date & heure)
+const SPAN_CHOICES: { value: number | 'all'; label: string }[] = [
+  { value: 7, label: '7j' },
+  { value: 30, label: '30j' },
+  { value: 90, label: '90j' },
+  { value: 'all', label: 'Tout' },
+];
+
+const dts = StyleSheet.create({
+  wrap: { gap: 16 },
+  nowBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 10, borderRadius: radii.pill,
+    backgroundColor: palette.brand[50], borderWidth: 1, borderColor: palette.brand[200],
+  },
+  field: { gap: 8 },
+  spanWrap: { gap: 8 },
+  spanRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  spanChip: {
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: radii.pill,
+    backgroundColor: palette.surfaceAlt, borderWidth: 1, borderColor: 'transparent',
+  },
+  spanChipActive: { backgroundColor: palette.brand[50], borderWidth: 1, borderColor: palette.brand[200] },
+  fieldBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 14, paddingVertical: 12,
+    borderRadius: radii.md, backgroundColor: palette.surfaceAlt,
+    borderWidth: 1, borderColor: palette.border,
+  },
+  timeRow: { gap: 6 },
+  timeBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 14, paddingVertical: 10,
+    borderRadius: radii.md, backgroundColor: palette.surfaceAlt,
+    borderWidth: 1, borderColor: palette.border,
+  },
+  confirmBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: palette.brand[600], borderRadius: radii.pill, height: 48, marginTop: 4,
+  },
+});
+
 function HealthRing({ score, grade }: { score: number; grade: HealthGrade }) {
-  const size = 56;
-  const stroke = 6;
+  const size = 48;
+  const stroke = 5;
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
   const pct = Math.max(0, Math.min(100, Math.round(score)));
@@ -464,7 +991,7 @@ function HealthRing({ score, grade }: { score: number; grade: HealthGrade }) {
         />
       </Svg>
       <View style={styles.ringCenter}>
-        <AppText size="small" weight="bold" style={{ color: ringColor, fontSize: 15, lineHeight: 18 }}>
+        <AppText size="small" weight="bold" style={{ color: ringColor, fontSize: 13, lineHeight: 16 }}>
           {pct}%
         </AppText>
       </View>
@@ -479,13 +1006,13 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   avatar: {
-    width: 48,
-    height: 48,
+    width: 40,
+    height: 40,
     justifyContent: 'center',
   },
   avatarLogo: {
-    width: 48,
-    height: 48,
+    width: 40,
+    height: 40,
   },
   greetCol: {
     flex: 1,
@@ -517,7 +1044,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    marginTop: 6,
+    marginTop: 4,
   },
   farmChipRow: {
     flex: 1,
@@ -529,46 +1056,88 @@ const styles = StyleSheet.create({
   chipText: {
     flexShrink: 1,
   },
-  weatherPill: {
+  encaissePill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: palette.surfaceAlt,
+    backgroundColor: palette.accent[50],
     borderRadius: radii.lg,
     borderWidth: 1,
-    borderColor: color.border,
+    borderColor: palette.accent[200],
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 5,
   },
-  weatherIconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    backgroundColor: 'rgba(32, 96, 128, 0.10)',
+
+  dateBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 4,
+  },
+  dateArrow: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: palette.brand[50],
+    borderWidth: 1,
+    borderColor: palette.brand[200],
     alignItems: 'center',
     justifyContent: 'center',
   },
+  dateArrowPressed: {
+    backgroundColor: palette.brand[100],
+    transform: [{ scale: 0.92 }],
+  },
+  dateArrowDisabled: {
+    opacity: 0.3,
+  },
+  datePill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.brand[200],
+    borderRadius: radii.pill,
+    height: 30,
+    paddingHorizontal: 12,
+  },
+  datePillPressed: {
+    backgroundColor: palette.brand[50],
+  },
+  datePillSep: {
+    width: 1,
+    height: 14,
+    backgroundColor: palette.brand[200],
+  },
+
   metricGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginTop: 8,
+    marginTop: 6,
+  },
+  metricGridNoWrap: {
+    flexDirection: 'row',
+    flexWrap: 'nowrap',
+    gap: 8,
+    marginTop: 2,
   },
   actionTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
   healthCard: {
-    marginTop: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+    marginTop: 4,
     backgroundColor: palette.surface,
     borderWidth: 1,
     borderColor: color.border,
-    borderRadius: radii.lg,
+    borderRadius: radii.xl,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 6,
+    gap: 6,
   },
   healthCardExpanded: {
     backgroundColor: palette.brand[50],
@@ -578,18 +1147,83 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.98 }],
     opacity: 0.92,
   },
-  healthDetailBtn: {
+  healthTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 3,
+    gap: 12,
+  },
+  healthTopInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  healthTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  healthAlertRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  healthAlertBadge: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 12,
-    backgroundColor: palette.brand[50],
+    borderRadius: radii.md,
+    borderWidth: 1,
   },
-  healthDetailBtnPressed: {
-    backgroundColor: palette.brand[100],
-    transform: [{ scale: 0.95 }],
+  healthAlertDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  healthMortalityBar: {
+    gap: 2,
+  },
+  healthMortalityTrack: {
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: palette.ink[100],
+    overflow: 'hidden',
+  },
+  healthMortalityFill: {
+    height: 3,
+    borderRadius: 2,
+  },
+  healthBottomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  weatherPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: palette.surfaceAlt,
+    borderRadius: radii.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  weatherHumidity: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    backgroundColor: palette.brand[50],
+    borderRadius: radii.pill,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  healthSanitaireBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    backgroundColor: palette.green[600],
   },
   healthToggle: {
     width: 26,
@@ -600,7 +1234,6 @@ const styles = StyleSheet.create({
     backgroundColor: palette.brand[50],
     alignItems: 'center',
     justifyContent: 'center',
-    transform: [{ rotate: '0deg' }],
   },
   healthToggleActive: {
     backgroundColor: palette.brand[600],
@@ -625,8 +1258,8 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceAlt,
   },
   ring: {
-    width: 56,
-    height: 56,
+    width: 48,
+    height: 48,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -635,25 +1268,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  healthMain: {
-    flex: 1,
-    gap: 8,
-  },
-  healthTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  healthStats: {
-    flexDirection: 'row',
-    gap: 4,
-  },
-  healthStat: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 4,
-  },
+
   expandBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -674,14 +1289,52 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     padding: 10,
   },
-  expandedCard: {
-    marginTop: 10,
-    padding: 12,
-    gap: 10,
+  statsExpandedCard: {
+    marginTop: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    gap: 0,
   },
-  expandedHeader: {
-    paddingBottom: 4,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: palette.brand[200],
+  statsGroup: {
+    gap: 8,
+  },
+  statsGroupLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderLeftWidth: 3,
+    paddingLeft: 8,
+    marginLeft: 2,
+  },
+  statsGroupRow: {
+    flexDirection: 'row',
+    gap: 0,
+  },
+  statsItem: {
+    flex: 1,
+    gap: 2,
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  statsValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  statsChip: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  statsVerticalDivider: {
+    width: 1,
+    backgroundColor: palette.ink[100],
+    marginVertical: 2,
+  },
+  statsGroupDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: palette.ink[100],
+    marginVertical: 4,
   },
 });

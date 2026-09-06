@@ -69,6 +69,7 @@ export class ExpensesService {
       if (dto.paidByCaisse) {
         const session = await em.getRepository(CashSession).findOne({
           where: { farmId, status: CashSessionStatus.OPEN },
+          lock: { mode: 'pessimistic_write' },
         });
         if (!session) {
           throw new BadRequestException(

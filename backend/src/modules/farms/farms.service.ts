@@ -64,7 +64,7 @@ export class FarmsService {
       phone: string;
       email?: string;
       fullName: string;
-      password: string;
+      code: string;
     },
   ): Promise<{ farm: Farm; owner: PublicUser }> {
     const where: Array<Partial<{ phone: string; email: string }>> = [
@@ -80,9 +80,9 @@ export class FarmsService {
     const owner = await this.userRepo.save(
       this.userRepo.create({
         phone: ownerInput.phone,
-        email: ownerInput.email,
+        email: ownerInput.email ?? null,
         fullName: ownerInput.fullName,
-        passwordHash: await bcrypt.hash(ownerInput.password, 10),
+        passwordHash: await bcrypt.hash(ownerInput.code, 10),
         role: UserRole.PROPRIETAIRE,
       }),
     );
@@ -197,9 +197,9 @@ export class FarmsService {
     const employee = await this.userRepo.save(
       this.userRepo.create({
         phone: dto.phone,
-        email: dto.email,
+        email: dto.email ?? null,
         fullName: dto.fullName,
-        passwordHash: await bcrypt.hash(dto.password, 10),
+        passwordHash: await bcrypt.hash(dto.code, 10),
         role: UserRole.ELEVEUR,
       }),
     );
@@ -248,7 +248,7 @@ export class FarmsService {
     return {
       id: user.id,
       phone: user.phone,
-      email: user.email,
+      email: user.email ?? null,
       fullName: user.fullName,
       role: user.role,
     };
@@ -258,7 +258,7 @@ export class FarmsService {
 export interface PublicUser {
   id: string;
   phone: string;
-  email: string;
+  email: string | null;
   fullName: string;
   role: UserRole;
 }

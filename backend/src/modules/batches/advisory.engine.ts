@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { AlertKind, AlertLevel } from '../../common/enums/alert-level.enum.js';
 import { ReferenceKey } from '../../common/enums/reference-key.enum.js';
 import { BatchStatus } from '../../common/enums/batch-type.enum.js';
+import { day1WeightKg } from '../../common/utils/species-day1-weight.js';
 import { Building } from '../buildings/entities/building.entity.js';
 import { AlertsService } from '../alerts/alerts.service.js';
 import { DailyEntry } from '../daily-entries/entities/daily-entry.entity.js';
@@ -11,8 +12,6 @@ import { ReferenceConstantsService } from '../reference-constants/reference-cons
 import { InputLot } from '../inputs/entities/input-lot.entity.js';
 import { ProductionBatch } from './entities/production-batch.entity.js';
 import { BatchMetrics } from './models/batch-metrics.model.js';
-
-const DAY1_WEIGHT_KG = 0.045;
 
 function addDaysIso(date: string, days: number): string {
   const d = new Date(`${date}T12:00:00Z`);
@@ -43,6 +42,7 @@ export class AdvisoryEngine {
       this.evaluateMortality(batch, metrics, farmId, batchId),
       this.evaluateDensity(batch, metrics, farmId, batchId),
       this.evaluateWater(batch, metrics, farmId, batchId),
+      this.evaluateWaterHealth(batch, metrics, farmId, batchId),
       this.evaluateIpeGmq(batch, metrics, farmId, batchId),
       this.evaluateGmq(batch, metrics, farmId, batchId),
       this.evaluateExpiration(batch, farmId, batchId),
@@ -204,9 +204,9 @@ export class AdvisoryEngine {
         {
           kind: AlertKind.COHABITATION,
           level: hasChick ? AlertLevel.ROUGE : AlertLevel.JAUNE,
-          message: `Cohabitation d'âges : écart de ${gapWeeks.toFixed(0)} semaines entre ${activeLots.length} bandes dans le bâtiment. ${hasChick ? 'Un poussin fragile est exposé à une bande mature — risque élevé de transmission virale.' : ''}`,
+          message: `Cohabitation d'âges : écart de ${gapWeeks.toFixed(0)} semaines entre ${activeLots.length} lots dans le bâtiment. ${hasChick ? 'Un poussin fragile est exposé à un lot mature — risque élevé de transmission virale.' : ''}`,
           recommendation:
-            'Planifier un vide sanitaire et, si possible, séparer les bandes d’âges trop écartés pour limiter la propagation de maladies.',
+            'Planifier un vide sanitaire et, si possible, séparer les lots d’âges trop écartés pour limiter la propagation de maladies.',
           context: {
             ageGapWeeks: gapWeeks,
             maxAgeGapWeeks: maxGapWeeks,
@@ -384,6 +384,63 @@ export class AdvisoryEngine {
     }
   }
 
+  /**
+   * Population vivante estimée le jour d'une saisie : effectif initial moins
+   * les morts cumulés jusqu'à cette date (permet de normaliser l'eau par tête).
+   */
+  private populationAtDay(
+    batch: ProductionBatch,
+    entries: DailyEntry[],
+    refDate: string,
+  ): number {
+    let deathsBefore = 0;
+    for (const e of entries) {
+      if (e.entryDate <= refDate) deathsBefore += e.deaths;
+    }
+    return Math.max(0, batch.quantityAtStart - deathsBefore);
+  }
+
+  /**
+   * Calcule la baisse de consommation d'eau normalisée par oiseau, par rapport
+   * à une moyenne mobile glissante (WATER_WINDOW_DAYS) des jours précédents.
+   * Renvoie null si les données sont insuffisantes (pas d'enregistrement du
+   * jour, eau à 0, population nulle, pas de base de comparaison).
+   */
+  private computeWaterDrop(
+    batch: ProductionBatch,
+    entries: DailyEntry[],
+    baselineWindowDays: number,
+  ): {
+    todayPerBird: number;
+    baselinePerBird: number;
+    dropPct: number;
+    baselineDays: number;
+  } | null {
+    if (entries.length === 0) return null;
+    const today = entries[0];
+    if (today.waterL <= 0) return null;
+    const todayPop = this.populationAtDay(batch, entries, today.entryDate);
+    if (todayPop <= 0) return null;
+    const todayPerBird = today.waterL / todayPop;
+
+    const baselineDays = Math.max(1, Math.round(baselineWindowDays));
+    let baseSum = 0;
+    let baseCount = 0;
+    for (let i = 1; i < entries.length && baseCount < baselineDays; i++) {
+      const e = entries[i];
+      if (e.waterL <= 0) continue;
+      const pop = this.populationAtDay(batch, entries, e.entryDate);
+      if (pop <= 0) continue;
+      baseSum += e.waterL / pop;
+      baseCount += 1;
+    }
+    if (baseCount === 0) return null;
+    const baselinePerBird = baseSum / baseCount;
+    if (baselinePerBird <= 0) return null;
+    const dropPct = ((baselinePerBird - todayPerBird) / baselinePerBird) * 100;
+    return { todayPerBird, baselinePerBird, dropPct, baselineDays: baseCount };
+  }
+
   private async evaluateWater(
     batch: ProductionBatch,
     metrics: BatchMetrics,
@@ -394,18 +451,11 @@ export class AdvisoryEngine {
       where: { batchId: batch.id },
       order: { entryDate: 'DESC' },
     });
-    if (entries.length < 2) {
-      await this.alertsService.clearKind(farmId, batchId, AlertKind.EAU);
-      return;
-    }
-    const today = entries[0];
-    const yesterday = entries[1];
-    if (yesterday.waterL <= 0) {
-      await this.alertsService.clearKind(farmId, batchId, AlertKind.EAU);
-      return;
-    }
-    const dropPct =
-      ((yesterday.waterL - today.waterL) / yesterday.waterL) * 100;
+    const windowDays = await this.constants.get(
+      ReferenceKey.WATER_WINDOW_DAYS,
+      3,
+    );
+    const drop = this.computeWaterDrop(batch, entries, windowDays);
     const warnPct = await this.constants.get(
       ReferenceKey.WATER_DROP_WARN_PCT,
       10,
@@ -414,33 +464,144 @@ export class AdvisoryEngine {
       ReferenceKey.WATER_DROP_CRITICAL_PCT,
       25,
     );
-    if (dropPct > critPct) {
+
+    if (!drop) {
+      await this.alertsService.clearKind(farmId, batchId, AlertKind.EAU);
+      return;
+    }
+
+    if (drop.dropPct > critPct) {
       await this.alertsService.raise(
         {
           kind: AlertKind.EAU,
           level: AlertLevel.ROUGE,
-          message: `Chute brutale de consommation d’eau (${dropPct.toFixed(0)}%). La baisse d’eau est l’indicateur n°1 des maladies.`,
+          message: `Chute brutale de consommation d’eau (${drop.dropPct.toFixed(0)}% vs. moyenne ${drop.baselineDays} j). La baisse d’eau est l’indicateur n°1 des maladies.`,
           recommendation:
             'Vérifier immédiatement l’abreuvement, la santé du lot et contacter le vétérinaire.',
-          context: { waterDropPercent: dropPct },
+          context: {
+            waterDropPercent: drop.dropPct,
+            waterLPerBirdToday: Number(drop.todayPerBird.toFixed(3)),
+            baselineDays: drop.baselineDays,
+          },
         },
         { farmId, batchId },
       );
-    } else if (dropPct > warnPct) {
+    } else if (drop.dropPct > warnPct) {
       await this.alertsService.raise(
         {
           kind: AlertKind.EAU,
           level: AlertLevel.JAUNE,
-          message: `Baisse de consommation d’eau de ${dropPct.toFixed(0)}%. Indicateur n°1 à surveiller.`,
+          message: `Baisse de consommation d’eau de ${drop.dropPct.toFixed(0)}%. Indicateur n°1 à surveiller.`,
           recommendation:
             'Contrôler les abreuvoirs et observer le comportement des volailles.',
-          context: { waterDropPercent: dropPct },
+          context: {
+            waterDropPercent: drop.dropPct,
+            waterLPerBirdToday: Number(drop.todayPerBird.toFixed(3)),
+            baselineDays: drop.baselineDays,
+          },
         },
         { farmId, batchId },
       );
     } else {
-      await this.alertsService.clearKind(farmId, batchId, AlertKind.EAU);
+      // Pas de chute : on signale un écart à la norme par oiseau (consommation
+      // anormalement basse OU haute), car cela peut aussi être un mauvais signe.
+      const norm = await this.constants.get(
+        ReferenceKey.WATER_PER_BIRD_L_DAY,
+        0.2,
+      );
+      const normWarnPct = await this.constants.get(
+        ReferenceKey.WATER_NORM_DEVIATION_WARN_PCT,
+        20,
+      );
+      const deviationPct =
+        norm > 0
+          ? (Math.abs(drop.todayPerBird - norm) / norm) * 100
+          : 0;
+      if (deviationPct > normWarnPct) {
+        await this.alertsService.raise(
+          {
+            kind: AlertKind.EAU,
+            level: AlertLevel.JAUNE,
+            message: `Consommation d’eau de ${drop.todayPerBird.toFixed(2)} L/oiseau/jour, écart de ${deviationPct.toFixed(0)}% à la norme (${norm} L). Vérifier l’abreuvement.`,
+            recommendation:
+              'Contrôler la pression des abreuvoirs, la qualité de l’eau et l’état sanitaire du lot.',
+            context: {
+              waterLPerBirdToday: Number(drop.todayPerBird.toFixed(3)),
+              waterNormLPerBird: norm,
+              normDeviationPercent: deviationPct,
+            },
+          },
+          { farmId, batchId },
+        );
+      } else {
+        await this.alertsService.clearKind(farmId, batchId, AlertKind.EAU);
+      }
     }
+  }
+
+  /**
+   * Alerte combinée « maladie » : une baisse d'eau persistante (indicateur n°1)
+   * associée à une mortalité en hausse est un signe probable de maladie. On
+   * monte en ROUGE dès que l'un des deux signaux est critique.
+   */
+  private async evaluateWaterHealth(
+    batch: ProductionBatch,
+    metrics: BatchMetrics,
+    farmId: string,
+    batchId: string,
+  ) {
+    const entries = await this.entriesRepo.find({
+      where: { batchId: batch.id },
+      order: { entryDate: 'DESC' },
+    });
+    const windowDays = await this.constants.get(
+      ReferenceKey.WATER_WINDOW_DAYS,
+      3,
+    );
+    const drop = this.computeWaterDrop(batch, entries, windowDays);
+    const warnPct = await this.constants.get(
+      ReferenceKey.WATER_DROP_WARN_PCT,
+      10,
+    );
+    if (!drop || drop.dropPct <= warnPct) {
+      await this.alertsService.clearKind(farmId, batchId, AlertKind.MALADIE);
+      return;
+    }
+    const mortalityWarn = await this.constants.get(
+      ReferenceKey.MORTALITY_WARN_PCT,
+      1,
+    );
+    const mortalityCrit = await this.constants.get(
+      ReferenceKey.MORTALITY_CRITICAL_PCT,
+      5,
+    );
+    if (metrics.mortalityPercent <= mortalityWarn) {
+      await this.alertsService.clearKind(farmId, batchId, AlertKind.MALADIE);
+      return;
+    }
+
+    const critPct = await this.constants.get(
+      ReferenceKey.WATER_DROP_CRITICAL_PCT,
+      25,
+    );
+    const level =
+      drop.dropPct > critPct || metrics.mortalityPercent > mortalityCrit
+        ? AlertLevel.ROUGE
+        : AlertLevel.JAUNE;
+    await this.alertsService.raise(
+      {
+        kind: AlertKind.MALADIE,
+        level,
+        message: `Baisse d’eau (${drop.dropPct.toFixed(0)}%) associée à une mortalité en hausse (${metrics.mortalityPercent.toFixed(1)}%) : signe probable de maladie.`,
+        recommendation:
+          'Contacter rapidement le vétérinaire et vérifier l’abreuvement, l’alimentation et la biosécurité du lot.',
+        context: {
+          waterDropPercent: drop.dropPct,
+          mortalityPercent: metrics.mortalityPercent,
+        },
+      },
+      { farmId, batchId },
+    );
   }
 
   private async evaluateIpeGmq(
@@ -507,7 +668,7 @@ export class AdvisoryEngine {
       await this.alertsService.clearKind(farmId, batchId, AlertKind.GMQ);
       return;
     }
-    const prevGmq = ((prev.avgWeightKg! - DAY1_WEIGHT_KG) * 1000) / prevAge;
+    const prevGmq = ((prev.avgWeightKg! - day1WeightKg(batch.species)) * 1000) / prevAge;
     if (prevGmq <= 0) {
       await this.alertsService.clearKind(farmId, batchId, AlertKind.GMQ);
       return;

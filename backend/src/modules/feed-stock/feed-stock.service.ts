@@ -14,6 +14,8 @@ import {
 import { AuthUser } from '../../common/decorators/current-user.decorator.js';
 import { AlertKind, AlertLevel } from '../../common/enums/alert-level.enum.js';
 import { FoodType } from '../../common/enums/food-type.enum.js';
+import { FeedEntryType } from '../../common/enums/feed-entry-type.enum.js';
+import { FeedPhase } from '../../common/enums/feed-phase.enum.js';
 import { InputKind } from '../../common/enums/input-kind.enum.js';
 import { ReferenceKey } from '../../common/enums/reference-key.enum.js';
 import { FarmsService } from '../farms/farms.service.js';
@@ -49,13 +51,56 @@ function round(value: number, decimals: number): number {
 }
 
 const TYPE_LABELS: Record<string, string> = {
+  POUSSIN: 'Poussin',
   DEMARRAGE: 'Démarrage',
   CROISSANCE: 'Croissance',
+  PRE_PONTE: 'Pré-ponte',
+  PONTE_PHASE_1: 'Ponte 1',
+  PONTE_PHASE_2: 'Ponte 2',
+  PONTE_PHASE_3: 'Ponte 3',
   FINITION: 'Finition',
+  PERSONNALISE: 'Personnalisé',
 };
 
+/** Phase par défaut pour les anciennes lignes (`foodType` seul, sans `feedPhase`). */
+const FOOD_TYPE_TO_FEED_PHASE: Record<string, FeedPhase> = {
+  POUSSIN: FeedPhase.POUSSIN,
+  DEMARRAGE: FeedPhase.DEMARRAGE,
+  CROISSANCE: FeedPhase.CROISSANCE,
+  PONTE: FeedPhase.PONTE_PHASE_1,
+  FINITION: FeedPhase.FINITION,
+};
+
+export function feedPhaseKeyOf(lot: {
+  feedPhase: FeedPhase | null;
+  foodType: FoodType | null;
+}): FeedPhase | null {
+  if (lot.feedPhase != null) return lot.feedPhase;
+  if (lot.foodType != null) return FOOD_TYPE_TO_FEED_PHASE[lot.foodType] ?? null;
+  return null;
+}
+
+/** Phase effective d'une saisie journalière (feedPhase → legacy foodType). */
+export function entryPhaseKeyOf(entry: {
+  feedPhase: FeedPhase | null | undefined;
+  feedType: FoodType | null | undefined;
+}): FeedPhase | null {
+  if (entry.feedPhase != null) return entry.feedPhase;
+  if (entry.feedType != null)
+    return FOOD_TYPE_TO_FEED_PHASE[entry.feedType] ?? null;
+  return null;
+}
+
+/** Types d'entrée qui représentent de l'aliment consommable (kg) — pas les médicaments/matières premières. */
+const FEED_KG_ENTRY_TYPES: FeedEntryType[] = [
+  FeedEntryType.BULKER,
+  FeedEntryType.BAG,
+  FeedEntryType.MATIERE_PREMIERE,
+];
+
 export interface FeedTypeStock {
-  foodType: FoodType;
+  feedPhase: FeedPhase;
+  foodType: FoodType | null;
   receivedKg: number;
   usedKg: number;
   lostKg: number;
@@ -63,6 +108,8 @@ export interface FeedTypeStock {
   availableKg: number;
   autonomyDays: number | null;
   status: AlertLevel;
+  suggestedLotId: string | null;
+  suggestedLotName: string | null;
 }
 
 export interface FeedLotStock {
@@ -71,6 +118,10 @@ export interface FeedLotStock {
   supplier: string;
   supplierLotNumber: string;
   batchId: string | null;
+  entryType: FeedEntryType;
+  feedPhase: FeedPhase | null;
+  customFeedPhaseName: string | null;
+  productId: string | null;
   foodType: FoodType | null;
   receivedDate: string;
   expirationDate: string | null;
@@ -296,16 +347,191 @@ export class FeedStockService {
     }
   }
 
+  // ---------- Règles intégrité consommation (jamais de sortie sans lot, jamais de négatif) ----------
+
+  /**
+   * Résout le lot d'aliment à décrémenter pour une saisie de consommation.
+   * - Si `inputLotId` est fourni : validé (ferme + ALIMENT + consommable au kg).
+   * - Sinon : affecte automatiquement le lot éligible le plus ancien (FEFO)
+   *   de la phase, ou `null` s'il n'existe aucun stock consommable de la phase.
+   * Règle métier : toute consommation d'aliment DOIT être rattachée à un lot
+   * dès qu'un lot éligible existe — jamais de sortie « orpheline » en présence
+   * de stock. `null` ne survient que si la phase n'a réellement aucun stock.
+   */
+  async resolveConsumptionLot(
+    farmId: string,
+    feedPhase: FeedPhase | null | undefined,
+    inputLotId: string | null | undefined,
+    em?: EntityManager,
+  ): Promise<string | null> {
+    const inputRepo = em ? em.getRepository(InputLot) : this.inputRepo;
+
+    if (inputLotId != null && inputLotId !== '') {
+      const lot = await inputRepo.findOne({
+        where: { id: inputLotId, farmId },
+      });
+      if (!lot || lot.kind !== InputKind.ALIMENT) {
+        throw new BadRequestException(
+          'Lot d’intrant alimentaire introuvable dans cette ferme (catégorie ALIMENT uniquement).',
+        );
+      }
+      if (!FEED_KG_ENTRY_TYPES.includes(lot.entryType)) {
+        throw new BadRequestException(
+          'Ce lot n’est pas un aliment consommable au kg (médicament ou matière non consommable), impossible de lui déduire de la consommation d’aliment.',
+        );
+      }
+      return lot.id;
+    }
+
+    // Aucun lot fourni : auto-affectation FEFO parmi les lots éligibles de la phase.
+    const farm = await this.farmRepo.findOne({ where: { id: farmId } });
+    const sacKg = farm?.defaultSacKg ?? 50;
+    const targets =
+      feedPhase != null
+        ? new Set<FeedPhase>([feedPhase])
+        : new Set<FeedPhase>(Object.values(FeedPhase));
+    const lots = await inputRepo.find({
+      where: { farmId, kind: InputKind.ALIMENT },
+      order: { receivedDate: 'ASC', createdAt: 'ASC' },
+    });
+    const today = todayStr();
+    for (const lot of lots) {
+      if (!FEED_KG_ENTRY_TYPES.includes(lot.entryType)) continue;
+      const key = feedPhaseKeyOf(lot);
+      if (key == null || !targets.has(key)) continue;
+      if (lot.expirationDate != null && lot.expirationDate < today) continue;
+      const availableKg = await this.availableKgOf(lot.id, sacKg, em);
+      if (availableKg > 0) return lot.id;
+    }
+    return null;
+  }
+
+  /** Disponible réel (réception − conso − pertes − ventes), plafonné à 0. */
+  private async availableKgOf(
+    inputLotId: string,
+    sacKg: number,
+    em?: EntityManager,
+  ): Promise<number> {
+    const entryRepo = em ? em.getRepository(DailyEntry) : this.entryRepo;
+    const lossRepo = em ? em.getRepository(FeedStockLoss) : this.lossRepo;
+    const saleRepo = em ? em.getRepository(FeedStockSale) : this.saleRepo;
+    const lot = await (
+      em ? em.getRepository(InputLot) : this.inputRepo
+    ).findOne({ where: { id: inputLotId } });
+    if (!lot) return 0;
+    const [entries, losses, feedSales] = await Promise.all([
+      entryRepo.find({ where: { inputLotId } }),
+      lossRepo.find({ where: { inputLotId } }),
+      saleRepo.find({ where: { inputLotId } }),
+    ]);
+    const receivedKg =
+      (lot.unit === 'KG' ? lot.quantity : lot.quantity * sacKg) || 0;
+    const usedKg = entries.reduce((s, e) => s + e.feedQuantity, 0);
+    const lostKg = losses.reduce((s, l) => s + l.quantityKg, 0);
+    const soldKg = feedSales.reduce((s, x) => s + x.quantityKg, 0);
+    return Math.max(0, receivedKg - usedKg - lostKg - soldKg);
+  }
+
+  /**
+   * Vérifie qu'une consommation ne dépasse pas le disponible du lot ; sinon
+   * lève une 400 ET remonte une alerte ALIMENT « stock insuffisant ».
+   * `quantityKg` doit être la consommation INCÉMENTALE de la transaction courante.
+   */
+  async assertConsumptionAvailable(
+    farmId: string,
+    inputLotId: string,
+    quantityKg: number,
+    em?: EntityManager,
+  ): Promise<void> {
+    if (quantityKg <= 0) return;
+    const farm = await this.farmRepo.findOne({ where: { id: farmId } });
+    const sacKg = farm?.defaultSacKg ?? 50;
+    const availableKg = await this.availableKgOf(inputLotId, sacKg, em);
+    if (quantityKg > availableKg + 1e-6) {
+      await this.raiseInsufficientFeedAlert(
+        farmId,
+        inputLotId,
+        quantityKg,
+        availableKg,
+      );
+      throw new BadRequestException(
+        `Stock d’aliment insuffisant sur ce lot : disponible ${round(Math.max(0, availableKg), 2)} kg, consommation saisie ${round(quantityKg, 2)} kg. Le lot ne peut pas être déduit à découvert — ajoutez du stock ou corrigez la quantité.`,
+      );
+    }
+  }
+
+  /** Alerte ALIMENT ROUGE quand une consommation dépasse le stock disponible. */
+  private async raiseInsufficientFeedAlert(
+    farmId: string,
+    inputLotId: string,
+    quantityKg: number,
+    availableKg: number,
+  ): Promise<void> {
+    const lot = await this.inputRepo.findOne({ where: { id: inputLotId } });
+    const phaseLabel = lot
+      ? TYPE_LABELS[feedPhaseKeyOf(lot) ?? ''] ?? lot.productName ?? 'ce lot'
+      : 'ce lot';
+    await this.alertsService.raise(
+      {
+        kind: AlertKind.ALIMENT,
+        level: AlertLevel.ROUGE,
+        message: `Stock d’aliment insuffisant : ${round(Math.max(0, availableKg), 2)} kg disponibles sur « ${lot?.productName ?? 'lot inconnu'} » (${phaseLabel}), ${round(quantityKg, 2)} kg de consommation tentés.`,
+        recommendation: `Enregistrez une entrée de provende (vrac, sac ou matière première) pour ce lot avant de ressaisir la consommation, ou corrigez la quantité saisie.`,
+        context: { inputLotId, availableKg, quantityKg },
+      },
+      { farmId },
+    );
+  }
+
+  /**
+   * Alerte ALIMENT ROUGE « rupture » quand une consommation est saisie alors
+   * qu'aucun lot consommable de la phase n'existe (le lot ne peut pas manger).
+   */
+  async raiseNoFeedAlert(
+    farmId: string,
+    feedPhase: FeedPhase | null | undefined,
+  ): Promise<void> {
+    const label =
+      feedPhase != null
+        ? TYPE_LABELS[feedPhase] ?? feedPhase
+        : 'aliment';
+    await this.alertsService.raise(
+      {
+        kind: AlertKind.ALIMENT,
+        level: AlertLevel.ROUGE,
+        message: `Aucune provende disponible pour la phase ${label} : la consommation a été saisie alors qu’il ne reste aucun lot consommable pour cette phase.`,
+        recommendation: `Enregistrez une entrée de provende (vrac, sac ou matière première) pour la phase ${label} afin d’alimenter les lots.`,
+        context: { feedPhase: feedPhase ?? null },
+      },
+      { farmId },
+    );
+  }
+
   // ---------- Journal des mouvements (traçabilité 360°) ----------
 
   async listMovements(user: AuthUser, farmId: string) {
     await this.farmsService.assertAccessible(user, farmId);
+    const farm = await this.farmRepo.findOne({ where: { id: farmId } });
+    const sacKg = farm?.defaultSacKg ?? 50;
     const lots = await this.inputRepo.find({
       where: { farmId, kind: InputKind.ALIMENT },
     });
-    const lotType = new Map<string, FoodType | null>(
-      lots.map((l) => [l.id, l.foodType]),
+    const lotPhase = new Map<string, string | null>(
+      lots.map((l) => [l.id, l.feedPhase ?? l.foodType]),
     );
+    const lotName = new Map<string, string>(lots.map((l) => [l.id, l.productName]));
+    const lotPricePerKg = new Map<string, number | null>(
+      lots.map((l) => [
+        l.id,
+        this.lotPricePerKg(l, sacKg),
+      ]),
+    );
+    const valueFor = (inputLotId: string | null, quantityKg: number): number | null => {
+      if (inputLotId == null) return null;
+      const price = lotPricePerKg.get(inputLotId);
+      if (price == null) return null;
+      return Math.round(quantityKg * price);
+    };
     const lotIds = lots.map((l) => l.id);
 
     const [entries, losses, feedSales] = await Promise.all([
@@ -319,10 +545,12 @@ export class FeedStockService {
     const movements = [
       ...losses.map((l) => ({
         id: l.id,
-        type: 'PERTE',
+        type: 'PERTE' as const,
         date: l.occurredAt,
         quantityKg: l.quantityKg,
-        foodType: l.inputLotId ? (lotType.get(l.inputLotId) ?? null) : null,
+        valueFcfa: valueFor(l.inputLotId, l.quantityKg),
+        foodType: l.inputLotId ? (lotPhase.get(l.inputLotId) ?? null) : null,
+        productName: l.inputLotId ? (lotName.get(l.inputLotId) ?? null) : null,
         inputLotId: l.inputLotId,
         batchId: l.batchId,
         reason: l.reason,
@@ -331,10 +559,12 @@ export class FeedStockService {
       })),
       ...feedSales.map((s) => ({
         id: s.id,
-        type: 'VENTE',
+        type: 'VENTE' as const,
         date: s.soldAt,
         quantityKg: s.quantityKg,
-        foodType: s.inputLotId ? (lotType.get(s.inputLotId) ?? null) : null,
+        valueFcfa: valueFor(s.inputLotId, s.quantityKg),
+        foodType: s.inputLotId ? (lotPhase.get(s.inputLotId) ?? null) : null,
+        productName: s.inputLotId ? (lotName.get(s.inputLotId) ?? null) : null,
         inputLotId: s.inputLotId,
         batchId: s.batchId,
         saleItemId: s.saleItemId,
@@ -342,10 +572,13 @@ export class FeedStockService {
       })),
       ...entries.map((e) => ({
         id: e.id,
-        type: 'CONSOMMATION',
+        type: 'CONSOMMATION' as const,
         date: e.entryDate,
         quantityKg: e.feedQuantity,
+        valueFcfa: valueFor(e.inputLotId, e.feedQuantity),
         foodType: e.feedType,
+        feedPhase: e.feedPhase,
+        productName: e.inputLotId ? (lotName.get(e.inputLotId) ?? null) : null,
         inputLotId: e.inputLotId,
         batchId: e.batchId,
         source: e.source,
@@ -443,6 +676,12 @@ export class FeedStockService {
       this.constants.get(ReferenceKey.FEED_STOCK_WARN_DAYS, 5),
       this.constants.get(ReferenceKey.FEED_STOCK_CRITICAL_DAYS, 3),
     ]);
+    const targetDays = await this.constants.get(
+      ReferenceKey.FEED_ORDER_TARGET_DAYS,
+      7,
+    );
+    const farm = await this.farmRepo.findOne({ where: { id: farmId } });
+    const sacKg = farm?.defaultSacKg ?? 50;
     const stock = await this.computeFeedStock(farmId, criticalDays, warnDays);
     const assessable = stock.byType.filter((t) => t.autonomyDays != null);
 
@@ -464,7 +703,7 @@ export class FeedStockService {
 
     const autonomyContext = stock.byType.reduce<Record<string, number | null>>(
       (acc, t) => {
-        acc[t.foodType] = t.autonomyDays;
+        acc[t.feedPhase] = t.autonomyDays;
         return acc;
       },
       {},
@@ -475,15 +714,16 @@ export class FeedStockService {
       const list = critical
         .map(
           (t) =>
-            `${TYPE_LABELS[t.foodType] ?? t.foodType} (${t.autonomyDays} j)`,
+            `${TYPE_LABELS[t.feedPhase] ?? t.feedPhase} (${t.autonomyDays} j)`,
         )
         .join(', ');
+      const reorder = this.suggestReorder(stock, mostUrgent.feedPhase, targetDays, sacKg);
       await this.alertsService.raise(
         {
           kind: AlertKind.ALIMENT,
           level: AlertLevel.ROUGE,
           message: `Stock de provende critique : ${list}. L'autonomie passe sous les ${criticalDays} jours de consommation théorique.`,
-          recommendation: `Commander de la provende ${TYPE_LABELS[mostUrgent.foodType] ?? mostUrgent.foodType} immédiatement pour éviter une rupture d'alimentation de la bande.`,
+          recommendation: `Commander de la provende ${TYPE_LABELS[mostUrgent.feedPhase] ?? mostUrgent.feedPhase} immédiatement pour éviter une rupture d'alimentation du lot${reorder ? `. Quantité suggérée : ≈ ${reorder.kg} kg (≈ ${reorder.sacks} sac${reorder.sacks > 1 ? 's' : ''}) pour couvrir ${targetDays} jours` : ''}.`,
           context: {
             criticalDays,
             warnDays,
@@ -494,12 +734,13 @@ export class FeedStockService {
       );
     } else if (warning.length > 0) {
       const next = warning[0];
+      const reorder = this.suggestReorder(stock, next.feedPhase, targetDays, sacKg);
       await this.alertsService.raise(
         {
           kind: AlertKind.ALIMENT,
           level: AlertLevel.JAUNE,
-          message: `Stock de provende faible : ${TYPE_LABELS[next.foodType] ?? next.foodType} (environ ${next.autonomyDays} jours d'autonomie restants).`,
-          recommendation: `Anticiper une commande de provende ${TYPE_LABELS[next.foodType] ?? next.foodType} pour ne pas atteindre le seuil critique de ${criticalDays} jours.`,
+          message: `Stock de provende faible : ${TYPE_LABELS[next.feedPhase] ?? next.feedPhase} (environ ${next.autonomyDays} jours d'autonomie restants).`,
+          recommendation: `Anticiper une commande de provende ${TYPE_LABELS[next.feedPhase] ?? next.feedPhase} pour ne pas atteindre le seuil critique de ${criticalDays} jours${reorder ? `. Quantité suggérée : ≈ ${reorder.kg} kg (≈ ${reorder.sacks} sac${reorder.sacks > 1 ? 's' : ''})` : ''}.`,
           context: {
             criticalDays,
             warnDays,
@@ -584,6 +825,10 @@ export class FeedStockService {
         supplier: lot.supplier,
         supplierLotNumber: lot.supplierLotNumber,
         batchId: lot.batchId,
+        entryType: lot.entryType,
+        feedPhase: lot.feedPhase,
+        customFeedPhaseName: lot.customFeedPhaseName,
+        productId: lot.productId,
         foodType: lot.foodType,
         receivedDate: lot.receivedDate,
         expirationDate: lot.expirationDate,
@@ -599,7 +844,8 @@ export class FeedStockService {
     });
 
     // Consommation théorique : moyenne des 3 derniers jours (tous lots de la ferme).
-    const dailyAvgByType = new Map<FoodType, number>();
+    // Basée sur la phase (FeedPhase) des saisies, agrégée par phase.
+    const dailyAvgByPhase = new Map<FeedPhase, number>();
     const batchIds = (
       await this.batchRepo.find({ where: { farmId }, select: { id: true } })
     ).map((b) => b.id);
@@ -611,20 +857,31 @@ export class FeedStockService {
       if (windowEntries.length > 0) {
         const daysInWindow = new Set(windowEntries.map((e) => e.entryDate))
           .size;
-        for (const type of Object.values(FoodType)) {
+        for (const phase of Object.values(FeedPhase)) {
           const sum = windowEntries
-            .filter((e) => e.feedType === type)
+            .filter(
+              (e) =>
+                (e.feedPhase ?? FOOD_TYPE_TO_FEED_PHASE[e.feedType ?? ''] ?? null) === phase,
+            )
             .reduce((s, e) => s + e.feedQuantity, 0);
           if (sum > 0) {
-            dailyAvgByType.set(type, round(sum / daysInWindow, 2));
+            dailyAvgByPhase.set(phase, round(sum / daysInWindow, 2));
           }
         }
       }
     }
 
     const byType: FeedTypeStock[] = [];
-    for (const type of Object.values(FoodType)) {
-      const typedLots = lotStocks.filter((s) => s.foodType === type);
+    // Aliment consommable par phase (BULKER + BAG + MATIERE_PREMIERE).
+    const feedLotsByPhase = new Map<FeedPhase, FeedLotStock[]>();
+    for (const phase of Object.values(FeedPhase)) feedLotsByPhase.set(phase, []);
+    for (const s of lotStocks) {
+      if (!FEED_KG_ENTRY_TYPES.includes(s.entryType)) continue;
+      const key = feedPhaseKeyOf(s) ?? null;
+      if (key != null) feedLotsByPhase.get(key)?.push(s);
+    }
+    for (const phase of Object.values(FeedPhase)) {
+      const typedLots = feedLotsByPhase.get(phase) ?? [];
       if (typedLots.length === 0) continue;
       const receivedKg = round(
         typedLots.reduce((s, x) => s + x.receivedKg, 0),
@@ -646,11 +903,14 @@ export class FeedStockService {
         typedLots.reduce((s, x) => s + x.availableKg, 0),
         2,
       );
-      const dailyAvg = dailyAvgByType.get(type) ?? 0;
+      const dailyAvg = dailyAvgByPhase.get(phase) ?? 0;
       const autonomyDays =
         dailyAvg > 0 ? round(availableKg / dailyAvg, 1) : null;
+      const suggested =
+        this.suggestFeedLot(typedLots, today) ?? null;
       byType.push({
-        foodType: type,
+        feedPhase: phase,
+        foodType: typedLots[0]?.foodType ?? null,
         receivedKg,
         usedKg,
         lostKg,
@@ -658,10 +918,86 @@ export class FeedStockService {
         availableKg,
         autonomyDays,
         status: this.stockStatus(autonomyDays, criticalDays, warnDays),
+        suggestedLotId: suggested?.id ?? null,
+        suggestedLotName: suggested?.productName ?? null,
       });
     }
 
     return { lots: lotStocks, byType };
+  }
+
+  /**
+   * Suggère le lot à déduire en priorité (FEFO — First Expiry, First Out) :
+   * le plus vieux par date de péremption, puis par date de réception.
+   * Les lots périmés et les lots épuisés sont exclus.
+   */
+  private suggestFeedLot(
+    lots: FeedLotStock[],
+    today: string,
+  ): FeedLotStock | undefined {
+    const usable = lots.filter(
+      (l) => l.availableKg > 0 && !(l.expirationDate != null && l.expirationDate < today),
+    );
+    if (usable.length === 0) return undefined;
+    return usable.sort((a, b) => {
+      const ae = a.expirationDate ?? '9999-12-31';
+      const be = b.expirationDate ?? '9999-12-31';
+      if (ae !== be) return ae < be ? -1 : 1;
+      if (a.receivedDate !== b.receivedDate)
+        return a.receivedDate < b.receivedDate ? -1 : 1;
+      return a.id < b.id ? -1 : 1;
+    })[0];
+  }
+
+  /**
+   * Quantité de réapprovisionnement suggérée pour une phase d’aliment :
+   * (objectif de jours − autonomie restante) × consommation moyenne journalière,
+   * arrondie au sac supérieur.
+   */
+  private suggestReorder(
+    stock: ComputedStock,
+    feedPhase: FeedPhase,
+    targetDays: number,
+    sacKg: number,
+  ): { kg: number; sacks: number } | null {
+    const t = stock.byType.find((x) => x.feedPhase === feedPhase);
+    if (!t || t.autonomyDays == null || t.autonomyDays <= 0) return null;
+    const daysToCover = targetDays - t.autonomyDays;
+    if (daysToCover <= 0) return null;
+    const dailyAvg = t.availableKg / t.autonomyDays;
+    const kg = Math.ceil(daysToCover * dailyAvg);
+    return { kg, sacks: Math.max(1, Math.ceil(kg / sacKg)) };
+  }
+
+  /**
+   * Prix au kg d'un lot d'aliment ramené selon son type d'entrée, ou null si non
+   * renseigné :
+   * - BULKER : coût / MT → kg (costPerMtFcfa / 1000)
+   * - BAG    : prix / sac / taille du sac, sinon unitPriceFcfa legacy
+   * - MATIERE_PREMIERE : coût total / tonnage → kg
+   * - MEDICAMENT : pas de prix au kg (souvent dose) → null
+   */
+  private lotPricePerKg(lot: InputLot, sacKg: number): number | null {
+    if (lot.entryType === FeedEntryType.BULKER) {
+      if (lot.costPerMtFcfa == null || lot.costPerMtFcfa <= 0) return null;
+      return round(lot.costPerMtFcfa / 1000, 3);
+    }
+    if (lot.entryType === FeedEntryType.BAG) {
+      if (lot.unitPriceFcfa == null || lot.unitPriceFcfa <= 0) return null;
+      const size = lot.bagSizeKg ?? lot.unit === 'KG' ? null : sacKg;
+      if (size == null || size <= 0) return null;
+      return round(lot.unitPriceFcfa / size, 3);
+    }
+    if (lot.entryType === FeedEntryType.MATIERE_PREMIERE) {
+      if (
+        lot.totalCostFcfa == null ||
+        lot.totalCostFcfa <= 0 ||
+        lot.quantity <= 0
+      )
+        return null;
+      return round(lot.totalCostFcfa / lot.quantity, 3);
+    }
+    return null;
   }
 
   private stockStatus(

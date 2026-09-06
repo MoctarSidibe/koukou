@@ -435,7 +435,7 @@ export class RentabiliteService {
           level: AlertLevel.ROUGE,
           message: `Le lot ${pnl.batchName ?? ''} est en perte : revenus ${pnl.revenueFcfa} FCFA pour des dépenses de ${pnl.expensesFcfa} FCFA.`,
           recommendation:
-            'Réviser la structure de coûts (aliment, intrants) et/ou le prix de vente avant clôture définitive — objectiver la décision d’arrêt de la bande.',
+            'Réviser la structure de coûts (aliment, intrants) et/ou le prix de vente avant clôture définitive — objectiver la décision d’arrêt du lot.',
           context: { netFcfa: pnl.netFcfa, marginPct: pnl.marginPct },
         },
         { farmId, batchId },
@@ -447,7 +447,7 @@ export class RentabiliteService {
           level: AlertLevel.JAUNE,
           message: `Marge nette du lot ${pnl.batchName ?? ''} faible : ${pnl.marginPct.toFixed(1)} % (seuil recommandé ${threshold} %).`,
           recommendation:
-            'Comparer le prix de vente au kilo au coût de revient et ajuster avant la fin de bande.',
+            'Comparer le prix de vente au kilo au coût de revient et ajuster avant la fin du lot.',
           context: { netFcfa: pnl.netFcfa, marginPct: pnl.marginPct },
         },
         { farmId, batchId },

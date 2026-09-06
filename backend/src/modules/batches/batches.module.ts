@@ -17,6 +17,7 @@ import { Payment } from '../finance/entities/payment.entity.js';
 import { FeedStockModule } from '../feed-stock/feed-stock.module.js';
 import { Alert } from '../alerts/entities/alert.entity.js';
 import { SlaughterOrder } from '../slaughter/entities/slaughter-order.entity.js';
+import { HealthEvent } from '../sanitary/entities/health-event.entity.js';
 import { AdvisoryEngine } from './advisory.engine.js';
 import { BatchesController } from './batches.controller.js';
 import { BatchesService } from './batches.service.js';
@@ -47,6 +48,7 @@ import {
       Alert,
       FarmEmployee,
       SlaughterOrder,
+      HealthEvent,
     ]),
     FarmsModule,
     BreedsModule,

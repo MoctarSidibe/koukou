@@ -15,7 +15,7 @@ import { SlaughterDestination } from '../../../common/enums/slaughter-destinatio
 import { SlaughterType } from '../../../common/enums/slaughter-type.enum.js';
 
 export class CreateSlaughterOrderDto {
-  @ApiProperty({ description: 'Lot de production (bande) à abattre' })
+  @ApiProperty({ description: 'Lot de production à abattre' })
   @IsUUID('4', { message: 'Identifiant de lot de production invalide.' })
   batchId: string;
 

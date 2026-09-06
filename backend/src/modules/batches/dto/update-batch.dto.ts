@@ -69,4 +69,20 @@ export class UpdateBatchDto {
   @IsOptional()
   @IsEnum(Species, { message: 'L’espèce doit être une valeur valide.' })
   species?: Species | null;
+
+  @ApiPropertyOptional({
+    description:
+      'Espèce libre (texte) — quand species = AUTRE. Ex : "Canard"',
+  })
+  @IsOptional()
+  @IsString()
+  customSpecies?: string | null;
+
+  @ApiPropertyOptional({
+    description:
+      'Souche / race libre (texte) — quand species = AUTRE. Ex : "Coureur indien"',
+  })
+  @IsOptional()
+  @IsString()
+  customBreed?: string | null;
 }

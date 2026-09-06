@@ -9,52 +9,58 @@ import * as bcrypt from 'bcrypt';
 import { Repository } from 'typeorm';
 import { UserRole } from '../../common/enums/role.enum.js';
 import { User } from '../users/entities/user.entity.js';
+import { Farm } from '../farms/entities/farm.entity.js';
+import { FarmsService } from '../farms/farms.service.js';
 import { LoginDto } from './dto/login.dto.js';
 import { RegisterDto } from './dto/register.dto.js';
+
+const DEFAULT_FARM_CITY = 'Libreville';
 
 @Injectable()
 export class AuthService {
   constructor(
     @InjectRepository(User)
     private readonly usersRepo: Repository<User>,
+    @InjectRepository(Farm)
+    private readonly farmsRepo: Repository<Farm>,
     private readonly jwtService: JwtService,
+    private readonly farmsService: FarmsService,
   ) {}
 
   async register(dto: RegisterDto) {
     const existing = await this.usersRepo.findOne({
-      where: [{ phone: dto.phone }, { email: dto.email }],
+      where: { phone: dto.phone },
     });
     if (existing) {
       throw new ConflictException(
-        'Un compte existe déjà avec ce numéro ou cet e-mail.',
+        'Un compte existe déjà avec ce numéro de téléphone.',
       );
     }
 
-    const passwordHash = await bcrypt.hash(dto.password, 10);
+    const codeHash = await bcrypt.hash(dto.code, 10);
     const user = this.usersRepo.create({
       phone: dto.phone,
-      email: dto.email,
       fullName: dto.fullName,
-      passwordHash,
+      passwordHash: codeHash,
       role: UserRole.PROPRIETAIRE,
     });
     await this.usersRepo.save(user);
+
+    await this.ensureOwnerFarm(user);
 
     return this.buildAuthResponse(user);
   }
 
   async login(dto: LoginDto) {
-    const identifier = dto.identifier.trim().toLowerCase();
-    const user = await this.usersRepo.findOne({
-      where: [{ phone: identifier }, { email: identifier }],
-    });
+    const phone = dto.phone.trim().toLowerCase();
+    const user = await this.usersRepo.findOne({ where: { phone } });
     const ok = await bcrypt.compare(
-      dto.password,
+      dto.code,
       user ? user.passwordHash : DUMMY_PASSWORD_HASH,
     );
     if (!user || !ok) {
       throw new UnauthorizedException(
-        'Identifiants invalides. Vérifiez le numéro/téléphone ou l’e-mail et le mot de passe.',
+        'Identifiants invalides. Vérifiez le numéro de téléphone et le code.',
       );
     }
     if (user.active === false) {
@@ -62,7 +68,19 @@ export class AuthService {
         'Ce compte a été suspendu. Contactez l’administrateur.',
       );
     }
+    await this.ensureOwnerFarm(user);
     return this.buildAuthResponse(user);
+  }
+
+  /** Un Propriétaire dispose toujours d'une ferme : crée la ferme par défaut sinon. */
+  private async ensureOwnerFarm(user: User) {
+    if (user.role !== UserRole.PROPRIETAIRE) return;
+    const count = await this.farmsRepo.count({ where: { ownerId: user.id } });
+    if (count > 0) return;
+    await this.farmsService.create(user, {
+      name: `Ferme de ${user.fullName}`,
+      administrativeCity: DEFAULT_FARM_CITY,
+    });
   }
 
   private buildAuthResponse(user: User) {
@@ -73,7 +91,7 @@ export class AuthService {
       user: {
         id: user.id,
         phone: user.phone,
-        email: user.email,
+        email: user.email ?? null,
         fullName: user.fullName,
         role: user.role,
       },

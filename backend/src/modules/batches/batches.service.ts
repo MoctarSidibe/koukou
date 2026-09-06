@@ -69,9 +69,11 @@ export class BatchesService {
       batchName: dto.batchName,
       integrationDate: dto.integrationDate,
       quantityAtStart: dto.quantityAtStart,
-      quantityAlive: dto.quantityAtStart,
+      quantityAlive: dto.quantityAlive ?? dto.quantityAtStart,
       type: dto.type,
       species: dto.species ?? Species.POULET,
+      customSpecies: dto.species === Species.AUTRE ? (dto.customSpecies ?? null) : null,
+      customBreed: dto.species === Species.AUTRE ? (dto.customBreed ?? null) : null,
       status: BatchStatus.ACTIF,
       buildingAreaM2: buildingArea,
       feedUnitSacKg: dto.feedUnitSacKg ?? farm.defaultSacKg,
@@ -117,6 +119,22 @@ export class BatchesService {
       batch.feedUnitSacKg = dto.feedUnitSacKg ?? null;
     if (dto.species !== undefined && dto.species !== null)
       batch.species = dto.species;
+    if (dto.species !== undefined) {
+      if (dto.species === Species.AUTRE) {
+        if (dto.customSpecies !== undefined)
+          batch.customSpecies = dto.customSpecies !== null && dto.customSpecies.trim() ? dto.customSpecies : null;
+        if (dto.customBreed !== undefined)
+          batch.customBreed = dto.customBreed !== null && dto.customBreed.trim() ? dto.customBreed : null;
+      } else {
+        batch.customSpecies = null;
+        batch.customBreed = null;
+      }
+    } else {
+      if (dto.customSpecies !== undefined)
+        batch.customSpecies = dto.customSpecies;
+      if (dto.customBreed !== undefined)
+        batch.customBreed = dto.customBreed;
+    }
     if (dto.buildingId !== undefined) {
       if (dto.buildingId) {
         const building = await this.buildingRepo.findOne({
@@ -244,6 +262,10 @@ export class BatchesService {
   ) {
     const metrics = await this.metricsService.compute(batch);
     batch.lastComputedFcr = metrics.fcr ?? 0;
+    if (metrics.readyForSale && batch.readyForSaleAt == null) {
+      batch.readyForSaleAt = new Date().toISOString().slice(0, 10);
+    }
+    batch.saleReadinessChecked = metrics.readyForSale || batch.saleReadinessChecked;
     await this.batchRepo.save(batch);
     await this.advisoryEngine.runForBatch(batch, metrics);
   }

@@ -26,9 +26,8 @@ describe('AppController (e2e)', () => {
       .post('/auth/register')
       .send({
         phone,
-        email: `test.${Date.now()}@e2e.ga`,
-        password: 'secret123',
         fullName: 'Test E2E',
+        code: 'secret123',
       })
       .expect(201);
   });

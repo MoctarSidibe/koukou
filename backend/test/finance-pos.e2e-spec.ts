@@ -78,19 +78,18 @@ describe('Module 4 — POS ferme (régression & gardes manquantes, e2e)', () => 
     await app.init();
     server = app.getHttpServer();
 
-    const email = `owner.pos.${Date.now()}@e2e.ga`;
+    const phone = `+24160${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24160${Date.now()}`,
-        email,
-        password: 'secret123',
+        phone,
         fullName: 'Proprio POS',
+        code: 'secret123',
       })
       .expect(201);
     const login = await request(server)
       .post('/auth/login')
-      .send({ identifier: email, password: 'secret123' })
+      .send({ phone, code: 'secret123' })
       .expect(201);
     token = login.body.accessToken;
 
@@ -273,16 +272,15 @@ describe('Module 4 — POS ferme (régression & gardes manquantes, e2e)', () => 
   });
 
   it('un Éleveur ne peut pas ouvrir la caisse (403), mais consulte la session ouverte (200)', async () => {
-    const empEmail = `emp.pos.${Date.now()}@e2e.ga`;
+    const empPhone = `+24161${Date.now()}`;
     await post('/farms/' + farmId + '/eleveurs', {
-      phone: `+24161${Date.now()}`,
-      email: empEmail,
+      phone: empPhone,
       fullName: 'Éleveur POS',
-      password: 'secret123',
+      code: 'secret123',
     }).expect(201);
     const login = await request(server)
       .post('/auth/login')
-      .send({ identifier: empEmail, password: 'secret123' })
+      .send({ phone: empPhone, code: 'secret123' })
       .expect(201);
     const empToken = login.body.accessToken;
 

@@ -63,19 +63,18 @@ describe('Module 4 — Zone clients & promos (find-or-create, segments, coupons)
     await app.init();
     server = app.getHttpServer();
 
-    const email = `owner.zone.${Date.now()}@e2e.ga`;
+    const phone = `+24162${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24162${Date.now()}`,
-        email,
-        password: 'secret123',
+        phone,
         fullName: 'Proprio Zone',
+        code: 'secret123',
       })
       .expect(201);
     const login = await request(server)
       .post('/auth/login')
-      .send({ identifier: email, password: 'secret123' })
+      .send({ phone, code: 'secret123' })
       .expect(201);
     token = login.body.accessToken;
 
@@ -109,16 +108,15 @@ describe('Module 4 — Zone clients & promos (find-or-create, segments, coupons)
       openingBalanceFcfa: 500000,
     }).expect(201);
 
-    const empEmail = `emp.zone.${Date.now()}@e2e.ga`;
+    const empPhone = `+24163${Date.now()}`;
     await post('/farms/' + farmId + '/eleveurs', {
-      phone: `+24163${Date.now()}`,
-      email: empEmail,
+      phone: empPhone,
       fullName: 'Éleveur Zone',
-      password: 'secret123',
+      code: 'secret123',
     }).expect(201);
     const empLogin = await request(server)
       .post('/auth/login')
-      .send({ identifier: empEmail, password: 'secret123' })
+      .send({ phone: empPhone, code: 'secret123' })
       .expect(201);
     empToken = empLogin.body.accessToken;
   });

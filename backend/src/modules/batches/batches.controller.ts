@@ -22,7 +22,7 @@ export class BatchesController {
 
   @Post()
   @Roles(UserRole.PROPRIETAIRE, UserRole.ELEVEUR)
-  @ApiOperation({ summary: 'Créer un lot (Création de bande)' })
+  @ApiOperation({ summary: 'Créer un lot (Créer un lot)' })
   @ApiParam({ name: 'farmId' })
   create(
     @CurrentUser() user: AuthUser,

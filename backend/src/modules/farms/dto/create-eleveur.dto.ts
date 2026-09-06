@@ -16,24 +16,29 @@ export class CreateElevageDto {
   @IsNotEmpty({ message: 'Le numéro de téléphone est obligatoire.' })
   phone: string;
 
-  @ApiProperty({ description: 'Adresse e-mail' })
+  @ApiPropertyOptional({
+    description: 'Adresse e-mail (optionnelle)',
+  })
   @Transform(({ value }) =>
     typeof value === 'string' ? value.trim().toLowerCase() : value,
   )
   @IsEmail({}, { message: "L'adresse e-mail n'est pas valide." })
-  email: string;
+  @IsOptional()
+  email?: string;
 
   @ApiProperty({ description: 'Nom complet de l’éleveur' })
   @IsString()
   @IsNotEmpty({ message: 'Le nom complet est obligatoire.' })
   fullName: string;
 
-  @ApiProperty({ description: 'Mot de passe temporaire (min 6 caractères)' })
+  @ApiProperty({
+    description: 'Code secret (PIN) temporaire, minimum 6 caractères',
+  })
   @IsString()
   @MinLength(6, {
-    message: 'Le mot de passe doit contenir au moins 6 caractères.',
+    message: 'Le code doit contenir au moins 6 caractères.',
   })
-  password: string;
+  code: string;
 
   @ApiPropertyOptional({ description: 'Bâtiment assigné' })
   @IsOptional()

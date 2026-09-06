@@ -57,6 +57,11 @@ export class CreateSaleItemDto {
   @IsOptional()
   @IsUUID('4', { message: 'Identifiant de lot d’intrant invalide.' })
   inputLotId?: string;
+
+  /** Ordre d'abattage source (vente ABATTU depuis le pool de carcasses). */
+  @IsOptional()
+  @IsUUID('4', { message: 'Identifiant d’ordre d’abattage invalide.' })
+  sourceSlaughterOrderId?: string;
 }
 
 export class PaymentInputDto {
@@ -97,6 +102,10 @@ export class CreateSaleDto {
   @IsOptional()
   @IsUUID('4', { message: 'Identifiant client invalide.' })
   customerId?: string;
+
+  @IsOptional()
+  @IsUUID('4', { message: 'Identifiant de point de vente invalide.' })
+  pointOfSaleId?: string;
 
   @IsOptional()
   @IsString({ message: 'Le téléphone client doit être une chaîne.' })

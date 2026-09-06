@@ -49,8 +49,7 @@ export function TeamPage() {
             addMember.mutate({
               fullName: String(f.get('fullName')),
               phone: String(f.get('phone')),
-              email: String(f.get('email')),
-              password: String(f.get('password')),
+              code: String(f.get('code')),
               buildingAssignment: (f.get('buildingAssignment') as string) || undefined,
             });
             e.currentTarget.reset();
@@ -65,12 +64,8 @@ export function TeamPage() {
             <input name="phone" required className={inputCls} placeholder="+241…" />
           </label>
           <label className="block text-xs">
-            <span className="mb-1 block font-medium text-slate-600">E-mail *</span>
-            <input name="email" type="email" required className={inputCls} />
-          </label>
-          <label className="block text-xs">
-            <span className="mb-1 block font-medium text-slate-600">Mot de passe *</span>
-            <input name="password" type="password" required minLength={6} className={inputCls} />
+            <span className="mb-1 block font-medium text-slate-600">Code secret *</span>
+            <input name="code" type="password" required minLength={6} className={inputCls} />
           </label>
           <label className="block text-xs sm:col-span-2">
             <span className="mb-1 block font-medium text-slate-600">Bâtiment assigné</span>

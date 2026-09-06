@@ -14,6 +14,7 @@ import {
 } from '../../../common/enums/sale-item-type.enum.js';
 import { Sale } from './sale.entity.js';
 import { ProductionBatch } from '../../batches/entities/production-batch.entity.js';
+import { SlaughterOrder } from '../../slaughter/entities/slaughter-order.entity.js';
 import { InputLot } from '../../inputs/entities/input-lot.entity.js';
 
 @Entity('sale_items')
@@ -68,6 +69,15 @@ export class SaleItem {
 
   @Column({ name: 'input_lot_id', type: 'uuid', nullable: true })
   inputLotId: string | null;
+
+  /** Ordre d'abattage source pour une vente ABATTU gérée par pool de carcasses. */
+  @ManyToOne(() => SlaughterOrder, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'source_slaughter_order_id' })
+  sourceSlaughterOrder: SlaughterOrder | null;
+
+  @Column({ name: 'source_slaughter_order_id', type: 'uuid', nullable: true })
+  @Index()
+  sourceSlaughterOrderId: string | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

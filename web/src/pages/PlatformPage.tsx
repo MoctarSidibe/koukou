@@ -171,7 +171,7 @@ export function PlatformPage() {
                     fullName: String(f.get('fullName')),
                     phone: String(f.get('phone')),
                     email: (f.get('email') as string) || undefined,
-                    password: String(f.get('password')),
+                    code: String(f.get('code')),
                   });
                 }}
               >
@@ -180,7 +180,7 @@ export function PlatformPage() {
                 <Field name="fullName" label="Propriétaire (nom complet) *" required />
                 <Field name="phone" label="Téléphone propriétaire *" required placeholder="+241…" />
                 <Field name="email" label="E-mail" type="email" />
-                <Field name="password" label="Mot de passe *" type="password" required />
+                <Field name="code" label="Code secret *" type="password" required />
                 <div className="flex items-center gap-2">
                   <button
                     type="submit"

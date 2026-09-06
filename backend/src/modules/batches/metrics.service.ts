@@ -2,16 +2,21 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AlertLevel } from '../../common/enums/alert-level.enum.js';
-import { BatchType } from '../../common/enums/batch-type.enum.js';
+import {
+  BatchStatus,
+  BatchType,
+} from '../../common/enums/batch-type.enum.js';
 import { ReferenceKey } from '../../common/enums/reference-key.enum.js';
+import { day1WeightKg } from '../../common/utils/species-day1-weight.js';
 import { BreedStandard } from '../breeds/entities/breed-standard.entity.js';
 import { DailyEntry } from '../daily-entries/entities/daily-entry.entity.js';
 import { Farm } from '../farms/entities/farm.entity.js';
 import { ReferenceConstantsService } from '../reference-constants/reference-constants.service.js';
 import { ProductionBatch } from './entities/production-batch.entity.js';
-import { BatchMetrics } from './models/batch-metrics.model.js';
-
-const DAY1_WEIGHT_KG = 0.045;
+import {
+  BatchMetrics,
+  ReadyReason,
+} from './models/batch-metrics.model.js';
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
@@ -23,6 +28,63 @@ function addDaysIso(date: string, days: number): string {
   const d = new Date(`${date}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
+}
+
+function deviationPct(
+  actual: number | null,
+  target: number | null,
+): number | null {
+  return actual != null && target != null && target !== 0
+    ? round2(((actual - target) / target) * 100)
+    : null;
+}
+
+export interface ReadinessInput {
+  type: BatchType;
+  status: AlertLevel;
+  isClosed: boolean;
+  ageDays: number;
+  mortalityPercent: number;
+  fcrDeviationPct: number | null;
+  layRateDeviationPct: number | null;
+  minVenteAgeDays: number;
+  fcrDeviationMaxPct: number;
+  reformeLayRateFallPct: number;
+}
+
+export interface ReadinessResult {
+  readyForSale: boolean;
+  readyReason: ReadyReason;
+}
+
+/**
+ * Auto-signal de commercialisation : un lot « prêt à vendre » peut être mis
+ * en vente / précommande sans intervention manuelle du statut.
+ *   - Chair : âge minimal + santé (pas ROUGE) + IC conforme (± tolérance souche).
+ *   - Pondeuse : ponte effondrée sous la cible (~ chute cumulée) → réformable.
+ */
+export function evaluateReadiness(input: ReadinessInput): ReadinessResult {
+  if (input.isClosed) return { readyForSale: false, readyReason: 'N_A' };
+  if (input.status === AlertLevel.ROUGE)
+    return { readyForSale: false, readyReason: 'SANITARY' };
+
+  if (input.type === BatchType.PONDEUSE) {
+    const fallen =
+      input.layRateDeviationPct != null &&
+      input.layRateDeviationPct < -input.reformeLayRateFallPct;
+    if (!fallen) return { readyForSale: false, readyReason: 'N_A' };
+    return { readyForSale: true, readyReason: 'READY' };
+  }
+
+  if (input.ageDays < input.minVenteAgeDays)
+    return { readyForSale: false, readyReason: 'TOO_YOUNG' };
+  if (
+    input.fcrDeviationPct != null &&
+    input.fcrDeviationPct > input.fcrDeviationMaxPct
+  ) {
+    return { readyForSale: false, readyReason: 'FCR' };
+  }
+  return { readyForSale: true, readyReason: 'READY' };
 }
 
 export interface BreedStatus {
@@ -54,16 +116,28 @@ export class MetricsService {
   ) {}
 
   async compute(batch: ProductionBatch): Promise<BatchMetrics> {
-    const [entries, standardModule, densityWarn, densityCritical] =
-      await Promise.all([
-        this.entriesRepo.find({
-          where: { batchId: batch.id },
-          order: { entryDate: 'ASC' },
-        }),
-        this.constants.get(ReferenceKey.STANDARD_MODULE, 3000),
-        this.constants.get(ReferenceKey.DENSITY_WARN, 15),
-        this.constants.get(ReferenceKey.DENSITY_CRITICAL, 18),
-      ]);
+    const [
+      entries,
+      standardModule,
+      densityWarn,
+      densityCritical,
+      minVenteAgeDays,
+      fcrDeviationMaxPct,
+      reformeLayRateFallPct,
+      standard,
+    ] = await Promise.all([
+      this.entriesRepo.find({
+        where: { batchId: batch.id },
+        order: { entryDate: 'ASC' },
+      }),
+      this.constants.get(ReferenceKey.STANDARD_MODULE, 3000),
+      this.constants.get(ReferenceKey.DENSITY_WARN, 15),
+      this.constants.get(ReferenceKey.DENSITY_CRITICAL, 18),
+      this.constants.get(ReferenceKey.VENTE_AGE_MIN_DAYS, 35),
+      this.constants.get(ReferenceKey.VENTE_FCR_DEV_MAX_PCT, 10),
+      this.constants.get(ReferenceKey.REFORME_LAY_RATE_FALL_PCT, 15),
+      this.findStandard(batch),
+    ]);
 
     const ageDays = this.computeAgeDays(batch.integrationDate);
     const totalDeaths = entries.reduce((s, e) => s + e.deaths, 0);
@@ -77,6 +151,7 @@ export class MetricsService {
 
     // Convention : feedQuantity est TOUJOURS stocké en kg (conversion sac->kg faite à la saisie).
     const totalFeedKg = entries.reduce((s, e) => s + e.feedQuantity, 0);
+    const totalWaterL = entries.reduce((s, e) => s + e.waterL, 0);
 
     const latestWeight =
       [...entries]
@@ -84,8 +159,9 @@ export class MetricsService {
         .find((e) => e.avgWeightKg != null && e.avgWeightKg > 0)?.avgWeightKg ??
       null;
 
+    const d1WeightKg = day1WeightKg(batch.species);
     const totalWeightGainKg =
-      latestWeight != null ? (latestWeight - DAY1_WEIGHT_KG) * liveCount : null;
+      latestWeight != null ? (latestWeight - d1WeightKg) * liveCount : null;
 
     const fcr =
       totalWeightGainKg != null && totalWeightGainKg > 0
@@ -94,7 +170,7 @@ export class MetricsService {
 
     const gmqGramsPerDay =
       latestWeight != null && ageDays > 0
-        ? ((latestWeight - DAY1_WEIGHT_KG) * 1000) / ageDays
+        ? ((latestWeight - d1WeightKg) * 1000) / ageDays
         : null;
 
     const ipe =
@@ -138,6 +214,22 @@ export class MetricsService {
       densityCritical,
     });
 
+    const readiness = evaluateReadiness({
+      type: batch.type,
+      status,
+      isClosed: batch.status === BatchStatus.CLOTURE,
+      ageDays,
+      mortalityPercent,
+      fcrDeviationPct: deviationPct(fcr, standard?.targetFcr ?? null),
+      layRateDeviationPct: deviationPct(
+        layRatePercent,
+        standard?.targetLayRatePercent ?? null,
+      ),
+      minVenteAgeDays,
+      fcrDeviationMaxPct,
+      reformeLayRateFallPct,
+    });
+
     return {
       ageDays,
       totalDeaths,
@@ -145,6 +237,8 @@ export class MetricsService {
       viabilityPercent,
       liveCount,
       totalFeedKg,
+      totalWaterL,
+      waterLPerBird: liveCount > 0 ? totalWaterL / liveCount : null,
       totalWeightGainKg,
       fcr,
       gmqGramsPerDay,
@@ -155,7 +249,26 @@ export class MetricsService {
       densityPerM2,
       moduleFraction,
       moduleRatioVsCapacity,
+      readyForSale: readiness.readyForSale,
+      readyReason: readiness.readyReason,
     };
+  }
+
+  /** Semaine d'âge courante du lot → dernière entrée du référentiel de la souche. */
+  private async findStandard(
+    batch: ProductionBatch,
+  ): Promise<BreedStandard | null> {
+    if (!batch.breed) return null;
+    const standards = await this.standardRepo.find({
+      where: { breedId: batch.breed.id },
+      order: { week: 'ASC' },
+    });
+    if (standards.length === 0) return null;
+
+    const ageDays = this.computeAgeDays(batch.integrationDate);
+    const ageWeek = Math.floor(ageDays / 7) + 1;
+    const applicable = standards.filter((s) => s.week <= ageWeek);
+    return applicable.length > 0 ? applicable[applicable.length - 1]! : standards[0];
   }
 
   /**
@@ -165,51 +278,33 @@ export class MetricsService {
    * la souche n'a pas de référentiel (souche personnalisée).
    */
   async breedStatus(batch: ProductionBatch): Promise<BreedStatus | null> {
-    const breed = batch.breed;
-    if (!breed) return null;
-    const standards = await this.standardRepo.find({
-      where: { breedId: breed.id },
-      order: { week: 'ASC' },
-    });
-    if (standards.length === 0) return null;
-
-    const ageDays = this.computeAgeDays(batch.integrationDate);
-    const ageWeek = Math.floor(ageDays / 7) + 1;
-    const applicable = standards.filter((s) => s.week <= ageWeek);
-    const standard: BreedStandard =
-      applicable.length > 0 ? applicable[applicable.length - 1]! : standards[0];
-
-    const deviation = (
-      actual: number | null,
-      target: number | null,
-    ): number | null =>
-      actual != null && target != null && target !== 0
-        ? round2(((actual - target) / target) * 100)
-        : null;
+    const standard = await this.findStandard(batch);
+    if (!standard) return null;
 
     const metrics = await this.compute(batch);
+    const ageDays = this.computeAgeDays(batch.integrationDate);
     const actualAvgWeightKg =
       metrics.gmqGramsPerDay != null
-        ? round2(DAY1_WEIGHT_KG + (metrics.gmqGramsPerDay * ageDays) / 1000)
+        ? round2(day1WeightKg(batch.species) + (metrics.gmqGramsPerDay * ageDays) / 1000)
         : null;
 
     return {
-      breedId: breed.id,
-      breedName: breed.name,
-      breedType: breed.type,
+      breedId: batch.breed!.id,
+      breedName: batch.breed!.name,
+      breedType: batch.breed!.type,
       week: standard.week,
       targetAvgWeightKg: standard.targetAvgWeightKg,
       actualAvgWeightKg,
-      avgWeightDeviationPct: deviation(
+      avgWeightDeviationPct: deviationPct(
         actualAvgWeightKg,
         standard.targetAvgWeightKg,
       ),
       targetFcr: standard.targetFcr,
       actualFcr: metrics.fcr,
-      fcrDeviationPct: deviation(metrics.fcr, standard.targetFcr),
+      fcrDeviationPct: deviationPct(metrics.fcr, standard.targetFcr),
       targetLayRatePercent: standard.targetLayRatePercent,
       actualLayRatePercent: metrics.layRatePercent,
-      layRateDeviationPct: deviation(
+      layRateDeviationPct: deviationPct(
         metrics.layRatePercent,
         standard.targetLayRatePercent,
       ),

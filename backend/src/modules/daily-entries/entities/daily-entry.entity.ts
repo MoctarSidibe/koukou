@@ -10,6 +10,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { FeedUnit, FoodType } from '../../../common/enums/food-type.enum.js';
+import { FeedPhase } from '../../../common/enums/feed-phase.enum.js';
 import { ConsumptionSource } from '../../../common/enums/consumption-source.enum.js';
 import { ProductionBatch } from '../../batches/entities/production-batch.entity.js';
 import { InputLot } from '../../inputs/entities/input-lot.entity.js';
@@ -44,6 +45,12 @@ export class DailyEntry {
 
   @Column({ name: 'feed_type', type: 'enum', enum: FoodType, nullable: true })
   feedType: FoodType | null;
+
+  @Column({ name: 'feed_phase', type: 'enum', enum: FeedPhase, nullable: true })
+  feedPhase: FeedPhase | null;
+
+  @Column({ name: 'custom_feed_phase_name', type: 'text', nullable: true })
+  customFeedPhaseName: string | null;
 
   @Column({ name: 'input_lot_id', type: 'uuid', nullable: true })
   inputLotId: string | null;

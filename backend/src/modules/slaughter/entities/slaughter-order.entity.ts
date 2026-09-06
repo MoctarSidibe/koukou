@@ -51,6 +51,10 @@ export class SlaughterOrder {
   @Column({ name: 'bird_count', type: 'int' })
   birdCount: number;
 
+  /** Carcasses de cet ordre disponibles à la vente (POS « abattu »). */
+  @Column({ name: 'carcasses_available', type: 'int', default: 0 })
+  carcassesAvailable: number;
+
   @Column({ name: 'total_weight_kg', type: 'float', nullable: true })
   totalWeightKg: number | null;
 

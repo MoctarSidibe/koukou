@@ -7,7 +7,9 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import { PromotionType } from '../../../common/enums/promotion-type.enum.js';
 
@@ -25,6 +27,8 @@ export class CreatePromotionDto {
 
   @IsInt({ message: 'La valeur doit être un entier.' })
   @Min(1, { message: 'La valeur doit être strictement positive.' })
+  @ValidateIf((o) => o.type === PromotionType.PCT)
+  @Max(100, { message: 'Un pourcentage de réduction ne peut pas dépasser 100%.' })
   value: number;
 
   @IsOptional()
@@ -71,6 +75,8 @@ export class UpdatePromotionDto {
   @IsOptional()
   @IsInt({ message: 'La valeur doit être un entier.' })
   @Min(1, { message: 'La valeur doit être strictement positive.' })
+  @ValidateIf((o) => o.type === PromotionType.PCT)
+  @Max(100, { message: 'Un pourcentage de réduction ne peut pas dépasser 100%.' })
   value?: number;
 
   @ApiPropertyOptional()

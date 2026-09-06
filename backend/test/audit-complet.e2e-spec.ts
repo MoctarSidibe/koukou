@@ -2,7 +2,9 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
+import { DataSource } from 'typeorm';
 import { AppModule } from './../src/app.module.js';
+import { Breed } from './../src/modules/breeds/entities/breed.entity.js';
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
@@ -67,19 +69,18 @@ describe('Audit complet — immuabilité, stocks, alertes, métriques (e2e)', ()
     await app.init();
     server = app.getHttpServer();
 
-    const email = `owner.auditcomplet.${Date.now()}@e2e.ga`;
+    const phone = `+24161${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24161${Date.now()}`,
-        email,
-        password: 'secret123',
+        phone,
         fullName: 'Proprio Audit Complet',
+        code: 'secret123',
       })
       .expect(201);
     const login = await request(server)
       .post('/auth/login')
-      .send({ identifier: email, password: 'secret123' })
+      .send({ phone, code: 'secret123' })
       .expect(201);
     token = login.body.accessToken;
 
@@ -330,6 +331,7 @@ describe('Audit complet — immuabilité, stocks, alertes, métriques (e2e)', ()
       .set('Authorization', `Bearer ${token}`)
       .send({ name, type: 'CHAIR' })
       .expect(409);
+    await app.get(DataSource).getRepository(Breed).delete({ name });
   });
 
   it('alerte ACQUITTEE réactivée par un risque persistant, sans doublon', async () => {

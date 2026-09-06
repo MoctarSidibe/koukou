@@ -2,7 +2,9 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
+import { DataSource } from 'typeorm';
 import { AppModule } from './../src/app.module.js';
+import { Breed } from './../src/modules/breeds/entities/breed.entity.js';
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
@@ -38,19 +40,18 @@ describe('Référentiel souches & aperçu santé (Breed Intelligence) (e2e)', ()
     await app.init();
     server = app.getHttpServer();
 
-    const email = `owner.breed.${Date.now()}@e2e.ga`;
+    const phone = `+24166${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24166${Date.now()}`,
-        email,
-        password: 'secret123',
+        phone,
         fullName: 'Proprio Souches',
+        code: 'secret123',
       })
       .expect(201);
     const login = await request(server)
       .post('/auth/login')
-      .send({ identifier: email, password: 'secret123' })
+      .send({ phone, code: 'secret123' })
       .expect(201);
     token = login.body.accessToken;
 
@@ -136,6 +137,7 @@ describe('Référentiel souches & aperçu santé (Breed Intelligence) (e2e)', ()
       .get('/breeds/00000000-0000-4000-8000-000000000000/standards')
       .set('Authorization', `Bearer ${token}`)
       .expect(404);
+    await app.get(DataSource).getRepository(Breed).delete({ id: custom.body.id });
   });
 
   it('aperçu santé : lot pondeuse comparé à la courbe ISA Brown (Breed Intelligence)', async () => {

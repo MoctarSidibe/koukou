@@ -16,6 +16,7 @@ import { InputLot } from '../inputs/entities/input-lot.entity.js';
 import { koukouBus, KOUKOU_EVENTS } from '../../common/utils/event-bus.js';
 import { DailyEntry } from './entities/daily-entry.entity.js';
 import { CreateDailyEntryDto } from './dto/create-daily-entry.dto.js';
+import { FeedStockService, entryPhaseKeyOf } from '../feed-stock/feed-stock.service.js';
 
 @Injectable()
 export class DailyEntriesService {
@@ -29,6 +30,7 @@ export class DailyEntriesService {
     private readonly farmsService: FarmsService,
     private readonly flockReconciliation: FlockReconciliationService,
     private readonly dataSource: DataSource,
+    private readonly feedStock: FeedStockService,
   ) {}
 
   async create(
@@ -76,13 +78,54 @@ export class DailyEntriesService {
           createdById: user.id,
         };
         if (dto.deaths !== undefined) data.deaths = dto.deaths;
-        if (dto.feedQuantity !== undefined || dto.feedBags !== undefined) {
-          data.feedQuantity = this.toKg(dto, batch);
+        const feedProvided =
+          dto.feedQuantity !== undefined || dto.feedBags !== undefined;
+        const prevFeedKg = existing?.feedQuantity ?? 0;
+        let newFeedKg = prevFeedKg;
+        if (feedProvided) {
+          newFeedKg = this.toKg(dto, batch);
+          data.feedQuantity = newFeedKg;
         }
         if (dto.feedUnit !== undefined) data.feedUnit = dto.feedUnit ?? null;
         if (dto.feedType !== undefined) data.feedType = dto.feedType ?? null;
-        if (dto.inputLotId !== undefined)
+        if (dto.feedPhase !== undefined) data.feedPhase = dto.feedPhase ?? null;
+        if (dto.customFeedPhaseName !== undefined)
+          data.customFeedPhaseName = dto.customFeedPhaseName ?? null;
+
+        // Intégrité du stock provende (Module 3) :
+        // 1) Toute consommation doit être rattachée à un lot consommable dès qu'un
+        //    lot éligible existe (auto-affectation FEFO si le client n'en fournit pas).
+        // 2) Jamais de stock négatif : si la consommation incrémentale dépasse le
+        //    disponible du lot → 400 + alerte ALIMENT « stock insuffisant ».
+        // 3) Si AUCUN lot consommable de la phase n'existe → la saisie est conservée
+        //    (aucune perte de donnée) mais une alerte ALIMENT « rupture » est levée.
+        const deltaFeedKg = newFeedKg - prevFeedKg;
+        if (deltaFeedKg > 0) {
+          const entryPhase = entryPhaseKeyOf({
+            feedPhase: dto.feedPhase,
+            feedType: dto.feedType,
+          });
+          const resolvedLotId = await this.feedStock.resolveConsumptionLot(
+            farmId,
+            entryPhase,
+            dto.inputLotId ?? existing?.inputLotId,
+            em,
+          );
+          if (resolvedLotId == null) {
+            data.inputLotId = dto.inputLotId ?? existing?.inputLotId ?? null;
+            await this.feedStock.raiseNoFeedAlert(farmId, entryPhase);
+          } else {
+            data.inputLotId = resolvedLotId;
+            await this.feedStock.assertConsumptionAvailable(
+              farmId,
+              resolvedLotId,
+              deltaFeedKg,
+              em,
+            );
+          }
+        } else if (dto.inputLotId !== undefined) {
           data.inputLotId = dto.inputLotId ?? null;
+        }
         if (dto.waterL !== undefined) data.waterL = dto.waterL;
         if (dto.avgWeightKg !== undefined)
           data.avgWeightKg = dto.avgWeightKg ?? null;
@@ -131,7 +174,9 @@ export class DailyEntriesService {
 
   /**
    * Recalcule le cheptel vivant comme source de vérité :
-   * arrivés − morts − oiseaux vendus (ventes non annulées) − oiseaux abattus.
+   * arrivés − morts (saisies journalières) − oiseaux vendus (ventes non
+   * annulées) − oiseaux abattus − oiseaux retirés (réformes + mortalités
+   * déclarées en événement sanitaire).
    * Verrou pessimiste (dans la transaction) pour rester en phase avec les
    * décréments du POS.
    */
@@ -151,13 +196,18 @@ export class DailyEntriesService {
       .getRepository(DailyEntry)
       .find({ where: { batchId } });
     const totalDeaths = rows.reduce((s, e) => s + e.deaths, 0);
-    const [soldBirds, slaughteredBirds] = await Promise.all([
+    const [soldBirds, slaughteredBirds, sanitaryRemovedBirds] = await Promise.all([
       this.flockReconciliation.netSoldBirds(batchId, em),
       this.flockReconciliation.netSlaughteredBirds(batchId, em),
+      this.flockReconciliation.netSanitaryRemovedBirds(batchId, em),
     ]);
     locked.quantityAlive = Math.max(
       0,
-      locked.quantityAtStart - totalDeaths - soldBirds - slaughteredBirds,
+      locked.quantityAtStart -
+        totalDeaths -
+        soldBirds -
+        slaughteredBirds -
+        sanitaryRemovedBirds,
     );
     await em.getRepository(ProductionBatch).save(locked);
   }

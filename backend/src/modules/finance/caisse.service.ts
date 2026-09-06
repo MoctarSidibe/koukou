@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { AuthUser } from '../../common/decorators/current-user.decorator.js';
 import {
   CashMovementSource,
@@ -36,6 +36,7 @@ export class CaisseService {
     @InjectRepository(CashMovement)
     private readonly movementRepo: Repository<CashMovement>,
     private readonly farmsService: FarmsService,
+    private readonly dataSource: DataSource,
   ) {}
 
   async open(
@@ -92,32 +93,47 @@ export class CaisseService {
     dto: CreateCashMovementDto,
   ): Promise<CashMovement> {
     await this.farmsService.assertAccessible(user, farmId);
-    const session = await this.findOpen(farmId);
-    if (!session) {
-      throw new BadRequestException(
-        'Aucune session de caisse ouverte. Ouvrir la caisse avant d’enregistrer un mouvement.',
-      );
-    }
-    if (dto.type === CashMovementType.OUT) {
-      const summary = await this.summary(farmId, session);
-      if (dto.amountFcfa > summary.expectedBalanceFcfa) {
+    return this.dataSource.transaction(async (em) => {
+      const session = await em.getRepository(CashSession).findOne({
+        where: { farmId, status: CashSessionStatus.OPEN },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!session) {
         throw new BadRequestException(
-          `Sortie de ${dto.amountFcfa} FCFA refusée : solde de caisse disponible ${summary.expectedBalanceFcfa} FCFA. Une caisse ne peut pas être négative.`,
+          'Aucune session de caisse ouverte. Ouvrir la caisse avant d’enregistrer un mouvement.',
         );
       }
-    }
-    return this.movementRepo.save(
-      this.movementRepo.create({
-        farmId,
-        cashSessionId: session.id,
-        type: dto.type,
-        source: CashMovementSource.MANUAL,
-        amountFcfa: dto.amountFcfa,
-        reason: dto.reason ?? null,
-        movementDate: dto.movementDate ?? new Date().toISOString().slice(0, 10),
-        createdById: user.id,
-      }),
-    );
+      if (dto.type === CashMovementType.OUT) {
+        const movements = await em.getRepository(CashMovement).find({
+          where: { cashSessionId: session.id },
+          order: { createdAt: 'ASC' },
+        });
+        let inFcfa = 0;
+        let outFcfa = 0;
+        for (const m of movements) {
+          if (m.type === CashMovementType.IN) inFcfa += m.amountFcfa;
+          else outFcfa += m.amountFcfa;
+        }
+        const available = session.openingBalanceFcfa + inFcfa - outFcfa;
+        if (dto.amountFcfa > available) {
+          throw new BadRequestException(
+            `Sortie de ${dto.amountFcfa} FCFA refusée : solde de caisse disponible ${available} FCFA. Une caisse ne peut pas être négative.`,
+          );
+        }
+      }
+      return em.getRepository(CashMovement).save(
+        em.getRepository(CashMovement).create({
+          farmId,
+          cashSessionId: session.id,
+          type: dto.type,
+          source: CashMovementSource.MANUAL,
+          amountFcfa: dto.amountFcfa,
+          reason: dto.reason ?? null,
+          movementDate: dto.movementDate ?? new Date().toISOString().slice(0, 10),
+          createdById: user.id,
+        }),
+      );
+    });
   }
 
   async getCurrent(

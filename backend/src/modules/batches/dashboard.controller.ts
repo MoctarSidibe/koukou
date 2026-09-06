@@ -1,5 +1,5 @@
-import { Controller, Get, Param } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
+import { Controller, Get, Param, Query } from '@nestjs/common';
+import { ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
 import type { AuthUser } from '../../common/decorators/current-user.decorator.js';
 import { Roles } from '../../common/decorators/roles.decorator.js';
@@ -18,8 +18,25 @@ export class FarmDashboardController {
       'Tableau de bord ferme : cheptel vivant, mortalité/viabilité, autonomie provende, encaissé du jour, équipe et alertes par niveau.',
   })
   @ApiParam({ name: 'farmId' })
-  dashboard(@CurrentUser() user: AuthUser, @Param('farmId') farmId: string) {
-    return this.dashboardService.getDashboard(user, farmId);
+  @ApiQuery({
+    name: 'date',
+    required: false,
+    description:
+      "Date de référence (YYYY-MM-DD). Omettez pour le tableau de bord du jour courant. Les agrégats (encaissé du jour, eau, écarts hebdo, alertes de saisie manquante) sont calculés relativement à cette date.",
+  })
+  @ApiQuery({
+    name: 'time',
+    required: false,
+    description:
+      "Heure de référence (HH:MM). Utilisé avec date pour filtrer les encaissements jusqu'à cette heure.",
+  })
+  dashboard(
+    @CurrentUser() user: AuthUser,
+    @Param('farmId') farmId: string,
+    @Query('date') date?: string,
+    @Query('time') time?: string,
+  ) {
+    return this.dashboardService.getDashboard(user, farmId, date, time);
   }
 }
 

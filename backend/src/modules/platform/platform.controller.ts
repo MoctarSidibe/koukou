@@ -52,9 +52,9 @@ class ProvisionFarmOwnerDto {
 
   @IsString()
   @MinLength(6, {
-    message: 'Le mot de passe doit contenir au moins 6 caractères.',
+    message: 'Le code doit contenir au moins 6 caractères.',
   })
-  password: string;
+  code: string;
 }
 
 class ProvisionFarmDto {

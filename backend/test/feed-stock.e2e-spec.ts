@@ -99,19 +99,18 @@ describe('Module 3 — Stocks & Inventaire provende (e2e)', () => {
     await app.init();
     server = app.getHttpServer();
 
-    const email = `owner.stock.${Date.now()}@e2e.ga`;
+    const phone = `+24180${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24180${Date.now()}`,
-        email,
-        password: 'secret123',
+        phone,
         fullName: 'Proprio Stock',
+        code: 'secret123',
       })
       .expect(201);
     const login = await request(server)
       .post('/auth/login')
-      .send({ identifier: email, password: 'secret123' })
+      .send({ phone, code: 'secret123' })
       .expect(201);
     token = login.body.accessToken;
 
@@ -127,19 +126,18 @@ describe('Module 3 — Stocks & Inventaire provende (e2e)', () => {
     farmId = farm.body.id;
 
     // Propriétaire tiers + ferme tierce pour les contrôles d'accès / lot étranger.
-    const otherEmail = `other.stock.${Date.now()}@e2e.ga`;
+    const otherPhone = `+24181${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24181${Date.now()}`,
-        email: otherEmail,
-        password: 'secret123',
+        phone: otherPhone,
         fullName: 'Autre Proprio',
+        code: 'secret123',
       })
       .expect(201);
     const otherLogin = await request(server)
       .post('/auth/login')
-      .send({ identifier: otherEmail, password: 'secret123' })
+      .send({ phone: otherPhone, code: 'secret123' })
       .expect(201);
     otherToken = otherLogin.body.accessToken;
 
@@ -274,22 +272,26 @@ describe('Module 3 — Stocks & Inventaire provende (e2e)', () => {
 
   it('saisie liée à un lot (HACCP) décrémente le stock du lot et trace le mouvement', async () => {
     const batch2 = await createBatch(daysAgo(1));
-    await addDailyEntry(batch2, daysAgo(3), lotAId);
+    // Lot frais avec disponibilité réelle pour que la déduction passe (règle
+    // « jamais de stock négatif » : la consommation ne peut pas dépasser le disponible).
+    const freshLot = await addInput('DEMA-CONSO-1', 2); // 2 sacs = 100 kg
+    await addDailyEntry(batch2, daysAgo(3), freshLot);
 
     const res = await request(server)
       .get(`/farms/${farmId}/feed-stock`)
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
-    const lotA = res.body.lots.find((l: any) => l.id === lotAId);
-    expect(lotA.usedKg).toBe(40);
-    expect(lotA.availableKg).toBe(0); // 100 reçus − 100 perdus − 40 consommés (plafonné)
+    const lot = res.body.lots.find((l: any) => l.id === freshLot);
+    expect(lot).toBeTruthy();
+    expect(lot.usedKg).toBe(40);
+    expect(lot.availableKg).toBe(60); // 100 reçus − 40 consommés
 
     const mov = await request(server)
       .get(`/farms/${farmId}/feed-stock/movements`)
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
     const conso = mov.body.find(
-      (m: any) => m.type === 'CONSOMMATION' && m.inputLotId === lotAId,
+      (m: any) => m.type === 'CONSOMMATION' && m.inputLotId === freshLot,
     );
     expect(conso).toBeTruthy();
     expect(conso.quantityKg).toBe(40);
@@ -300,6 +302,35 @@ describe('Module 3 — Stocks & Inventaire provende (e2e)', () => {
       .expect(200);
     expect(pertes.body.length).toBe(2);
     expect(pertes.body.every((p: any) => p.quantityKg === 50)).toBe(true);
+  });
+
+  it('consommation dépassant le disponible du lot → 400 + alerte ALIMENT (jamais de négatif)', async () => {
+    // lotA est totalement consommé par les pertes (disponible 0 kg) : toute
+    // consommation supplémentaire liée doit être refusée, pas passée en négatif.
+    const batch3 = await createBatch(daysAgo(1));
+    await request(server)
+      .post(`/farms/${farmId}/batches/${batch3}/daily-entries`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        entryDate: daysAgo(2),
+        feedQuantity: 40,
+        feedUnit: 'KG',
+        feedType: 'DEMARRAGE',
+        inputLotId: lotAId,
+      })
+      .expect(400);
+
+    const alert = await activeAlimentAlert();
+    expect(alert).toBeTruthy();
+    expect(alert.level).toBe('ROUGE');
+
+    // Le stock du lot reste à 0 (jamais négatif).
+    const res = await request(server)
+      .get(`/farms/${farmId}/feed-stock`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    const lotA = res.body.lots.find((l: any) => l.id === lotAId);
+    expect(lotA.availableKg).toBe(0);
   });
 
   it('perte déclarée sur un lot d’une autre ferme → 400', async () => {

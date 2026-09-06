@@ -46,6 +46,21 @@ export interface BordereauData {
   createdAtLabel: string;
 }
 
+export interface BonCommandeData {
+  farmName: string;
+  referenceNumber: string;
+  canalLabel: string;
+  expectedDate: string | null;
+  customerName: string | null;
+  address: string | null;
+  batchLabel: string | null;
+  items: ReceiptItemData[];
+  totalAmountFcfa: number;
+  depositFcfa: number;
+  remainingFcfa: number;
+  method: string;
+}
+
 export interface PasseportData {
   farmName: string;
   batchLabel: string;
@@ -465,6 +480,102 @@ export class PdfService {
           margin: [0, 0, 0, 8],
         },
         tableHeader: { bold: true, color: '#222222' },
+        footer: {
+          fontSize: 8,
+          color: '#888888',
+          alignment: 'center',
+          margin: [0, 12, 0, 0],
+        },
+      },
+      defaultStyle: { font: 'Roboto' },
+    };
+
+    const pdfmake = await this.ensurePdfmake();
+    const document = pdfmake.createPdf(documentDefinition);
+    return document.getBuffer();
+  }
+
+  async createBonCommandePdf(data: BonCommandeData): Promise<Buffer> {
+    const documentDefinition = {
+      content: [
+        { text: data.farmName, style: 'header' },
+        { text: 'Bon de commande', style: 'subheader' },
+        {
+          text:
+            `Référence : ${data.referenceNumber}\n` +
+            `Canal : ${data.canalLabel}\n` +
+            `Retrait / livraison prévue : ${data.expectedDate ?? 'À convenir'}\n` +
+            `Client : ${data.customerName ?? 'Client comptoir'}` +
+            (data.address ? `\nAdresse : ${data.address}` : '') +
+            (data.batchLabel ? `\nLot : ${data.batchLabel}` : ''),
+          style: 'meta',
+        },
+        {
+          table: {
+            widths: ['*', 'auto', 'auto', 'auto'],
+            headerRows: 1,
+            body: [
+              [
+                { text: 'Désignation', style: 'tableHeader' },
+                { text: 'Qté', style: 'tableHeader' },
+                { text: 'PU (FCFA)', style: 'tableHeader' },
+                { text: 'Total (FCFA)', style: 'tableHeader' },
+              ],
+              ...data.items.map((item) => [
+                item.label,
+                item.quantity,
+                String(item.unitPriceFcfa),
+                String(item.amountFcfa),
+              ]),
+            ],
+          },
+          layout: 'lightHorizontalLines',
+        },
+        { text: '', margin: [0, 10, 0, 0] },
+        { text: `TOTAL : ${data.totalAmountFcfa} FCFA`, style: 'total' },
+        {
+          text: `Acompte encaissé : ${data.depositFcfa} FCFA (${data.method})`,
+          style: 'meta',
+        },
+        data.remainingFcfa > 0
+          ? {
+              text: `RESTE À PAYER : ${data.remainingFcfa} FCFA`,
+              style: 'warning',
+            }
+          : {},
+        {
+          qr: `KOUKOU|CMD|${data.referenceNumber}|${data.totalAmountFcfa}`,
+          fit: 110,
+          alignment: 'center',
+          margin: [0, 14, 0, 0],
+        },
+        {
+          text: "Vérifiez l'authenticité de ce bon de commande en scannant le code QR.\nKouKou Ferme — bon de commande généré par l'appareil.",
+          style: 'footer',
+        },
+      ],
+      styles: {
+        header: { fontSize: 16, bold: true, margin: [0, 0, 0, 4] },
+        subheader: {
+          fontSize: 12,
+          bold: true,
+          color: '#444444',
+          margin: [0, 0, 0, 8],
+        },
+        meta: {
+          fontSize: 9,
+          color: '#555555',
+          alignment: 'left',
+          margin: [0, 0, 0, 8],
+        },
+        tableHeader: { bold: true, color: '#222222' },
+        total: { fontSize: 11, bold: true, margin: [0, 2, 0, 2] },
+        warning: {
+          fontSize: 11,
+          bold: true,
+          color: '#c0392b',
+          margin: [0, 2, 0, 2],
+        },
         footer: {
           fontSize: 8,
           color: '#888888',

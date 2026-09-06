@@ -33,19 +33,18 @@ describe('Tâches & équipe — module Tâches (e2e)', () => {
     await app.init();
     server = app.getHttpServer();
 
-    const email = `owner.tk.${Date.now()}@e2e.ga`;
+    const phone = `+24172${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24172${Date.now()}`,
-        email,
-        password: 'secret123',
+        phone,
         fullName: 'Proprio Tâches',
+        code: 'secret123',
       })
       .expect(201);
     const login = await request(server)
       .post('/auth/login')
-      .send({ identifier: email, password: 'secret123' })
+      .send({ phone, code: 'secret123' })
       .expect(201);
     token = login.body.accessToken;
 
@@ -60,38 +59,36 @@ describe('Tâches & équipe — module Tâches (e2e)', () => {
       .expect(201);
     farmId = farm.body.id;
 
-    const eleveurEmail = `eleveur.tk.${Date.now()}@e2e.ga`;
+    const eleveurPhone = `+24173${Date.now()}`;
     const eleveur = await request(server)
       .post(`/farms/${farmId}/eleveurs`)
       .set('Authorization', `Bearer ${token}`)
       .send({
-        phone: `+24173${Date.now()}`,
-        email: eleveurEmail,
+        phone: eleveurPhone,
         fullName: 'Éleveur Tâches',
-        password: 'secret456',
+        code: 'secret456',
       })
       .expect(201);
     eleveurId = eleveur.body.user.id;
 
     const eleveurLogin = await request(server)
       .post('/auth/login')
-      .send({ identifier: eleveurEmail, password: 'secret456' })
+      .send({ phone: eleveurPhone, code: 'secret456' })
       .expect(201);
     eleveurToken = eleveurLogin.body.accessToken;
 
-    const otherEmail = `other.tk.${Date.now()}@e2e.ga`;
+    const otherPhone = `+24174${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24174${Date.now()}`,
-        email: otherEmail,
-        password: 'secret123',
+        phone: otherPhone,
         fullName: 'Autre Proprio',
+        code: 'secret123',
       })
       .expect(201);
     const otherLogin = await request(server)
       .post('/auth/login')
-      .send({ identifier: otherEmail, password: 'secret123' })
+      .send({ phone: otherPhone, code: 'secret123' })
       .expect(201);
     otherToken = otherLogin.body.accessToken;
   });

@@ -25,7 +25,7 @@ import { User } from '../users/entities/user.entity.js';
 export interface PublicUser {
   id: string;
   phone: string;
-  email: string;
+  email: string | null;
   fullName: string;
   role: UserRole;
   active: boolean;

@@ -9,6 +9,9 @@ import { DailyEntry } from '../daily-entries/entities/daily-entry.entity.js';
 import { Farm } from '../farms/entities/farm.entity.js';
 import { FeedStockController } from './feed-stock.controller.js';
 import { FeedStockService } from './feed-stock.service.js';
+import { FeedProductsController } from './feed-products.controller.js';
+import { FeedProductsService } from './feed-products.service.js';
+import { FeedProduct } from './entities/feed-product.entity.js';
 import { FeedStockLoss } from './entities/feed-stock-loss.entity.js';
 import { FeedStockSale } from './entities/feed-stock-sale.entity.js';
 
@@ -19,6 +22,7 @@ import { FeedStockSale } from './entities/feed-stock-sale.entity.js';
       DailyEntry,
       FeedStockLoss,
       FeedStockSale,
+      FeedProduct,
       Farm,
       ProductionBatch,
     ]),
@@ -26,8 +30,8 @@ import { FeedStockSale } from './entities/feed-stock-sale.entity.js';
     AlertsModule,
     ReferenceConstantsModule,
   ],
-  controllers: [FeedStockController],
-  providers: [FeedStockService],
-  exports: [FeedStockService],
+  controllers: [FeedStockController, FeedProductsController],
+  providers: [FeedStockService, FeedProductsService],
+  exports: [FeedStockService, FeedProductsService],
 })
 export class FeedStockModule {}

@@ -66,6 +66,14 @@ export class ProductionBatch {
   })
   species: Species;
 
+  /** Espèce libre (espèce = AUTRE) — ex : "Canard", "Faisan" */
+  @Column({ name: 'custom_species', type: 'varchar', nullable: true })
+  customSpecies: string | null;
+
+  /** Souche / race libre (espèce = AUTRE) — ex : "Coureur indien" */
+  @Column({ name: 'custom_breed', type: 'varchar', nullable: true })
+  customBreed: string | null;
+
   @Column({ type: 'enum', enum: BatchStatus, default: BatchStatus.ACTIF })
   status: BatchStatus;
 
@@ -89,6 +97,9 @@ export class ProductionBatch {
 
   @Column({ name: 'sale_readiness_checked', default: false })
   saleReadinessChecked: boolean;
+
+  @Column({ name: 'ready_for_sale_at', type: 'date', nullable: true })
+  readyForSaleAt: string | null;
 
   @CreateDateColumn()
   createdAt: Date;

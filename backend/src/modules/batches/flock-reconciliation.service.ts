@@ -7,6 +7,8 @@ import { SlaughterStatus } from '../../common/enums/slaughter-status.enum.js';
 import { SaleItem } from '../finance/entities/sale-item.entity.js';
 import { Sale } from '../finance/entities/sale.entity.js';
 import { SlaughterOrder } from '../slaughter/entities/slaughter-order.entity.js';
+import { HealthEvent } from '../sanitary/entities/health-event.entity.js';
+import { HealthEventKind } from '../../common/enums/health-event-kind.enum.js';
 
 /**
  * Reconcilie les sorties réelles d'un lot : ventes POULET (PIECE/KG, nettes des
@@ -23,6 +25,8 @@ export class FlockReconciliationService {
     private readonly saleRepo: Repository<Sale>,
     @InjectRepository(SlaughterOrder)
     private readonly slaughterRepo: Repository<SlaughterOrder>,
+    @InjectRepository(HealthEvent)
+    private readonly healthEventRepo: Repository<HealthEvent>,
   ) {}
 
   async netSoldBirds(batchId: string, em?: EntityManager): Promise<number> {
@@ -59,6 +63,30 @@ export class FlockReconciliationService {
         processed: SlaughterStatus.PROCESSED,
       })
       .select('COALESCE(SUM(order.bird_count), 0)', 'total')
+      .getRawOne();
+    return Math.max(0, Number(row?.total ?? 0));
+  }
+
+  /**
+   * Réforme/culling sanitaire (DISTINCT de l'abattage de production) ET pic de
+   * mortalité déclaré en événement sanitaire : somme des quantités des
+   * événements santé `REFORME` et `MORTALITE` enregistrés sur le lot. Ces deux
+   * événements décrémentent `quantityAlive` à la création (et le réintègrent à
+   * la suppression) ; leur agrégat fait partie des sorties de cheptel de la
+   * réconciliation pour rester en phase à chaque saisie journalière.
+   */
+  async netSanitaryRemovedBirds(
+    batchId: string,
+    em?: EntityManager,
+  ): Promise<number> {
+    const repo = em ? em.getRepository(HealthEvent) : this.healthEventRepo;
+    const row = await repo
+      .createQueryBuilder('event')
+      .where('event.batch_id = :batchId', { batchId })
+      .andWhere('event.kind IN (:...kinds)', {
+        kinds: [HealthEventKind.REFORME, HealthEventKind.MORTALITE],
+      })
+      .select('COALESCE(SUM(event.quantity), 0)', 'total')
       .getRawOne();
     return Math.max(0, Number(row?.total ?? 0));
   }

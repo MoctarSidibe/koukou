@@ -43,9 +43,11 @@ import { Sheet } from '@/components/ui/Sheet';
 import { Spinner } from '@/components/ui/Spinner';
 import { Segmented } from '@/components/ui/Segmented';
 import { MetricTile } from '@/components/ui/MetricTile';
+import { PeriodBar, periodWindow, type PeriodWindow } from '@/components/ui/PeriodBar';
 import { LineChart } from '@/components/ui/LineChart';
 import { useAuth } from '@/auth/AuthContext';
 import { canManageFarm } from '@/api/roles';
+import { useLiveMinute } from '@/hooks/useLiveMinute';
 import {
   fetchBatches,
   fetchBatchHealth,
@@ -607,37 +609,22 @@ export default function SanitaryScreen() {
   const batchId = lot?.id ?? '';
 
   const [tab, setTab] = useState<TabKey>('sante');
-  const [periodKey, setPeriodKey] = useState<'7j' | '30j' | 'tout' | 'date'>('tout');
-  const [customDate, setCustomDate] = useState('');
-  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [window, setWindow] = useState<PeriodWindow>(() => periodWindow('all'));
+  const firstWindowRef = useRef(true);
 
-  const periodFrom = periodKey === 'tout' ? null : periodKey === 'date' && customDate ? customDate : (() => {
-    const d = new Date();
-    d.setDate(d.getDate() - (periodKey === '7j' ? 7 : 30));
-    return d.toISOString().slice(0, 10);
-  })();
-  const periodTo = periodKey === 'date' && customDate ? customDate : new Date().toISOString().slice(0, 10);
-
-  const inPeriod = (dateStr: string): boolean => {
-    if (!periodFrom) return true;
-    return dateStr >= periodFrom && dateStr <= periodTo;
-  };
-
-  const onCustomDateChange = (_event: DateTimePickerEvent, date?: Date) => {
-    setShowDatePicker(false);
-    if (date) {
-      const y = date.getFullYear();
-      const m = String(date.getMonth() + 1).padStart(2, '0');
-      const d = String(date.getDate()).padStart(2, '0');
-      setCustomDate(`${y}-${m}-${d}`);
-      setPeriodKey('date');
+  const handlePeriodChange = (w: PeriodWindow) => {
+    setWindow(w);
+    if (firstWindowRef.current) {
+      firstWindowRef.current = false;
+      return;
     }
   };
 
-  const fmtCustomDate = () => {
-    if (!customDate) return 'Choisir…';
-    const [y, m, d] = customDate.split('-').map(Number);
-    return `${d}/${m}/${y}`;
+  const inPeriod = (dateStr: string): boolean => {
+    const day = dateStr.slice(0, 10);
+    if (window.span === 'all') return !window.isFiltered || day === window.to;
+    if (!window.from) return true;
+    return day >= window.from && day <= (window.to ?? '');
   };
 
   const health = useQuery({
@@ -659,6 +646,17 @@ export default function SanitaryScreen() {
     queryKey: ['treatments', farmId, batchId],
     queryFn: () => fetchTreatments(farmId, batchId),
     enabled: batchId !== '',
+  });
+
+  useLiveMinute(() => {
+    if (window.isFiltered) return;
+    void batchesQuery.refetch();
+    if (batchId !== '') {
+      void health.refetch();
+      void events.refetch();
+      void calendar.refetch();
+      void treatments.refetch();
+    }
   });
 
   const [kind, setKind] = useState<EventKindChoice>('MALADIE');
@@ -965,7 +963,7 @@ export default function SanitaryScreen() {
       </View>
 
       {batchesQuery.isLoading ? (
-        <Spinner label="Chargement des lots…" />
+        <Spinner label="Chargement du calendrier…" />
       ) : (
         <>
           {lots.length > 0 && (
@@ -987,6 +985,8 @@ export default function SanitaryScreen() {
               </View>
             </>
           )}
+
+          <PeriodBar defaultSpan="all" onChange={handlePeriodChange} />
 
           <View style={styles.cardTabs}>
             {TAB_OPTIONS.map((t) => {
@@ -1014,59 +1014,13 @@ export default function SanitaryScreen() {
             })}
           </View>
 
-          <View style={styles.periodRow}>
-            <Calendar size={13} color={color.ink[400]} strokeWidth={2.2} />
-            <AppText size="small" color="muted" style={{ marginRight: 4 }}>
-              Période
-            </AppText>
-            {([
-              { key: 'tout' as const, label: 'Tout' },
-              { key: '7j' as const, label: '7 jours' },
-              { key: '30j' as const, label: '30 jours' },
-            ]).map((p) => (
-              <Pressable
-                key={p.key}
-                onPress={() => { Haptics.selectionAsync().catch(() => {}); setPeriodKey(p.key); }}
-                style={[styles.periodChip, periodKey === p.key && styles.periodChipActive]}
-                accessibilityRole="button">
-                <AppText
-                  size="small"
-                  weight={periodKey === p.key ? 'semibold' : 'medium'}
-                  color={periodKey === p.key ? 'success' : 'muted'}>
-                  {p.label}
-                </AppText>
-              </Pressable>
-            ))}
-            <Pressable
-              onPress={() => { Haptics.selectionAsync().catch(() => {}); setShowDatePicker(true); }}
-              style={[styles.periodChip, periodKey === 'date' && styles.periodChipActive]}
-              accessibilityRole="button">
-              <AppText
-                size="small"
-                weight={periodKey === 'date' ? 'semibold' : 'medium'}
-                color={periodKey === 'date' ? 'success' : 'muted'}>
-                {periodKey === 'date' ? fmtCustomDate() : 'Date…'}
-              </AppText>
-            </Pressable>
-          </View>
-          {showDatePicker ? (
-            <DateTimePicker
-              value={customDate ? new Date(customDate + 'T00:00:00') : new Date()}
-              mode="date"
-              display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-              onChange={onCustomDateChange}
-              maximumDate={new Date()}
-              locale="fr-FR"
-            />
-          ) : null}
-
           {error ? (
             <AppText size="small" color="danger" style={{ marginBottom: 8 }}>
               {error}
             </AppText>
           ) : null}
 
-          <FadeIn key={`${tab}-${periodKey}`}>
+          <FadeIn key={`${tab}-${window.span}-${window.isFiltered}-${window.from ?? ''}`}>
           {(() => {
             const filteredEvents = (events.data ?? []).filter((e) => inPeriod(e.occurredAt));
             const filteredCalendar = (calendar.data ?? []).filter((e) => inPeriod(e.scheduledDate));
@@ -2542,25 +2496,6 @@ const styles = StyleSheet.create({
   },
   chip: {
     marginBottom: 2,
-  },
-  periodRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 14,
-    paddingHorizontal: 2,
-  },
-  periodChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: color.surfaceAlt,
-  },
-  periodChipActive: {
-    backgroundColor: palette.green[50],
-    borderColor: palette.green[300],
   },
   emptyCard: {
     padding: 14,

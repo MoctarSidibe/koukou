@@ -3,5 +3,8 @@ export enum Species {
   DINDE = 'DINDE',
   PINTADE = 'PINTADE',
   CAILLE = 'CAILLE',
+  CANARD = 'CANARD',
+  OIE = 'OIE',
+  FAISAN = 'FAISAN',
   AUTRE = 'AUTRE',
 }

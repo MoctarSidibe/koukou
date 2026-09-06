@@ -1,0 +1,6 @@
+export enum FeedEntryType {
+  BULKER = 'BULKER',
+  BAG = 'BAG',
+  MEDICAMENT = 'MEDICAMENT',
+  MATIERE_PREMIERE = 'MATIERE_PREMIERE',
+}

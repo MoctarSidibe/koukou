@@ -9,6 +9,7 @@ import {
   Min,
 } from 'class-validator';
 import { FeedUnit, FoodType } from '../../../common/enums/food-type.enum.js';
+import { FeedPhase } from '../../../common/enums/feed-phase.enum.js';
 import { ConsumptionSource } from '../../../common/enums/consumption-source.enum.js';
 
 export class CreateDailyEntryDto {
@@ -48,10 +49,20 @@ export class CreateDailyEntryDto {
   @IsEnum(FeedUnit, { message: "L'unité d'aliment doit être SAC ou KG." })
   feedUnit?: FeedUnit;
 
-  @ApiPropertyOptional({ enum: FoodType, description: "Type d'aliment" })
+  @ApiPropertyOptional({ enum: FoodType, description: "Type d'aliment (ancien)" })
   @IsOptional()
   @IsEnum(FoodType)
   feedType?: FoodType;
+
+  @ApiPropertyOptional({ enum: FeedPhase, description: "Phase d'aliment" })
+  @IsOptional()
+  @IsEnum(FeedPhase)
+  feedPhase?: FeedPhase;
+
+  @ApiPropertyOptional({ description: "Nom de la phase personnalisée" })
+  @IsOptional()
+  @IsString()
+  customFeedPhaseName?: string;
 
   @ApiPropertyOptional({ description: 'Lot d\u2019intrant tracé (HACCP) lié' })
   @IsOptional()

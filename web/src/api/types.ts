@@ -27,7 +27,7 @@ export interface Farm {
 
 export type BatchType = 'CHAIR' | 'PONDEUSE';
 export type BatchStatus = 'ACTIF' | 'EN_VENTE' | 'CLOTURE';
-export type Species = 'POULET' | 'CANAARD' | 'PINTADE' | 'DINDE' | 'CAILLE' | 'AUTRE';
+export type Species = 'POULET' | 'PINTADE' | 'DINDE' | 'CAILLE' | 'CANARD' | 'OIE' | 'FAISAN' | 'AUTRE';
 
 export interface ProductionBatch {
   id: string;
@@ -40,6 +40,7 @@ export interface ProductionBatch {
   quantityAlive: number;
   chickUnitPriceFcfa: number | null;
   type: BatchType;
+  species: Species;
   status: BatchStatus;
   buildingAreaM2: number | null;
   feedUnitSacKg: number | null;
@@ -240,27 +241,67 @@ export interface CashSession {
 
 export interface FeedStockSummary {
   byType: Array<{
-    feedType: string;
+    feedPhase: string | null;
+    foodType: string | null;
     receivedKg: number;
-    consumedKg: number;
-    lossKg: number;
-    remainingKg: number;
+    usedKg: number;
+    lostKg: number;
+    soldKg: number;
+    availableKg: number;
     autonomyDays: number | null;
+    status: string;
+    suggestedLotId: string | null;
+    suggestedLotName: string | null;
   }>;
   lots: Array<{
     id: string;
-    supplierName: string;
-    lotNumber: string;
-    kind: string;
-    currentStockKg: number;
-    expiryDate: string | null;
+    productName: string;
+    supplier: string;
+    supplierLotNumber: string;
+    batchId: string | null;
+    entryType: string;
+    feedPhase: string | null;
+    customFeedPhaseName: string | null;
+    productId: string | null;
+    foodType: string | null;
+    receivedDate: string;
+    expirationDate: string | null;
+    quantity: number;
+    unit: string | null;
+    receivedKg: number;
+    usedKg: number;
+    lostKg: number;
+    soldKg: number;
+    availableKg: number;
+    expired: boolean;
   }>;
   losses: Array<{
     id: string;
-    reason: string;
+    inputLotId: string | null;
+    batchId: string | null;
     quantityKg: number;
+    reason: string;
+    occurredAt: string;
+    notes: string | null;
     createdAt: string;
   }>;
+}
+
+export interface FeedProduct {
+  id: string;
+  farmId: string;
+  name: string;
+  entryType: string;
+  foodType: string | null;
+  feedPhase: string | null;
+  customFeedPhaseName: string | null;
+  defaultSacKg: number | null;
+  defaultBagSizeKg: number | null;
+  defaultUnitPriceFcfa: number | null;
+  defaultCostPerMtFcfa: number | null;
+  defaultCostPerBagFcfa: number | null;
+  supplier: string | null;
+  active: boolean;
 }
 
 export interface SlaughterOrder {

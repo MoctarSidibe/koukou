@@ -30,19 +30,18 @@ describe('Module 5 — Abattage & Traçabilité (+ passeport sanitaire, e2e)', (
     await app.init();
     server = app.getHttpServer();
 
-    const email = `owner.sla.${Date.now()}@e2e.ga`;
+    const phone = `+24192${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24192${Date.now()}`,
-        email,
-        password: 'secret123',
+        phone,
         fullName: 'Proprio Abattage',
+        code: 'secret123',
       })
       .expect(201);
     const login = await request(server)
       .post('/auth/login')
-      .send({ identifier: email, password: 'secret123' })
+      .send({ phone, code: 'secret123' })
       .expect(201);
     token = login.body.accessToken;
 
@@ -57,19 +56,18 @@ describe('Module 5 — Abattage & Traçabilité (+ passeport sanitaire, e2e)', (
       .expect(201);
     farmId = farm.body.id;
 
-    const otherEmail = `other.sla.${Date.now()}@e2e.ga`;
+    const otherPhone = `+24193${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24193${Date.now()}`,
-        email: otherEmail,
-        password: 'secret123',
+        phone: otherPhone,
         fullName: 'Autre Proprio',
+        code: 'secret123',
       })
       .expect(201);
     const otherLogin = await request(server)
       .post('/auth/login')
-      .send({ identifier: otherEmail, password: 'secret123' })
+      .send({ phone: otherPhone, code: 'secret123' })
       .expect(201);
     otherToken = otherLogin.body.accessToken;
 

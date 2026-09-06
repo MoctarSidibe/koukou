@@ -28,11 +28,11 @@ export function useCreateCenter(): CreateCenterApi {
 
 const CREATE_ACTIONS = [
   { key: 'daily' as const, label: 'Saisie du jour', sub: 'Morts, aliments, eau', icon: BookOpen, bg: color.green[50], fg: color.green[600] },
-  { key: 'sale' as const, label: 'Encaisser', sub: 'POS espèces', icon: CreditCard, bg: color.accent[50], fg: color.accent[600] },
-  { key: 'care' as const, label: 'Soin', sub: 'Prophylaxie', icon: Syringe, bg: color.brand[50], fg: color.brand[700] },
   { key: 'lot' as const, label: 'Nouveau lot', sub: 'Bande de poulets', icon: Bird, bg: color.brand[50], fg: color.brand[600] },
   { key: 'feed' as const, label: 'Entrée provende', sub: 'Nouveau lot HACCP', icon: PackageOpen, bg: color.surfaceAlt, fg: color.ink[600] },
+  { key: 'care' as const, label: 'Soin', sub: 'Prophylaxie', icon: Syringe, bg: color.brand[50], fg: color.brand[700] },
   { key: 'building' as const, label: 'Bâtiment', sub: 'Infrastructure', icon: Building2, bg: color.brand[50], fg: color.brand[700] },
+  { key: 'sale' as const, label: 'Encaisser', sub: 'POS espèces', icon: CreditCard, bg: color.accent[50], fg: color.accent[600] },
 ];
 
 export function CreateCenterProvider({ children }: { children: React.ReactNode }) {

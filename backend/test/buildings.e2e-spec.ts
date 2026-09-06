@@ -32,19 +32,17 @@ describe('Module 1 — Bâtiments & bandes (e2e)', () => {
 
   beforeAll(async () => {
     const phone = `+24180${Date.now()}`;
-    const email = `owner.b.${Date.now()}@e2e.ga`;
     await request(server)
       .post('/auth/register')
       .send({
         phone,
-        email,
-        password: 'secret123',
         fullName: 'Proprio Bâtiments',
+        code: 'secret123',
       })
       .expect(201);
     const login = await request(server)
       .post('/auth/login')
-      .send({ identifier: email, password: 'secret123' })
+      .send({ phone, code: 'secret123' })
       .expect(201);
     token = login.body.accessToken;
 

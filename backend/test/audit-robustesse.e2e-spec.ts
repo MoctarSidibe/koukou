@@ -49,19 +49,18 @@ describe('Audit — robustesse finance/inventaire/sécurité (e2e, passe 2)', ()
     await app.init();
     server = app.getHttpServer();
 
-    const email = `owner.robus.${Date.now()}@e2e.ga`;
+    const phone = `+24120${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24120${Date.now()}`,
-        email,
-        password: 'secret123',
+        phone,
         fullName: 'Proprio Robustesse',
+        code: 'secret123',
       })
       .expect(201);
     const login = await request(server)
       .post('/auth/login')
-      .send({ identifier: email, password: 'secret123' })
+      .send({ phone, code: 'secret123' })
       .expect(201);
     token = login.body.accessToken;
 
@@ -76,19 +75,18 @@ describe('Audit — robustesse finance/inventaire/sécurité (e2e, passe 2)', ()
     farmId = farm.body.id;
 
     // Seconde ferme (autre propriétaire) pour tester les fuites cross-ferme.
-    const otherEmail = `other.robus.${Date.now()}@e2e.ga`;
+    const otherPhone = `+24121${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24121${Date.now()}`,
-        email: otherEmail,
-        password: 'secret123',
+        phone: otherPhone,
         fullName: 'Autre Proprio',
+        code: 'secret123',
       })
       .expect(201);
     const otherLogin = await request(server)
       .post('/auth/login')
-      .send({ identifier: otherEmail, password: 'secret123' })
+      .send({ phone: otherPhone, code: 'secret123' })
       .expect(201);
     otherToken = otherLogin.body.accessToken;
     const otherFarm = await request(server)
@@ -332,15 +330,14 @@ describe('Audit — robustesse finance/inventaire/sécurité (e2e, passe 2)', ()
   });
 
   it('compte Éleveur : passwordHash jamais exposé, accès POS, 403 sur les actes Propriétaire', async () => {
-    const empEmail = `emp.robus.${Date.now()}@e2e.ga`;
+    const empPhone = `+24122${Date.now()}`;
     const created = await request(server)
       .post(`/farms/${farmId}/eleveurs`)
       .set('Authorization', `Bearer ${token}`)
       .send({
-        phone: `+24122${Date.now()}`,
-        email: empEmail,
+        phone: empPhone,
         fullName: 'Éleveur Robuste',
-        password: 'secret123',
+        code: 'secret123',
       })
       .expect(201);
     expect('passwordHash' in created.body.user).toBe(false);
@@ -349,7 +346,7 @@ describe('Audit — robustesse finance/inventaire/sécurité (e2e, passe 2)', ()
 
     const login = await request(server)
       .post('/auth/login')
-      .send({ identifier: empEmail, password: 'secret123' })
+      .send({ phone: empPhone, code: 'secret123' })
       .expect(201);
     empToken = login.body.accessToken;
 
@@ -403,49 +400,47 @@ describe('Audit — robustesse finance/inventaire/sécurité (e2e, passe 2)', ()
       .expect(403);
   });
 
-  it('login : message unifié (pas d’énumération) et e-mail insensible à la casse', async () => {
+  it('login : message unifié (pas d’énumération) et téléphone normalisé (trim + casse)', async () => {
     const missing = await request(server)
       .post('/auth/login')
-      .send({ identifier: `+24199inexistant${Date.now()}`, password: 'wrong' })
+      .send({ phone: `+24199inexistant${Date.now()}`, code: 'wrong123' })
       .expect(401);
     expect(missing.body.message).toContain('Identifiants invalides');
     expect(missing.body.message).not.toContain('introuvable');
 
-    const upperEmail = `FermeUpper.${Date.now()}@E2E.GA`;
+    const upperPhone = `+24123${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24123${Date.now()}`,
-        email: upperEmail,
-        password: 'secret123',
-        fullName: 'Cas Email',
+        phone: upperPhone,
+        fullName: 'Cas Téléphone',
+        code: 'secret123',
       })
       .expect(201);
     await request(server)
       .post('/auth/login')
-      .send({ identifier: upperEmail.toLowerCase(), password: 'secret123' })
+      .send({ phone: `  ${upperPhone.toUpperCase()}  `, code: 'secret123' })
       .expect(201);
   });
 
   it('constante de référence : valeur 0 refusée (strictement positive), admin uniquement', async () => {
-    const adminEmail = `audit.rb.admin.${Date.now()}@e2e.ga`;
+    const adminPhone = `+24124${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24124${Date.now()}`,
-        email: adminEmail,
-        password: 'secret123',
+        phone: adminPhone,
         fullName: 'Admin Robuste',
+        code: 'secret123',
       })
       .expect(201);
     const ds = app.get(DataSource);
     await ds.query(
-      `UPDATE users SET role = 'PLATFORM_ADMIN' WHERE email = $1`,
-      [adminEmail],
+      `UPDATE users SET role = 'PLATFORM_ADMIN' WHERE phone = $1`,
+      [adminPhone],
     );
     const login = await request(server)
       .post('/auth/login')
-      .send({ identifier: adminEmail, password: 'secret123' })
+      .send({ phone: adminPhone, code: 'secret123' })
       .expect(201);
     const adminToken = login.body.accessToken;
 

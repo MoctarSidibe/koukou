@@ -31,4 +31,5 @@ export enum AlertKind {
   SAISIE_MANQUEE = 'SAISIE_MANQUEE',
   STOCK_OEUF = 'STOCK_OEUF',
   HEAT = 'HEAT',
+  MALADIE = 'MALADIE',
 }

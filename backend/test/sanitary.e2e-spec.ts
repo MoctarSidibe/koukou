@@ -17,7 +17,6 @@ describe('Module 2 — Sanitaire & Prophylaxie (e2e)', () => {
   let farmId: string;
 
   const ownerPhone = `+24180${Date.now()}`;
-  const ownerEmail = `owner.${Date.now()}@e2e.ga`;
 
   async function createBatch(integrationDate: string) {
     const res = await request(server)
@@ -49,14 +48,13 @@ describe('Module 2 — Sanitaire & Prophylaxie (e2e)', () => {
       .post('/auth/register')
       .send({
         phone: ownerPhone,
-        email: ownerEmail,
-        password: 'secret123',
         fullName: 'Proprio Sanitaire',
+        code: 'secret123',
       })
       .expect(201);
     const login = await request(server)
       .post('/auth/login')
-      .send({ identifier: ownerEmail, password: 'secret123' })
+      .send({ phone: ownerPhone, code: 'secret123' })
       .expect(201);
     token = login.body.accessToken;
 

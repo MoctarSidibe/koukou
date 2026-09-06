@@ -18,7 +18,6 @@ describe('Module 1 — Gestion des Lots (e2e)', () => {
   let batchId: string;
 
   const ownerPhone = `+24170${Date.now()}`;
-  const ownerEmail = `owner.${Date.now()}@e2e.ga`;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -39,14 +38,13 @@ describe('Module 1 — Gestion des Lots (e2e)', () => {
       .post('/auth/register')
       .send({
         phone: ownerPhone,
-        email: ownerEmail,
-        password: 'secret123',
         fullName: 'Proprio E2E',
+        code: 'secret123',
       })
       .expect(201);
     const login = await request(server)
       .post('/auth/login')
-      .send({ identifier: ownerEmail, password: 'secret123' })
+      .send({ phone: ownerPhone, code: 'secret123' })
       .expect(201);
     token = login.body.accessToken;
   });
@@ -195,20 +193,18 @@ describe('Module 1 — Gestion des Lots (e2e)', () => {
   it('restreint l’accès d’un Éleveur aux fermes auxquelles il est rattaché', async () => {
     // Un Éleveur sans lien doit recevoir 403 sur cette ferme
     const empPhone = `+24171${Date.now()}`;
-    const empEmail = `emp.${Date.now()}@e2e.ga`;
     await request(server)
       .post(`/farms/${farmId}/eleveurs`)
       .set('Authorization', `Bearer ${token}`)
       .send({
         phone: empPhone,
-        email: empEmail,
         fullName: 'Ouvrier E2E',
-        password: 'secret123',
+        code: 'secret123',
       })
       .expect(201);
     const empLogin = await request(server)
       .post('/auth/login')
-      .send({ identifier: empEmail, password: 'secret123' })
+      .send({ phone: empPhone, code: 'secret123' })
       .expect(201);
     const empToken = empLogin.body.accessToken;
 

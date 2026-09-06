@@ -4,9 +4,10 @@ import {
   NotFoundException,
   OnModuleInit,
   OnModuleDestroy,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Not, Repository } from 'typeorm';
+import { In, LessThanOrEqual, Not, Repository } from 'typeorm';
 import { AuthUser } from '../../common/decorators/current-user.decorator.js';
 import {
   AlertKind,
@@ -14,6 +15,7 @@ import {
   AlertStatus,
 } from '../../common/enums/alert-level.enum.js';
 import { BatchStatus, BatchType } from '../../common/enums/batch-type.enum.js';
+import { Species } from '../../common/enums/species.enum.js';
 import { PaymentStatus } from '../../common/enums/payment-method.enum.js';
 import { SaleStatus } from '../../common/enums/sale-status.enum.js';
 import { SaleItemProductType } from '../../common/enums/sale-item-type.enum.js';
@@ -32,6 +34,7 @@ import { FeedStockService } from '../feed-stock/feed-stock.service.js';
 import { ReferenceConstantsService } from '../reference-constants/reference-constants.service.js';
 import { Alert } from '../alerts/entities/alert.entity.js';
 import { AlertsService } from '../alerts/alerts.service.js';
+import { Building } from '../buildings/entities/building.entity.js';
 import { Payment } from '../finance/entities/payment.entity.js';
 import { SaleItem } from '../finance/entities/sale-item.entity.js';
 import { Sale } from '../finance/entities/sale.entity.js';
@@ -75,6 +78,8 @@ export interface HealthOverviewRow {
   batchName: string | null;
   status: BatchStatus;
   type: BatchType;
+  species: Species;
+  customSpecies?: string | null;
   ageDays: number;
   liveCount: number;
   weekDeaths: number;
@@ -91,6 +96,8 @@ export interface LeaderboardRow {
   batchName: string | null;
   status: BatchStatus;
   type: BatchType;
+  species: Species;
+  customSpecies?: string | null;
   ageDays: number;
   perfIndex: number | null;
   fcr: number | null;
@@ -136,12 +143,24 @@ export interface DashboardData {
   deltas: WeeklyDeltas;
   eggStock: EggStockInfo;
   weather: FarmWeather | null;
+  /** Consommation d'eau totale aujourd'hui (litres) — tous lots actifs. */
+  waterConsumptionTodayL: number | null;
+  /** Variation (%) de consommation d'eau vs veille (negatif = baisse). */
+  waterDropPercent: number | null;
+  /** Nombre de bâtiments de la ferme. */
+  buildingsCount: number;
+  /** Surface totale des bâtiments (m²) — somme des buildingAreaM2. */
+  totalAreaM2: number | null;
+  /** Densité globale ferme = liveStock / totalAreaM2 (oiseaux/m²). */
+  farmDensityPerM2: number | null;
 }
 
 export interface CurveWeek {
   weekStart: string;
   avgWeightKg: number | null;
   feedKg: number;
+  waterL: number;
+  waterLPerBird: number | null;
   deaths: number;
   cumFeedKg: number;
   fcrCumulative: number | null;
@@ -176,6 +195,8 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     private readonly paymentRepo: Repository<Payment>,
     @InjectRepository(FarmEmployee)
     private readonly employeeRepo: Repository<FarmEmployee>,
+    @InjectRepository(Building)
+    private readonly buildingRepo: Repository<Building>,
     @InjectRepository(Sale)
     private readonly saleRepo: Repository<Sale>,
     @InjectRepository(SaleItem)
@@ -201,7 +222,7 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
 
   private readonly onEntryCreated = (ev: DailyEntryCreatedEvent) => {
     void Promise.all([
-      this.evaluateDailyEntryAlerts(ev.farmId),
+      this.evaluateDailyEntryAlerts(ev.farmId, todayStr()),
       this.evaluateEggStockAlerts(ev.farmId),
     ]).catch((err) =>
       this.logger.error(`Réévaluation post-saisie (ferme ${ev.farmId})`, err),
@@ -214,8 +235,29 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     );
   };
 
-  async getDashboard(user: AuthUser, farmId: string): Promise<DashboardData> {
+  async getDashboard(
+    user: AuthUser,
+    farmId: string,
+    date?: string,
+    time?: string,
+  ): Promise<DashboardData> {
     await this.farmsService.assertAccessible(user, farmId);
+
+    // Date de référence du tableau de bord. Sans `date`, on travaille sur le
+    // jour courant. Tout agrégat daté (encaissé, eau, écarts hebdo, saisies
+    // manquantes) est calculé relativement à cette date.
+    if (date != null && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new BadRequestException(
+        'Le paramètre date doit être au format YYYY-MM-DD.',
+      );
+    }
+    if (time != null && !/^\d{2}:\d{2}$/.test(time)) {
+      throw new BadRequestException(
+        'Le paramètre time doit être au format HH:MM.',
+      );
+    }
+    const refDate = date ?? todayStr();
+    const refDatetime = time ? new Date(`${refDate}T${time}:00`) : undefined;
 
     const [batches, alerts, employees, feedSummary, collectedToday] =
       await Promise.all([
@@ -225,14 +267,25 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
         }),
         this.employeeRepo.count({ where: { farmId } }),
         this.feedStockService.getStockSummary(user, farmId),
-        this.paymentRepo.sum('amountFcfa', {
-          farmId,
-          paymentDate: todayStr(),
-          status: PaymentStatus.CONFIRMED,
-        }),
+        refDatetime
+          ? this.paymentRepo
+              .find({
+                where: {
+                  farmId,
+                  paymentDate: refDate,
+                  status: PaymentStatus.CONFIRMED,
+                  createdAt: LessThanOrEqual(refDatetime),
+                },
+              })
+              .then((ps) => ps.reduce((s, p) => s + p.amountFcfa, 0))
+          : this.paymentRepo.sum('amountFcfa', {
+              farmId,
+              paymentDate: refDate,
+              status: PaymentStatus.CONFIRMED,
+            }),
       ]);
 
-    const missingEntries = await this.evaluateDailyEntryAlerts(farmId);
+    const missingEntries = await this.evaluateDailyEntryAlerts(farmId, refDate);
 
     let totalDeaths = 0;
     let totalStart = 0;
@@ -274,18 +327,61 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     );
 
     const health = this.computeHealth(alerts, missingEntries);
-    const deltas = this.computeDeltas(batches, entries);
+    const deltas = this.computeDeltas(batches, entries, refDate);
     const leaderboard = await this.computeLeaderboard(user, farmId);
     const healthOverview = await this.computeHealthOverview(
       batches,
       entries,
       alerts,
+      refDate,
     );
     const eggStock = await this.evaluateEggStockAlerts(farmId);
     // La météo ne doit jamais dégrader le dashboard (échec réseau → null).
     const weather = await this.weatherService
       .forecastForFarm(farmId)
       .catch(() => null);
+
+    // ── Eau : consommation totale aujourd'hui + variation vs veille ──
+    const activeBatchIds = activeBatches.map((b) => b.id);
+    let waterConsumptionTodayL: number | null = null;
+    let waterDropPercent: number | null = null;
+    if (activeBatchIds.length > 0) {
+      const today = refDate;
+      const yesterday = addDays(today, -1);
+      const [todayEntries, yesterdayEntries] = await Promise.all([
+        this.entryRepo.find({
+          where: { batchId: In(activeBatchIds), entryDate: today },
+        }),
+        this.entryRepo.find({
+          where: { batchId: In(activeBatchIds), entryDate: yesterday },
+        }),
+      ]);
+      const todayWater = todayEntries.reduce((s, e) => s + e.waterL, 0);
+      const yesterdayWater = yesterdayEntries.reduce(
+        (s, e) => s + e.waterL,
+        0,
+      );
+      waterConsumptionTodayL = todayWater > 0 ? round2(todayWater) : null;
+      if (yesterdayWater > 0 && todayWater > 0) {
+        waterDropPercent = round2(
+          ((yesterdayWater - todayWater) / yesterdayWater) * 100,
+        );
+      }
+    }
+
+    // ── Bâtiments : nombre + surface totale + densité globale ──
+    const buildings = await this.buildingRepo.find({ where: { farmId } });
+    const buildingsCount = buildings.length;
+    const totalAreaM2 =
+      buildings.length > 0
+        ? round2(
+            buildings.reduce((s, b) => s + (b.buildingAreaM2 ?? 0), 0),
+          )
+        : null;
+    const farmDensityPerM2 =
+      totalAreaM2 != null && totalAreaM2 > 0 && liveStock > 0
+        ? round2(liveStock / totalAreaM2)
+        : null;
 
     return {
       farmId,
@@ -310,6 +406,11 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
       deltas,
       eggStock,
       weather,
+      waterConsumptionTodayL,
+      waterDropPercent,
+      buildingsCount,
+      totalAreaM2,
+      farmDensityPerM2,
     };
   }
 
@@ -387,17 +488,22 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
    * Évaluée de façon paresseuse (lecture dashboard) et réévaluée après chaque
    * saisie via le bus d'événements.
    */
-  private async evaluateDailyEntryAlerts(farmId: string): Promise<string[]> {
-    const today = todayStr();
+  private async evaluateDailyEntryAlerts(
+    farmId: string,
+    refDate: string,
+  ): Promise<string[]> {
+    const today = refDate;
     const active = await this.batchRepo.find({
       where: { farmId, status: In([BatchStatus.ACTIF, BatchStatus.EN_VENTE]) },
     });
     if (active.length === 0) {
-      await this.alertsService.clearKind(
-        farmId,
-        null,
-        AlertKind.SAISIE_MANQUEE,
-      );
+      if (refDate === todayStr()) {
+        await this.alertsService.clearKind(
+          farmId,
+          null,
+          AlertKind.SAISIE_MANQUEE,
+        );
+      }
       return [];
     }
     const todays = await this.entryRepo.find({
@@ -405,6 +511,11 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     });
     const have = new Set(todays.map((e) => e.batchId));
     const missingIds = active.filter((b) => !have.has(b.id)).map((b) => b.id);
+
+    // L'alerte persistée SAISIE_MANQUEE ne reflète que le jour courant : on ne
+    // la crée/résout que pour aujourd'hui pour ne pas muter l'état live en
+    // consultant une date passée.
+    if (refDate !== todayStr()) return missingIds;
 
     if (missingIds.length === 0) {
       await this.alertsService.clearKind(
@@ -468,9 +579,10 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     batches: ProductionBatch[],
     entries: DailyEntry[],
     alerts: Alert[],
+    refDate: string,
   ): Promise<HealthOverviewRow[]> {
-    const today = todayStr();
-    const weekStart = isoWeekStart(today);
+    const weekStart = isoWeekStart(refDate);
+    const refTime = new Date(`${refDate}T00:00:00`).getTime();
     const rows: HealthOverviewRow[] = [];
 
     for (const b of batches) {
@@ -484,7 +596,7 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
       const ageDays = Math.max(
         0,
         Math.floor(
-          (Date.now() - new Date(`${b.integrationDate}T00:00:00`).getTime()) /
+          (refTime - new Date(`${b.integrationDate}T00:00:00`).getTime()) /
             86400000,
         ),
       );
@@ -502,6 +614,8 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
         batchName: b.batchName,
         status: b.status,
         type: b.type,
+        species: b.species,
+        customSpecies: b.species === Species.AUTRE ? b.customSpecies : undefined,
         ageDays,
         liveCount: Math.max(0, b.quantityAlive),
         weekDeaths: bEntries
@@ -515,7 +629,7 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
         alertesJaunes,
         lastEntryDate,
         lastEntryLagDays: lastEntryDate
-          ? daysBetween(lastEntryDate, today)
+          ? daysBetween(lastEntryDate, refDate)
           : null,
         breedStatus: await this.metricsService.breedStatus(b),
       });
@@ -545,6 +659,8 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
           batchName: b.batchName,
           status: b.status,
           type: b.type,
+          species: b.species,
+          customSpecies: b.species === Species.AUTRE ? b.customSpecies : undefined,
           ageDays: m.ageDays,
           perfIndex,
           fcr: m.fcr,
@@ -564,8 +680,9 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
   private computeDeltas(
     batches: ProductionBatch[],
     entries: DailyEntry[],
+    refDate: string,
   ): WeeklyDeltas {
-    const thisWeekStart = isoWeekStart(todayStr());
+    const thisWeekStart = isoWeekStart(refDate);
     const prevWeekStart = isoWeekStart(addDays(thisWeekStart, -7));
 
     const thisWeek = entries.filter((e) => e.entryDate >= thisWeekStart);
@@ -638,12 +755,18 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
       weightSum: number;
       weightCount: number;
       feedKg: number;
+      waterL: number;
       deaths: number;
       lastAvgWeightKg: number | null;
     };
     const byWeek = new Map<string, WeekGroup>();
     for (const e of entries) {
-      if (e.feedQuantity <= 0 && e.deaths <= 0 && e.avgWeightKg == null)
+      if (
+        e.feedQuantity <= 0 &&
+        e.deaths <= 0 &&
+        e.avgWeightKg == null &&
+        e.waterL <= 0
+      )
         continue;
       const weekStart = isoWeekStart(e.entryDate);
       let group = byWeek.get(weekStart);
@@ -653,12 +776,14 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
           weightSum: 0,
           weightCount: 0,
           feedKg: 0,
+          waterL: 0,
           deaths: 0,
           lastAvgWeightKg: null,
         };
         byWeek.set(weekStart, group);
       }
       group.feedKg += e.feedQuantity;
+      group.waterL += e.waterL;
       group.deaths += e.deaths;
       if (e.avgWeightKg != null && e.avgWeightKg > 0) {
         group.weightSum += e.avgWeightKg;
@@ -688,6 +813,8 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
         avgWeightKg:
           w.weightCount > 0 ? round2(w.weightSum / w.weightCount) : null,
         feedKg: round2(w.feedKg),
+        waterL: round2(w.waterL),
+        waterLPerBird: liveCount > 0 ? round2(w.waterL / liveCount) : null,
         deaths: w.deaths,
         cumFeedKg: round2(accumulatedFeed),
         fcrCumulative,

@@ -2,12 +2,14 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CommonModule } from '../../common/services/common.module.js';
 import { FarmsModule } from '../farms/farms.module.js';
+import { PointsOfSaleModule } from '../points-of-sale/points-of-sale.module.js';
 import { AlertsModule } from '../alerts/alerts.module.js';
 import { ReferenceConstantsModule } from '../reference-constants/reference-constants.module.js';
 import { BatchesModule } from '../batches/batches.module.js';
 import { FeedStockModule } from '../feed-stock/feed-stock.module.js';
 import { ProductionBatch } from '../batches/entities/production-batch.entity.js';
 import { InputLot } from '../inputs/entities/input-lot.entity.js';
+import { SlaughterOrder } from '../slaughter/entities/slaughter-order.entity.js';
 import { Farm } from '../farms/entities/farm.entity.js';
 import { Customer } from './entities/customer.entity.js';
 import { Sale } from './entities/sale.entity.js';
@@ -52,9 +54,11 @@ import { PromotionsController } from './promotions.controller.js';
       Promotion,
       ProductionBatch,
       InputLot,
+      SlaughterOrder,
       Farm,
     ]),
     FarmsModule,
+    PointsOfSaleModule,
     AlertsModule,
     ReferenceConstantsModule,
     BatchesModule,
@@ -71,6 +75,16 @@ import { PromotionsController } from './promotions.controller.js';
     PromotionsController,
   ],
   providers: [
+    CustomersService,
+    PaymentsService,
+    CaisseService,
+    ExpensesService,
+    RentabiliteService,
+    SalesService,
+    FinanceEventsService,
+    PromotionsService,
+  ],
+  exports: [
     CustomersService,
     PaymentsService,
     CaisseService,

@@ -86,19 +86,18 @@ describe('Module 4 — Finance & Rentabilité (POS ferme, e2e)', () => {
     await app.init();
     server = app.getHttpServer();
 
-    const email = `owner.fin.${Date.now()}@e2e.ga`;
+    const phone = `+24190${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24190${Date.now()}`,
-        email,
-        password: 'secret123',
+        phone,
         fullName: 'Proprio Finance',
+        code: 'secret123',
       })
       .expect(201);
     const login = await request(server)
       .post('/auth/login')
-      .send({ identifier: email, password: 'secret123' })
+      .send({ phone, code: 'secret123' })
       .expect(201);
     token = login.body.accessToken;
 
@@ -113,19 +112,18 @@ describe('Module 4 — Finance & Rentabilité (POS ferme, e2e)', () => {
       .expect(201);
     farmId = farm.body.id;
 
-    const otherEmail = `other.fin.${Date.now()}@e2e.ga`;
+    const otherPhone = `+24191${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24191${Date.now()}`,
-        email: otherEmail,
-        password: 'secret123',
+        phone: otherPhone,
         fullName: 'Autre Proprio',
+        code: 'secret123',
       })
       .expect(201);
     const otherLogin = await request(server)
       .post('/auth/login')
-      .send({ identifier: otherEmail, password: 'secret123' })
+      .send({ phone: otherPhone, code: 'secret123' })
       .expect(201);
     otherToken = otherLogin.body.accessToken;
   });

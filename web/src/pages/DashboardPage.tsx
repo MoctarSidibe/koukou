@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   Banknote,
   Bird,
+  Calendar,
   CalendarClock,
   Egg,
   ShieldAlert,
@@ -27,9 +28,11 @@ const HEALTH_LABEL: Record<string, string> = {
 
 export function DashboardPage() {
   const { farmId } = useFarm();
+  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const isToday = selectedDate === new Date().toISOString().slice(0, 10);
   const dash = useQuery({
-    queryKey: ['dashboard', farmId],
-    queryFn: () => api.get<DashboardData>(`/farms/${farmId}/dashboard`),
+    queryKey: ['dashboard', farmId, selectedDate],
+    queryFn: () => api.get<DashboardData>(`/farms/${farmId}/dashboard?date=${selectedDate}`),
     enabled: !!farmId,
     refetchInterval: 60_000,
   });
@@ -57,11 +60,31 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-bold text-slate-900">Tableau de bord</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Situation de la ferme · mis à jour {dateFr(d.generatedAt)}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">Tableau de bord</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Situation de la ferme · mis à jour {dateFr(d.generatedAt)}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Calendar className="h-4 w-4 text-slate-400" />
+          <input
+            type="date"
+            value={selectedDate}
+            max={new Date().toISOString().slice(0, 10)}
+            onChange={(e) => setSelectedDate(e.target.value)}
+            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-sky-500"
+          />
+          {!isToday && (
+            <button
+              onClick={() => setSelectedDate(new Date().toISOString().slice(0, 10))}
+              className="rounded-lg bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-100"
+            >
+              Aujourd'hui
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
@@ -192,7 +215,7 @@ export function DashboardPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         <Card className="overflow-hidden">
           <div className="border-b border-slate-100 px-4 py-3">
-            <h2 className="text-sm font-semibold text-slate-700">Palmarès des bandes</h2>
+            <h2 className="text-sm font-semibold text-slate-700">Palmarès des lots</h2>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -222,7 +245,7 @@ export function DashboardPage() {
                 {d.leaderboard.length === 0 ? (
                   <tr>
                     <Td className="py-8 text-center text-slate-400" >
-                      Aucune bande
+                      Aucun lot
                     </Td>
                   </tr>
                 ) : null}

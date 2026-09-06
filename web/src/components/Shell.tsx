@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
 import { useFarm } from '../app/FarmContext';
+import { Logo } from './Logo';
 import { classNames, initials, statusLabel } from '../lib/format';
 
 const NAV = [
@@ -65,9 +66,7 @@ export function Shell() {
         )}
       >
         <div className="flex items-center gap-2 px-5 py-5">
-          <div className="overflow-hidden rounded-lg bg-white p-1 shadow">
-            <img src="/logo.jpg" alt="KouKou" className="h-8 w-auto" />
-          </div>
+          <Logo className="h-9 w-auto" />
           <div>
             <p className="text-sm font-bold text-white">KouKou</p>
             <p className="text-[11px] text-slate-400">Console pilote</p>

@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 import { CareType } from '../../../common/enums/care-type.enum.js';
 import { ProphylaxisStatus } from '../../../common/enums/prophylaxis-status.enum.js';
+import { ScheduleSource } from '../../../common/enums/schedule-source.enum.js';
 
 @Entity('prophylaxis_events')
 export class ProphylaxisEvent {
@@ -25,11 +26,25 @@ export class ProphylaxisEvent {
   @Column({ name: 'building_id', type: 'uuid', nullable: true })
   buildingId: string | null;
 
-  @Column({ name: 'protocol_step_id', type: 'uuid' })
-  protocolStepId: string;
+  @Column({ name: 'protocol_step_id', type: 'uuid', nullable: true })
+  protocolStepId: string | null;
 
-  @Column({ name: 'care_type', type: 'enum', enum: CareType })
+  @Column({
+    name: 'care_type',
+    type: 'enum',
+    enum: CareType,
+  })
   careType: CareType;
+
+  @Column({
+    type: 'enum',
+    enum: ScheduleSource,
+    default: ScheduleSource.MANUEL,
+  })
+  source: ScheduleSource;
+
+  @Column({ type: 'text', nullable: true })
+  notes: string | null;
 
   @Column()
   name: string;
@@ -67,6 +82,24 @@ export class ProphylaxisEvent {
 
   @Column({ name: 'cancelled_reason', type: 'varchar', nullable: true })
   cancelledReason: string | null;
+
+  /** Sortie de stock volontaire d'un médicament (choix « Sortir du stock »). */
+  @Column({ name: 'decrement_stock', type: 'boolean', default: false })
+  decrementStock: boolean;
+
+  /** Quantité sortie du stock (dose) lors de la planification. */
+  @Column({ name: 'medication_qty', type: 'float', nullable: true })
+  medicationQty: number | null;
+
+  @Column({ name: 'medication_unit', type: 'varchar', nullable: true })
+  medicationUnit: string | null;
+
+  /**
+   * Horodatage de la déduction effective : seul le soin « porteur » de la
+   * sortie de stock (premier du groupe) rétablit le stock s'il est annulé.
+   */
+  @Column({ name: 'stock_consumed_at', type: 'timestamptz', nullable: true })
+  stockConsumedAt: Date | null;
 
   @CreateDateColumn()
   createdAt: Date;

@@ -6,10 +6,11 @@ import { InputsController } from './inputs.controller.js';
 import { InputsService } from './inputs.service.js';
 import { InputLot } from './entities/input-lot.entity.js';
 import { ProductionBatch } from '../batches/entities/production-batch.entity.js';
+import { FeedProduct } from '../feed-stock/entities/feed-product.entity.js';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([InputLot, ProductionBatch]),
+    TypeOrmModule.forFeature([InputLot, ProductionBatch, FeedProduct]),
     FarmsModule,
     FeedStockModule,
   ],

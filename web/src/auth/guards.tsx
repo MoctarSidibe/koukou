@@ -26,9 +26,7 @@ function MobileOnlyScreen() {
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-brand-950 via-slate-900 to-brand-900 p-4">
       <div className="w-full max-w-sm rounded-2xl bg-white p-8 text-center shadow-2xl">
         <div className="mb-4 flex justify-center">
-          <div className="overflow-hidden rounded-2xl bg-white p-1 shadow-lg ring-1 ring-black/5">
-            <Logo className="h-14 w-auto" />
-          </div>
+          <Logo className="h-20 w-auto drop-shadow-xl" />
         </div>
         <h1 className="text-lg font-bold text-slate-900">Console administrateur</h1>
         <p className="mt-2 flex items-start justify-center gap-2 text-left text-sm text-slate-500">

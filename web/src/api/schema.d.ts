@@ -223,7 +223,7 @@ export interface paths {
         /** Lister les lots avec métriques */
         get: operations["BatchesController_findAll"];
         put?: never;
-        /** Créer un lot (Création de bande) */
+        /** Créer un lot (Créer un lot) */
         post: operations["BatchesController_create"];
         delete?: never;
         options?: never;
@@ -1796,7 +1796,7 @@ export interface components {
             customerId?: string;
         };
         CreateSlaughterOrderDto: {
-            /** @description Lot de production (bande) à abattre */
+            /** @description Lot de production à abattre */
             batchId: string;
             /** @enum {string} */
             slaughterType: "VIVANT" | "ABATTU";

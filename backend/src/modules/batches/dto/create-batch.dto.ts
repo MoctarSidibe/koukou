@@ -55,6 +55,22 @@ export class CreateBatchDto {
   species?: Species;
 
   @ApiPropertyOptional({
+    description:
+      'Espèce libre (texte) — obligatoire quand species = AUTRE. Ex : "Canard"',
+  })
+  @IsOptional()
+  @IsString()
+  customSpecies?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Souche / race libre (texte) — quand species = AUTRE. Ex : "Coureur indien"',
+  })
+  @IsOptional()
+  @IsString()
+  customBreed?: string;
+
+  @ApiPropertyOptional({
     description: 'Surface du bâtiment (m²) — pour le calcul de densité',
   })
   @IsOptional()
@@ -104,4 +120,13 @@ export class CreateBatchDto {
   @IsInt({ message: 'Le prix du poussin doit être un entier (FCFA).' })
   @Min(0, { message: 'Le prix du poussin ne peut pas être négatif.' })
   chickUnitPriceFcfa?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Effectif vivant actuel (pour un lot en cours — sinon quantityAtStart)',
+  })
+  @IsOptional()
+  @IsInt({ message: 'La quantité vivante doit être un entier.' })
+  @Min(0, { message: 'La quantité vivante ne peut pas être négative.' })
+  quantityAlive?: number;
 }

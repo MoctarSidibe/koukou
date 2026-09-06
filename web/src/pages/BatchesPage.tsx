@@ -91,7 +91,7 @@ export function BatchesPage() {
     <div className="space-y-6">
       <PageHeader
         title="Lots & suivi"
-        subtitle="Bandes en cours et historiques, saisies journalières, métriques zootechniques."
+        subtitle="Lots en cours et historiques, saisies journalières, métriques zootechniques."
         actions={
           !creating ? (
             <button
@@ -123,7 +123,7 @@ export function BatchesPage() {
                 quantityAtStart: Number(f.get('quantityAtStart')),
                 breedId: f.get('breedId') || undefined,
                 type: f.get('type'),
-                species: 'POULET',
+                species: String(f.get('species') || 'POULET'),
                 chickUnitPriceFcfa: f.get('chickUnitPriceFcfa')
                   ? Number(f.get('chickUnitPriceFcfa'))
                   : undefined,
@@ -147,6 +147,19 @@ export function BatchesPage() {
               <select name="type" required defaultValue="CHAIR" className={inputCls}>
                 <option value="CHAIR">Chair</option>
                 <option value="PONDEUSE">Pondeuse</option>
+              </select>
+            </label>
+            <label className="block text-xs">
+              <span className="mb-1 block font-medium text-slate-600">Espèce *</span>
+              <select name="species" required defaultValue="POULET" className={inputCls}>
+                <option value="POULET">Poulet</option>
+                <option value="PINTADE">Pintade</option>
+                <option value="DINDE">Dinde</option>
+                <option value="CAILLE">Caille</option>
+                <option value="CANARD">Canard</option>
+                <option value="OIE">Oie</option>
+                <option value="FAISAN">Faisan</option>
+                <option value="AUTRE">Autre (volailles)</option>
               </select>
             </label>
             <label className="block text-xs">

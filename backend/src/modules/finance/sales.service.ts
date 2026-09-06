@@ -21,6 +21,7 @@ import {
 } from '../../common/enums/cash-session-status.enum.js';
 import { AlertKind } from '../../common/enums/alert-level.enum.js';
 import { FarmsService } from '../farms/farms.service.js';
+import { PointsOfSaleService } from '../points-of-sale/points-of-sale.service.js';
 import { AlertsService } from '../alerts/alerts.service.js';
 import { BatchesService } from '../batches/batches.service.js';
 import { FeedStockService } from '../feed-stock/feed-stock.service.js';
@@ -28,6 +29,9 @@ import { InputLot } from '../inputs/entities/input-lot.entity.js';
 import { InputKind } from '../../common/enums/input-kind.enum.js';
 import { ProductionBatch } from '../batches/entities/production-batch.entity.js';
 import { BatchStatus, BatchType } from '../../common/enums/batch-type.enum.js';
+import { SlaughterOrder } from '../slaughter/entities/slaughter-order.entity.js';
+import { SlaughterStatus } from '../../common/enums/slaughter-status.enum.js';
+import { SlaughterType } from '../../common/enums/slaughter-type.enum.js';
 import { DailyEntry } from '../daily-entries/entities/daily-entry.entity.js';
 import { Customer } from './entities/customer.entity.js';
 import { CashSession } from './entities/cash-session.entity.js';
@@ -51,6 +55,8 @@ const EGGS_PER_ALVEOL = 30;
 const ITEM_LABELS: Record<SaleItemProductType, string> = {
   POULET_PIECE: 'Poulet à la pièce',
   POULET_KG: 'Poulet au kilo',
+  ABATTU_PIECE: 'Poulet abattu (pièce)',
+  ABATTU_KG: 'Poulet abattu (au kilo)',
   OEUFS: 'Œufs (alvéoles)',
   PROVENDE: 'Provende',
   AUTRE: 'Article divers',
@@ -78,7 +84,10 @@ export class SalesService {
     private readonly paymentRepo: Repository<Payment>,
     @InjectRepository(ProductionBatch)
     private readonly batchRepo: Repository<ProductionBatch>,
+    @InjectRepository(SlaughterOrder)
+    private readonly slaughterOrderRepo: Repository<SlaughterOrder>,
     private readonly farmsService: FarmsService,
+    private readonly pointsOfSaleService: PointsOfSaleService,
     private readonly paymentsService: PaymentsService,
     private readonly rentabiliteService: RentabiliteService,
     private readonly promotionsService: PromotionsService,
@@ -113,6 +122,11 @@ export class SalesService {
         dto,
       );
 
+      const resolvedPointOfSaleId = await this.pointsOfSaleService.resolve(
+        farmId,
+        dto.pointOfSaleId,
+      );
+
       if (dto.batchId) {
         await this.assertBatchInFarm(em, farmId, dto.batchId);
       }
@@ -125,6 +139,7 @@ export class SalesService {
           totalAmountFcfa: 0,
           status: SaleStatus.SETTLED,
           customerId: resolvedCustomerId,
+          pointOfSaleId: resolvedPointOfSaleId,
           batchId: dto.batchId ?? null,
           createdById: user.id,
         }),
@@ -262,6 +277,7 @@ export class SalesService {
       unitPriceFcfa: number;
       batchId?: string;
       inputLotId?: string;
+      sourceSlaughterOrderId?: string;
     },
   ): Promise<SaleItem> {
     const itemRepo = em.getRepository(SaleItem);
@@ -274,36 +290,71 @@ export class SalesService {
     let batchId: string | null = null;
     let pieceCount: number | null = null;
     let inputLotId: string | null = null;
+    let sourceSlaughterOrderId: string | null =
+      dto.sourceSlaughterOrderId ?? null;
     let batchValidated = false;
 
-    if (productType === SaleItemProductType.POULET_PIECE) {
-      batchId = this.requireBatch(dto.batchId, 'poulet à la pièce');
+    const isAbattu =
+      productType === SaleItemProductType.ABATTU_PIECE ||
+      productType === SaleItemProductType.ABATTU_KG;
+    const fromCarcassPool = isAbattu && sourceSlaughterOrderId != null;
+
+    if (productType === SaleItemProductType.POULET_PIECE ||
+        productType === SaleItemProductType.ABATTU_PIECE) {
+      batchId = this.requireBatch(
+        dto.batchId,
+        productType === SaleItemProductType.ABATTU_PIECE
+          ? 'poulet abattu à la pièce'
+          : 'poulet à la pièce',
+      );
       if (unit !== SaleItemUnit.PIECE) {
         throw new BadRequestException(
-          'Pour un poulet à la pièce, l’unité doit être PIECE.',
+          productType === SaleItemProductType.ABATTU_PIECE
+            ? 'Pour un poulet abattu à la pièce, l’unité doit être PIECE.'
+            : 'Pour un poulet à la pièce, l’unité doit être PIECE.',
         );
       }
       if (!Number.isInteger(quantity)) {
         throw new BadRequestException(
-          'Pour un poulet à la pièce, la quantité doit être un nombre entier de pièces.',
+          'La quantité doit être un nombre entier de pièces.',
         );
       }
       const birds = Math.ceil(quantity);
-      const batch = await this.loadBatch(batchRepo, farmId, batchId);
-      if (batch.quantityAlive < birds) {
-        throw new BadRequestException(
-          `Stock insuffisant : il reste ${batch.quantityAlive} poulet(s) vivant(s) sur le lot, vente demandée ${birds}.`,
+      if (fromCarcassPool) {
+        const order = await this.decrementCarcassPool(
+          em,
+          farmId,
+          sourceSlaughterOrderId!,
+          birds,
         );
+        sourceSlaughterOrderId = order.id;
+        pieceCount = birds;
+      } else {
+        const batch = await this.loadBatch(batchRepo, farmId, batchId);
+        if (batch.quantityAlive < birds) {
+          throw new BadRequestException(
+            `Stock insuffisant : il reste ${batch.quantityAlive} poulet(s) vivant(s) sur le lot, vente demandée ${birds}.`,
+          );
+        }
+        await this.persistFlockDecrement(batchRepo, batch, birds);
+        pieceCount = birds;
+        batchValidated = true;
       }
-      batch.quantityAlive -= birds;
-      await batchRepo.save(batch);
-      pieceCount = birds;
-      batchValidated = true;
-    } else if (productType === SaleItemProductType.POULET_KG) {
-      batchId = this.requireBatch(dto.batchId, 'poulet au kilo');
+    } else if (
+      productType === SaleItemProductType.POULET_KG ||
+      productType === SaleItemProductType.ABATTU_KG
+    ) {
+      batchId = this.requireBatch(
+        dto.batchId,
+        productType === SaleItemProductType.ABATTU_KG
+          ? 'poulet abattu au kilo'
+          : 'poulet au kilo',
+      );
       if (unit !== SaleItemUnit.KG) {
         throw new BadRequestException(
-          'Pour un poulet au kilo, l’unité doit être KG.',
+          productType === SaleItemProductType.ABATTU_KG
+            ? 'Pour un poulet abattu au kilo, l’unité doit être KG.'
+            : 'Pour un poulet au kilo, l’unité doit être KG.',
         );
       }
       if (!dto.pieceCount || dto.pieceCount <= 0) {
@@ -311,16 +362,26 @@ export class SalesService {
           'Vente au kilo : indiquer le nombre de pièces (nb de poulets) pour décrémenter le cheptel vivant.',
         );
       }
-      const batch = await this.loadBatch(batchRepo, farmId, batchId);
-      if (batch.quantityAlive < dto.pieceCount) {
-        throw new BadRequestException(
-          `Stock insuffisant : il reste ${batch.quantityAlive} poulet(s) vivant(s) sur le lot, vente demandée ${dto.pieceCount}.`,
+      if (fromCarcassPool) {
+        const order = await this.decrementCarcassPool(
+          em,
+          farmId,
+          sourceSlaughterOrderId!,
+          dto.pieceCount,
         );
+        sourceSlaughterOrderId = order.id;
+        pieceCount = dto.pieceCount;
+      } else {
+        const batch = await this.loadBatch(batchRepo, farmId, batchId);
+        if (batch.quantityAlive < dto.pieceCount) {
+          throw new BadRequestException(
+            `Stock insuffisant : il reste ${batch.quantityAlive} poulet(s) vivant(s) sur le lot, vente demandée ${dto.pieceCount}.`,
+          );
+        }
+        await this.persistFlockDecrement(batchRepo, batch, dto.pieceCount);
+        pieceCount = dto.pieceCount;
+        batchValidated = true;
       }
-      batch.quantityAlive -= dto.pieceCount;
-      await batchRepo.save(batch);
-      pieceCount = dto.pieceCount;
-      batchValidated = true;
     } else if (productType === SaleItemProductType.OEUFS) {
       if (unit !== SaleItemUnit.ALVEOLES) {
         throw new BadRequestException(
@@ -378,6 +439,7 @@ export class SalesService {
         amountFcfa,
         batchId,
         inputLotId,
+        sourceSlaughterOrderId,
       }),
     );
 
@@ -401,8 +463,10 @@ export class SalesService {
   private defaultUnit(productType: SaleItemProductType): SaleItemUnit {
     switch (productType) {
       case SaleItemProductType.POULET_PIECE:
+      case SaleItemProductType.ABATTU_PIECE:
         return SaleItemUnit.PIECE;
       case SaleItemProductType.POULET_KG:
+      case SaleItemProductType.ABATTU_KG:
         return SaleItemUnit.KG;
       case SaleItemProductType.OEUFS:
         return SaleItemUnit.ALVEOLES;
@@ -463,6 +527,82 @@ export class SalesService {
         'Lot clôturé : aucune vente ne peut être rattachée à un lot clôturé (immuabilité).',
       );
     }
+    if (batch.status === BatchStatus.FINI) {
+      throw new BadRequestException(
+        'Lot fini : toutes les volailles ont été vendues, aucune vente supplémentaire possible.',
+      );
+    }
+  }
+
+  /** Décrémente le cheptel vivant (vente sur pied ou abattage direct au comptoir). */
+  private async persistFlockDecrement(
+    repo: Repository<ProductionBatch>,
+    batch: ProductionBatch,
+    birds: number,
+  ): Promise<void> {
+    batch.quantityAlive -= birds;
+    if (batch.quantityAlive <= 0 && batch.status !== BatchStatus.CLOTURE) {
+      batch.status = BatchStatus.FINI;
+    }
+    await repo.save(batch);
+  }
+
+  /** Décrémente le pool de carcasses d’un ordre d’abattage traité (vente « abattu » traçable). */
+  private async decrementCarcassPool(
+    em: EntityManager,
+    farmId: string,
+    orderId: string,
+    birds: number,
+  ): Promise<SlaughterOrder> {
+    const order = await em
+      .getRepository(SlaughterOrder)
+      .createQueryBuilder('o')
+      .setLock('pessimistic_write')
+      .where('o.id = :id', { id: orderId })
+      .andWhere('o.farm_id = :farmId', { farmId })
+      .getOne();
+    if (!order) {
+      throw new BadRequestException(
+        'Ordre d’abattage introuvable dans cette ferme (source carcasse).',
+      );
+    }
+    if (order.status !== SlaughterStatus.PROCESSED) {
+      throw new BadRequestException(
+        'Cet ordre d’abattage doit être traité (PROCESSED) avant de vendre ses carcasses.',
+      );
+    }
+    if (order.slaughterType !== SlaughterType.ABATTU) {
+      throw new BadRequestException(
+        'Cet ordre d’abattage est « vivant » : aucune carcasse à vendre.',
+      );
+    }
+    if (order.carcassesAvailable < birds) {
+      throw new BadRequestException(
+        `Carcasses insuffisantes : ${order.carcassesAvailable} carcasse(s) disponible(s) sur cet ordre, vente demandée ${birds}.`,
+      );
+    }
+    order.carcassesAvailable -= birds;
+    return em.getRepository(SlaughterOrder).save(order);
+  }
+
+  /** Réintègre des carcasses sur l’ordre d’abattage (annulation de vente traçable). */
+  private async restoreCarcassPool(
+    em: EntityManager,
+    farmId: string,
+    orderId: string,
+    birds: number,
+  ): Promise<void> {
+    if (birds <= 0) return;
+    const order = await em
+      .getRepository(SlaughterOrder)
+      .createQueryBuilder('o')
+      .setLock('pessimistic_write')
+      .where('o.id = :id', { id: orderId })
+      .andWhere('o.farm_id = :farmId', { farmId })
+      .getOne();
+    if (!order) return;
+    order.carcassesAvailable += birds;
+    await em.getRepository(SlaughterOrder).save(order);
   }
 
   /**
@@ -631,7 +771,9 @@ export class SalesService {
     farmId: string,
     saleId: string,
     reason?: string,
+    opts?: { skipStockRestore?: boolean },
   ) {
+    const skipStockRestore = opts?.skipStockRestore === true;
     await this.farmsService.assertAccessible(user, farmId);
     const involvedBatches = new Set<string>();
     await this.dataSource.transaction(async (em) => {
@@ -651,28 +793,48 @@ export class SalesService {
       const feedItems: SaleItem[] = [];
 
       for (const item of items) {
+        if (item.productType === SaleItemProductType.ABATTU_PIECE ||
+            item.productType === SaleItemProductType.ABATTU_KG) {
+          if (!skipStockRestore && item.sourceSlaughterOrderId) {
+            await this.restoreCarcassPool(
+              em,
+              farmId,
+              item.sourceSlaughterOrderId,
+              item.pieceCount ?? 0,
+            );
+          }
+        }
         if (
           (item.productType === SaleItemProductType.POULET_PIECE ||
-            item.productType === SaleItemProductType.POULET_KG) &&
+            item.productType === SaleItemProductType.POULET_KG ||
+            item.productType === SaleItemProductType.ABATTU_PIECE ||
+            item.productType === SaleItemProductType.ABATTU_KG) &&
           item.batchId
         ) {
-          const batch = await batchRepo
-            .createQueryBuilder('batch')
-            .setLock('pessimistic_write')
-            .where('batch.id = :id', { id: item.batchId })
-            .andWhere('batch.farm_id = :farmId', { farmId })
-            .getOne();
-          if (batch) {
-            if (batch.status === BatchStatus.CLOTURE) {
-              throw new BadRequestException(
-                'Impossible d’annuler une vente qui affecte un lot clôturé (immuabilité).',
-              );
+          // Commande par bon de commande : le cheptel n'a jamais été décrémenté
+          // à la création, aucune réintégration nécessaire.
+          if (!skipStockRestore && !item.sourceSlaughterOrderId) {
+            const batch = await batchRepo
+              .createQueryBuilder('batch')
+              .setLock('pessimistic_write')
+              .where('batch.id = :id', { id: item.batchId })
+              .andWhere('batch.farm_id = :farmId', { farmId })
+              .getOne();
+            if (batch) {
+              if (batch.status === BatchStatus.CLOTURE) {
+                throw new BadRequestException(
+                  'Impossible d’annuler une vente qui affecte un lot clôturé (immuabilité).',
+                );
+              }
+              const birds = item.pieceCount ?? Math.ceil(item.quantity);
+              batch.quantityAlive += birds;
+              if (batch.status === BatchStatus.FINI && batch.quantityAlive > 0) {
+                batch.status = BatchStatus.EN_VENTE;
+              }
+              await batchRepo.save(batch);
             }
-            const birds = item.pieceCount ?? Math.ceil(item.quantity);
-            batch.quantityAlive += birds;
-            await batchRepo.save(batch);
+            involvedBatches.add(item.batchId);
           }
-          involvedBatches.add(item.batchId);
         }
         if (item.productType === SaleItemProductType.PROVENDE) {
           feedItems.push(item);
@@ -690,6 +852,7 @@ export class SalesService {
       if (confirmed.length > 0) {
         const cashSession = await em.getRepository(CashSession).findOne({
           where: { farmId, status: CashSessionStatus.OPEN },
+          lock: { mode: 'pessimistic_write' },
         });
         if (!cashSession) {
           throw new BadRequestException(

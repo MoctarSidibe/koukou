@@ -19,7 +19,7 @@ export class AuthController {
 
   @Public()
   @Post('login')
-  @ApiOperation({ summary: 'Connexion (téléphone ou e-mail)' })
+  @ApiOperation({ summary: 'Connexion (téléphone + code)' })
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
   }

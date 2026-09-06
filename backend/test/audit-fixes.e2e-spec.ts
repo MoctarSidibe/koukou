@@ -23,19 +23,18 @@ describe('Audit — corrections pravide & gaps (e2e)', () => {
   let token: string;
 
   async function ownerToken(prefix: string): Promise<string> {
-    const email = `${prefix}.${Date.now()}@e2e.ga`;
+    const phone = `+2419${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+2419${Date.now()}`,
-        email,
-        password: 'secret123',
+        phone,
         fullName: 'Proprio Audit',
+        code: 'secret123',
       })
       .expect(201);
     const login = await request(server)
       .post('/auth/login')
-      .send({ identifier: email, password: 'secret123' })
+      .send({ phone, code: 'secret123' })
       .expect(201);
     return login.body.accessToken;
   }
@@ -429,24 +428,23 @@ describe('Audit — corrections pravide & gaps (e2e)', () => {
     let adminToken: string;
 
     beforeAll(async () => {
-      const adminEmail = `audit.admin.${Date.now()}@e2e.ga`;
+      const adminPhone = `+2417${Date.now()}`;
       await request(server)
         .post('/auth/register')
         .send({
-          phone: `+2417${Date.now()}`,
-          email: adminEmail,
-          password: 'secret123',
+          phone: adminPhone,
           fullName: 'Admin Audit',
+          code: 'secret123',
         })
         .expect(201);
       const ds = app.get(DataSource);
       await ds.query(
-        `UPDATE users SET role = 'PLATFORM_ADMIN' WHERE email = $1`,
-        [adminEmail],
+        `UPDATE users SET role = 'PLATFORM_ADMIN' WHERE phone = $1`,
+        [adminPhone],
       );
       const login = await request(server)
         .post('/auth/login')
-        .send({ identifier: adminEmail, password: 'secret123' })
+        .send({ phone: adminPhone, code: 'secret123' })
         .expect(201);
       adminToken = login.body.accessToken;
     });
@@ -495,20 +493,19 @@ describe('Audit — corrections pravide & gaps (e2e)', () => {
         .send({ value: 1 })
         .expect(404);
 
-      const empEmail = `audit.emp.${Date.now()}@e2e.ga`;
+      const empPhone = `+2418${Date.now()}`;
       await request(server)
         .post(`/farms/${mainFarmId}/eleveurs`)
         .set('Authorization', `Bearer ${token}`)
         .send({
-          phone: `+2418${Date.now()}`,
-          email: empEmail,
+          phone: empPhone,
           fullName: 'Éleveur Audit',
-          password: 'secret123',
+          code: 'secret123',
         })
         .expect(201);
       const empLogin = await request(server)
         .post('/auth/login')
-        .send({ identifier: empEmail, password: 'secret123' })
+        .send({ phone: empPhone, code: 'secret123' })
         .expect(201);
       await request(server)
         .patch('/reference-constants/default_sac_kg')

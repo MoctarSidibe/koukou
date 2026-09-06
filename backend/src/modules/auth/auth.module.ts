@@ -8,6 +8,8 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../../common/guards/roles.guard.js';
 import { User } from '../users/entities/user.entity.js';
 import { UsersModule } from '../users/users.module.js';
+import { Farm } from '../farms/entities/farm.entity.js';
+import { FarmsModule } from '../farms/farms.module.js';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
 import { resolveJwtSecret } from './auth.secret.js';
@@ -15,8 +17,9 @@ import { JwtStrategy } from './jwt.strategy.js';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User]),
+    TypeOrmModule.forFeature([User, Farm]),
     UsersModule,
+    FarmsModule,
     PassportModule,
     JwtModule.registerAsync({
       inject: [ConfigService],

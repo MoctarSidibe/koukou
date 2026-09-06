@@ -13,7 +13,7 @@ interface AuthContextValue {
   user: AuthUser | null;
   isAdmin: boolean;
   isOwnerOrAdmin: boolean;
-  login: (identifier: string, password: string) => Promise<void>;
+  login: (phone: string, code: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -37,10 +37,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isAdmin: user?.role === 'PLATFORM_ADMIN',
       isOwnerOrAdmin:
         user?.role === 'PROPRIETAIRE' || user?.role === 'PLATFORM_ADMIN',
-      login: async (identifier: string, password: string) => {
+      login: async (phone: string, code: string) => {
         const res = await api.post<LoginResult>('/auth/login', {
-          identifier,
-          password,
+          phone,
+          code,
         });
         if (res.user.role !== 'PLATFORM_ADMIN') {
           clearSession();

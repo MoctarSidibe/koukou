@@ -47,19 +47,18 @@ describe('Tableau de bord & courbes de croissance (e2e)', () => {
     await app.init();
     server = app.getHttpServer();
 
-    const email = `owner.dash.${Date.now()}@e2e.ga`;
+    const phone = `+24164${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24164${Date.now()}`,
-        email,
-        password: 'secret123',
+        phone,
         fullName: 'Proprio Dashboard',
+        code: 'secret123',
       })
       .expect(201);
     const login = await request(server)
       .post('/auth/login')
-      .send({ identifier: email, password: 'secret123' })
+      .send({ phone, code: 'secret123' })
       .expect(201);
     token = login.body.accessToken;
 
@@ -74,19 +73,18 @@ describe('Tableau de bord & courbes de croissance (e2e)', () => {
       .expect(201);
     farmId = farm.body.id;
 
-    const otherEmail = `other.dash.${Date.now()}@e2e.ga`;
+    const otherPhone = `+24165${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24165${Date.now()}`,
-        email: otherEmail,
-        password: 'secret123',
+        phone: otherPhone,
         fullName: 'Autre Proprio Dashboard',
+        code: 'secret123',
       })
       .expect(201);
     const otherLogin = await request(server)
       .post('/auth/login')
-      .send({ identifier: otherEmail, password: 'secret123' })
+      .send({ phone: otherPhone, code: 'secret123' })
       .expect(201);
     otherToken = otherLogin.body.accessToken;
 
@@ -211,8 +209,30 @@ describe('Tableau de bord & courbes de croissance (e2e)', () => {
     expect(res.body.liveStock).toBe(96);
   });
 
-  it('vigueur quotidienne : score 100 sain, alerte saisie manquée levée puis résolue, palmarès et écarts', async () => {
-    const healthy = await request(server)
+  it('dashboard filtré par date : les agrégats sont relatifs à la date demandée', async () => {
+    // La vente POS a été passée aujourd'hui. Une date passée doit montrer un
+    // encaissé nul pour ce jour, et la date du jour doit confirmer les 2000 FCFA.
+    const past = dateStr(addDays(new Date(), -5));
+    const pastRes = await request(server)
+      .get(`/farms/${farmId}/dashboard?date=${past}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(pastRes.body.collectedTodayFcfa).toBe(0);
+
+    const todayRes = await request(server)
+      .get(`/farms/${farmId}/dashboard?date=${today()}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(todayRes.body.collectedTodayFcfa).toBe(2000);
+
+    // Date non reconnue → 400
+    await request(server)
+      .get(`/farms/${farmId}/dashboard?date=pas-une-date`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(400);
+  });
+
+  it('vigueur quotidienne : score 100 sain, alerte saisie manquée levée puis résolue, palmarès et écarts', async () => {    const healthy = await request(server)
       .get(`/farms/${farmId}/dashboard`)
       .set('Authorization', `Bearer ${token}`)
       .expect(200);

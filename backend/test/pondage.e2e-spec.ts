@@ -58,19 +58,18 @@ describe('Pondage — indicateurs de ponte par lot (e2e)', () => {
     dayCurr1 = dateStr(ws);
     dayCurr2 = dateStr(addDays(ws, 1));
 
-    const email = `owner.pon.${Date.now()}@e2e.ga`;
+    const phone = `+24162${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24162${Date.now()}`,
-        email,
-        password: 'secret123',
+        phone,
         fullName: 'Proprio Ponte',
+        code: 'secret123',
       })
       .expect(201);
     const login = await request(server)
       .post('/auth/login')
-      .send({ identifier: email, password: 'secret123' })
+      .send({ phone, code: 'secret123' })
       .expect(201);
     token = login.body.accessToken;
 
@@ -85,19 +84,18 @@ describe('Pondage — indicateurs de ponte par lot (e2e)', () => {
       .expect(201);
     farmId = farm.body.id;
 
-    const otherEmail = `other.pon.${Date.now()}@e2e.ga`;
+    const otherPhone = `+24163${Date.now()}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24163${Date.now()}`,
-        email: otherEmail,
-        password: 'secret123',
+        phone: otherPhone,
         fullName: 'Autre Proprio',
+        code: 'secret123',
       })
       .expect(201);
     const otherLogin = await request(server)
       .post('/auth/login')
-      .send({ identifier: otherEmail, password: 'secret123' })
+      .send({ phone: otherPhone, code: 'secret123' })
       .expect(201);
     otherToken = otherLogin.body.accessToken;
 

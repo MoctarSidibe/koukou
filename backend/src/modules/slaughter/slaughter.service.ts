@@ -57,12 +57,16 @@ const SPECIES_LABELS: Record<Species, string> = {
   DINDE: 'Dinde',
   PINTADE: 'Pintade',
   CAILLE: 'Caille',
+  CANARD: 'Canard',
+  OIE: 'Oie',
+  FAISAN: 'Faisan',
   AUTRE: 'Autre',
 };
 
 const BATCH_STATUS_LABELS: Record<BatchStatus, string> = {
   ACTIF: 'Actif',
   EN_VENTE: 'En vente',
+  FINI: 'Fini',
   CLOTURE: 'Clôturé',
 };
 
@@ -254,6 +258,9 @@ export class SlaughterService {
         );
       }
       batch.quantityAlive -= order.birdCount;
+      if (batch.quantityAlive <= 0 && batch.status !== BatchStatus.CLOTURE) {
+        batch.status = BatchStatus.FINI;
+      }
       await em.getRepository(ProductionBatch).save(batch);
 
       if (dto.abattoirLotCode !== undefined)
@@ -265,6 +272,10 @@ export class SlaughterService {
       this.refreshRendement(order);
       order.status = SlaughterStatus.PROCESSED;
       order.processedAt = new Date();
+      // Un ordre « abattu » constitue un pool de carcasses vendables au POS abattu.
+      if (order.slaughterType === SlaughterType.ABATTU) {
+        order.carcassesAvailable = order.birdCount;
+      }
       await em.getRepository(SlaughterOrder).save(order);
       return order;
     });

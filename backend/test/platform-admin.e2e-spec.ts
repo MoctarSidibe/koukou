@@ -16,6 +16,7 @@ describe('Plateforme — Administration (rôle PLATFORM_ADMIN, métriques, ferme
   let protocolId: string;
 
   const stamp = Date.now();
+  const secondaryPhone = `+24161${stamp}`;
 
   function post(url: string, body: object, auth = adminToken) {
     return request(server)
@@ -48,19 +49,18 @@ describe('Plateforme — Administration (rôle PLATFORM_ADMIN, métriques, ferme
     server = app.getHttpServer();
 
     // Propriétaire + ferme + lot + caisse pour alimenter les métriques.
-    const ownerEmail = `owner.plat.${stamp}@e2e.ga`;
+    const ownerPhone = `+24160${stamp}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24160${stamp}`,
-        email: ownerEmail,
-        password: 'secret123',
+        phone: ownerPhone,
         fullName: 'Propriétaire Plateforme',
+        code: 'secret123',
       })
       .expect(201);
     const ownerLogin = await request(server)
       .post('/auth/login')
-      .send({ identifier: ownerEmail, password: 'secret123' })
+      .send({ phone: ownerPhone, code: 'secret123' })
       .expect(201);
     ownerToken = ownerLogin.body.accessToken;
 
@@ -94,40 +94,37 @@ describe('Plateforme — Administration (rôle PLATFORM_ADMIN, métriques, ferme
     ).expect(201);
 
     // Compte secondaire (sera suspendu) + promotion du rôle en administrateur.
-    const secondaryEmail = `secondary.plat.${stamp}@e2e.ga`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24161${stamp}`,
-        email: secondaryEmail,
-        password: 'secret123',
+        phone: secondaryPhone,
         fullName: 'Compte Secondaire',
+        code: 'secret123',
       })
       .expect(201);
     const secondary = await request(server)
       .post('/auth/login')
-      .send({ identifier: secondaryEmail, password: 'secret123' })
+      .send({ phone: secondaryPhone, code: 'secret123' })
       .expect(201);
     secondaryUserId = secondary.body.user.id;
 
-    const adminEmail = `admin.plat.${stamp}@e2e.ga`;
+    const adminPhone = `+24162${stamp}`;
     await request(server)
       .post('/auth/register')
       .send({
-        phone: `+24162${stamp}`,
-        email: adminEmail,
-        password: 'secret456',
+        phone: adminPhone,
         fullName: 'Administrateur Plateforme',
+        code: 'secret456',
       })
       .expect(201);
     const ds = app.get(DataSource);
     await ds.query(
-      `UPDATE users SET role = 'PLATFORM_ADMIN' WHERE email = $1`,
-      [adminEmail],
+      `UPDATE users SET role = 'PLATFORM_ADMIN' WHERE phone = $1`,
+      [adminPhone],
     );
     const adminLogin = await request(server)
       .post('/auth/login')
-      .send({ identifier: adminEmail, password: 'secret456' })
+      .send({ phone: adminPhone, code: 'secret456' })
       .expect(201);
     adminToken = adminLogin.body.accessToken;
     expect(adminLogin.body.user.role).toBe('PLATFORM_ADMIN');
@@ -212,8 +209,8 @@ describe('Plateforme — Administration (rôle PLATFORM_ADMIN, métriques, ferme
     const blocked = await request(server)
       .post('/auth/login')
       .send({
-        identifier: `secondary.plat.${stamp}@e2e.ga`,
-        password: 'secret123',
+        phone: secondaryPhone,
+        code: 'secret123',
       })
       .expect(401);
     expect(String(blocked.body.message)).toContain('suspendu');
@@ -224,8 +221,8 @@ describe('Plateforme — Administration (rôle PLATFORM_ADMIN, métriques, ferme
     await request(server)
       .post('/auth/login')
       .send({
-        identifier: `secondary.plat.${stamp}@e2e.ga`,
-        password: 'secret123',
+        phone: secondaryPhone,
+        code: 'secret123',
       })
       .expect(201);
   });
@@ -268,7 +265,10 @@ describe('Plateforme — Administration (rôle PLATFORM_ADMIN, métriques, ferme
     await patch(`/admin/breeds/${breedId}`, { active: true }).expect(200);
 
     const protocols = await get('/sanitary/protocols').expect(200);
-    protocolId = protocols.body[0].id;
+    const editableProtocol = (protocols.body as any[]).find(
+      (p: { isEditable: boolean }) => p.isEditable,
+    );
+    protocolId = editableProtocol.id;
     const protoUpdate = await patch(`/admin/protocols/${protocolId}`, {
       name: `Protocole ${stamp}`,
     }).expect(200);
@@ -318,7 +318,6 @@ describe('Plateforme — Administration (rôle PLATFORM_ADMIN, métriques, ferme
 
   it('provisionne une nouvelle ferme avec son propriétaire', async () => {
     const phone = `+24163${stamp}`;
-    const email = `provisioned.plat.${stamp}@e2e.ga`;
     const res = await post('/admin/farms', {
       name: `Ferme Provisionnée ${stamp}`,
       administrativeCity: 'Port-Gentil',
@@ -326,8 +325,7 @@ describe('Plateforme — Administration (rôle PLATFORM_ADMIN, métriques, ferme
       owner: {
         fullName: 'Propriétaire Provisionné',
         phone,
-        email,
-        password: 'provision123',
+        code: 'provision123',
       },
     }).expect(201);
     expect(res.body.farm.id).toBeDefined();
@@ -335,14 +333,14 @@ describe('Plateforme — Administration (rôle PLATFORM_ADMIN, métriques, ferme
 
     const ownerLogin = await request(server)
       .post('/auth/login')
-      .send({ identifier: email, password: 'provision123' })
+      .send({ phone, code: 'provision123' })
       .expect(201);
     expect(ownerLogin.body.user.role).toBe('PROPRIETAIRE');
 
     await post('/admin/farms', {
       name: 'Doublon',
       administrativeCity: 'Libreville',
-      owner: { fullName: 'Doublon', phone, password: 'provision123' },
+      owner: { fullName: 'Doublon', phone, code: 'provision123' },
     }).expect(409);
 
     // Le propriétaire provisionné accède bien à sa ferme.

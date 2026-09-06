@@ -11,6 +11,7 @@ import {
 } from 'typeorm';
 import { SaleStatus } from '../../../common/enums/sale-status.enum.js';
 import { Farm } from '../../farms/entities/farm.entity.js';
+import { PointOfSale } from '../../points-of-sale/entities/point-of-sale.entity.js';
 import { ProductionBatch } from '../../batches/entities/production-batch.entity.js';
 import { Customer } from './customer.entity.js';
 import { Promotion } from './promotion.entity.js';
@@ -68,6 +69,14 @@ export class Sale {
   @Column({ name: 'batch_id', type: 'uuid', nullable: true })
   @Index()
   batchId: string | null;
+
+  @ManyToOne(() => PointOfSale, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'point_of_sale_id' })
+  pointOfSale: PointOfSale | null;
+
+  @Column({ name: 'point_of_sale_id', type: 'uuid', nullable: true })
+  @Index()
+  pointOfSaleId: string | null;
 
   @Column({ name: 'cancelled_at', type: 'timestamptz', nullable: true })
   cancelledAt: Date | null;

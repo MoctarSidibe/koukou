@@ -1,0 +1,178 @@
+import { Test, TestingModule } from '@nestjs/testing';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
+import request from 'supertest';
+import { App } from 'supertest/types';
+import { AppModule } from './../src/app.module.js';
+
+function daysFromNow(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+describe('Assistant — next-actions (e2e)', () => {
+  let app: INestApplication<App>;
+  let server: App;
+  let ownerToken: string;
+  let foreignToken: string;
+  let farmId: string;
+  let batchId: string;
+
+  const ownerPhone = `+24170${Date.now()}`;
+  const foreignPhone = `+24171${Date.now()}`;
+
+  beforeAll(async () => {
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+
+    app = moduleFixture.createNestApplication();
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, transform: true }),
+    );
+    await app.init();
+    server = app.getHttpServer();
+  });
+
+  beforeAll(async () => {
+    // Propriétaire de la ferme.
+    await request(server)
+      .post('/auth/register')
+      .send({
+        phone: ownerPhone,
+        fullName: 'Proprio E2E',
+        code: 'secret123',
+      })
+      .expect(201);
+    const owner = await request(server)
+      .post('/auth/login')
+      .send({ phone: ownerPhone, code: 'secret123' })
+      .expect(201);
+    ownerToken = owner.body.accessToken;
+
+    // Utilisateur étranger (hors ferme) → doit recevoir un 403.
+    await request(server)
+      .post('/auth/register')
+      .send({
+        phone: foreignPhone,
+        fullName: 'Étranger E2E',
+        code: 'secret123',
+      })
+      .expect(201);
+    const foreign = await request(server)
+      .post('/auth/login')
+      .send({ phone: foreignPhone, code: 'secret123' })
+      .expect(201);
+    foreignToken = foreign.body.accessToken;
+  });
+
+  it('crée une ferme, un lot surdensitaire et un intrant proche de péremption', async () => {
+    const farm = await request(server)
+      .post('/farms')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({
+        name: `Ferme E2E ${Date.now()}`,
+        administrativeCity: 'Libreville',
+        capacityPerBuilding: 1500,
+      })
+      .expect(201);
+    farmId = farm.body.id;
+
+    // 2400 poussins / 40 m² → grille de surface par lot > critique (alerte SURDENSITE).
+    const batch = await request(server)
+      .post(`/farms/${farmId}/batches`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({
+        batchName: 'Lot E2E NextActions',
+        integrationDate: daysFromNow(-20),
+        quantityAtStart: 2400,
+        type: 'CHAIR',
+        buildingAreaM2: 40,
+      })
+      .expect(201);
+    batchId = batch.body.id;
+
+    // Provende NON rattachée à un lot, expire dans 3 jours → alerte PEREMPTION niveau ferme.
+    await request(server)
+      .post(`/farms/${farmId}/inputs`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({
+        kind: 'ALIMENT',
+        foodType: 'DEMARRAGE',
+        productName: 'Provende Démarrage',
+        supplier: 'CEAG',
+        supplierLotNumber: `L${Date.now()}`,
+        quantity: 50,
+        unit: 'SAC',
+        expirationDate: daysFromNow(3),
+      })
+      .expect(201);
+  });
+
+  it('next-actions : structure, décompte et ordre de priorité de la réponse', async () => {
+    const res = await request(server)
+      .get(`/farms/${farmId}/advisory/next-actions`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .expect(200);
+    const body = res.body;
+
+    expect(body.farmId).toBe(farmId);
+    expect(body.generatedAt).toBeTruthy();
+    expect(Array.isArray(body.actions)).toBe(true);
+    expect(body.summary.total).toBe(body.actions.length);
+    expect(body.summary.total).toBe(
+      body.summary.rouge + body.summary.jaune + body.summary.vert,
+    );
+
+    // Tri : ROUGE d'abord, puis JAUNE (respecter la priorité).
+    const levels: string[] = body.actions.map((a: any) => a.level);
+    const firstJaune = levels.indexOf('JAUNE');
+    const rouges = levels.slice(0, firstJaune === -1 ? levels.length : firstJaune);
+    const jaunes = levels.slice(firstJaune === -1 ? 0 : firstJaune);
+    expect(rouges.every((l) => l === 'ROUGE')).toBe(true);
+    expect(jaunes.every((l) => l === 'JAUNE')).toBe(true);
+  });
+
+  it('next-actions : alerte SURDENSITÉ (ROUGE) et saisie du jour manquante (JAUNE) pour le lot', async () => {
+    const res = await request(server)
+      .get(`/farms/${farmId}/advisory/next-actions`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .expect(200);
+    const actions = res.body.actions;
+
+    const surd = actions.find(
+      (a: any) => a.category === 'ALERTE' && a.title.includes('oiseaux/m²'),
+    );
+    expect(surd).toBeTruthy();
+    expect(surd.level).toBe('ROUGE');
+    expect(surd.alertId).toBeTruthy();
+
+    // Aucune saisie du jour → une action SAISIE par lot en cours.
+    const saisie = actions.find((a: any) => a.category === 'SAISIE');
+    expect(saisie).toBeTruthy();
+    expect(saisie.level).toBe('JAUNE');
+    expect(saisie.batchId).toBe(batchId);
+    expect(saisie.dueDate).toBeTruthy();
+  });
+
+  it('next-actions : provende proche de péremption remonte en ALERTE ROUGE', async () => {
+    const res = await request(server)
+      .get(`/farms/${farmId}/advisory/next-actions`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .expect(200);
+    const action = res.body.actions.find(
+      (a: any) =>
+        a.category === 'ALERTE' && a.title.includes('péremption'),
+    );
+    expect(action).toBeTruthy();
+    expect(action.level).toBe('ROUGE');
+    expect(action.title).toContain('Provende Démarrage');
+  });
+
+  it('refuse l’accès à un utilisateur hors ferme (403)', async () => {
+    await request(server)
+      .get(`/farms/${farmId}/advisory/next-actions`)
+      .set('Authorization', `Bearer ${foreignToken}`)
+      .expect(403);
+  });
+});
