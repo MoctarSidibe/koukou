@@ -35,6 +35,12 @@ export class Sale {
   @Index()
   referenceNumber: string;
 
+  @Column({ name: 'idempotency_key', type: 'varchar', nullable: true })
+  @Index('UQ_sales_farm_idempotency', ['farmId', 'idempotencyKey'], {
+    unique: true,
+  })
+  idempotencyKey: string | null;
+
   @Column({ name: 'sale_date', type: 'date' })
   saleDate: string;
 

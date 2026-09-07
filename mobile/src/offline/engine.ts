@@ -78,27 +78,22 @@ export async function createSaleQueued(
   invoice?: InvoiceFields,
   pointOfSaleId?: string,
 ): Promise<SendResult> {
+  const opId = nextId('sale');
+  const payload: SalePayload = {
+    saleDate,
+    items,
+    idempotencyKey: opId,
+    payments: [{ method: 'CASH', amountFcfa, idempotencyKey: opId }],
+    ...invoice,
+    ...(pointOfSaleId ? { pointOfSaleId } : {}),
+  };
   try {
     await ensureCashOpen(farmId);
-    const res = await createSale(farmId, {
-      saleDate,
-      items,
-      payments: [{ method: 'CASH', amountFcfa }],
-      ...invoice,
-      ...(pointOfSaleId ? { pointOfSaleId } : {}),
-    });
+    const res = await createSale(farmId, payload);
     void flushQueue();
     return { status: 'sent', reference: res.sale.referenceNumber };
   } catch (e) {
     if (shouldQueue(e)) {
-      const opId = nextId('sale');
-      const payload: SalePayload = {
-        saleDate,
-        items,
-        payments: [{ method: 'CASH', amountFcfa, idempotencyKey: opId }],
-        ...invoice,
-        ...(pointOfSaleId ? { pointOfSaleId } : {}),
-      };
       enqueueOp({ id: opId, kind: 'sale', farmId, payload, createdAt: new Date().toISOString() });
       return { status: 'queued' };
     }
@@ -195,21 +190,16 @@ export async function recordOrderPaymentQueued(
   orderId: string,
   amountFcfa: number,
 ): Promise<SendResult> {
+  const opId = nextId('order-payment');
+  const payload = { orderId, amountFcfa, idempotencyKey: opId };
   try {
     await ensureCashOpen(farmId);
-    await recordOrderPayment(farmId, orderId, amountFcfa);
+    await recordOrderPayment(farmId, orderId, amountFcfa, { idempotencyKey: opId });
     void flushQueue();
     return { status: 'sent' };
   } catch (e) {
     if (shouldQueue(e)) {
-      const opId = nextId('order-payment');
-      enqueueOp({
-        id: opId,
-        kind: 'order-payment',
-        farmId,
-        payload: { orderId, amountFcfa, idempotencyKey: opId },
-        createdAt: new Date().toISOString(),
-      });
+      enqueueOp({ id: opId, kind: 'order-payment', farmId, payload, createdAt: new Date().toISOString() });
       return { status: 'queued' };
     }
     throw e;
@@ -367,8 +357,20 @@ export interface FlushSummary {
   remaining: number;
 }
 
-/** Traite la file dans l'ordre (FIFO) ; s'arrête dès qu'un op ne peut pas partir. */
-export async function flushQueue(): Promise<FlushSummary> {
+let flushing: Promise<FlushSummary> | null = null;
+
+/** Traite la file dans l'ordre (FIFO) ; s'arrête dès qu'un op ne peut pas partir.
+ *  Mutex : les appels concurrents (post-envoi + OfflineAutoSync) partagent la
+ *  même passe pour ne jamais POSTer deux fois une opération non idempotente. */
+export function flushQueue(): Promise<FlushSummary> {
+  if (flushing) return flushing;
+  flushing = runFlush().finally(() => {
+    flushing = null;
+  });
+  return flushing;
+}
+
+async function runFlush(): Promise<FlushSummary> {
   let synced = 0;
   let dropped = 0;
   for (const op of loadOps()) {

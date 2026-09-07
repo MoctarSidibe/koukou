@@ -38,7 +38,7 @@ export function PlatformPage() {
 
   const farms = useQuery({
     queryKey: ['admin-farms'],
-    queryFn: () => api.get<PlatformFarmRow[]>('/admin/farms'),
+    queryFn: () => api.get<PlatformFarmRow[]>('/admin/metrics/by-farm'),
   });
 
   const users = useQuery({
@@ -52,12 +52,12 @@ export function PlatformPage() {
   });
 
   const constants = useQuery({
-    queryKey: ['admin-constants'],
+    queryKey: ['reference-constants'],
     queryFn: () => api.get<ReferenceConstant[]>('/reference-constants'),
   });
 
   const invalidateAll = () => {
-    const keys = ['admin-metrics', 'admin-byfarm', 'admin-farms', 'admin-users'];
+    const keys = ['admin-metrics', 'admin-farms', 'admin-users', 'reference-constants'];
     keys.forEach((k) => void queryClient.invalidateQueries({ queryKey: [k] }));
   };
 
@@ -84,7 +84,7 @@ export function PlatformPage() {
   const patchConstant = useMutation({
     mutationFn: ({ key, value }: { key: string; value: number }) =>
       api.patch(`/reference-constants/${key}`, { value }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['admin-constants'] }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['reference-constants'] }),
   });
 
   return (

@@ -204,6 +204,7 @@ export interface SaleItemPayload {
 export interface SalePayload {
   saleDate: string;
   items: SaleItemPayload[];
+  idempotencyKey?: string;
   payments: { method: 'CASH'; amountFcfa: number; idempotencyKey?: string }[];
   customerName?: string;
   customerPhone?: string;

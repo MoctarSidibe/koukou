@@ -72,6 +72,13 @@ function makeReferenceNumber(): string {
   return `${SALE_PREFIX}-${date}-${suffix}`;
 }
 
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err as { code?: string }).code === '23505'
+  );
+}
+
 @Injectable()
 export class SalesService {
   constructor(
@@ -101,6 +108,12 @@ export class SalesService {
 
   async create(user: AuthUser, farmId: string, dto: CreateSaleDto) {
     const farm = await this.farmsService.assertAccessible(user, farmId);
+    if (dto.idempotencyKey) {
+      const existing = await this.findByIdempotent(farmId, dto.idempotencyKey);
+      if (existing) {
+        return this.assembleResult(existing.sale, existing.items, existing.payments);
+      }
+    }
     if (farm.active === false) {
       throw new BadRequestException(
         'Ferme suspendue : aucune nouvelle vente ne peut être enregistrée tant que la ferme est suspendue.',
@@ -205,6 +218,20 @@ export class SalesService {
       const savedSale = await saleRepo.save(sale);
 
       return { savedSale, items, payments };
+    }).catch(async (err: unknown) => {
+      // Deux créations concurrentes avec la même clé : l'index unique
+      // (ferme, clé) tranche → on renvoie la vente existante.
+      if (!dto.idempotencyKey || !isUniqueViolation(err)) throw err;
+      const existing = await this.findByIdempotent(
+        farmId,
+        dto.idempotencyKey,
+      );
+      if (!existing) throw err;
+      return {
+        savedSale: existing.sale,
+        items: existing.items,
+        payments: existing.payments,
+      };
     });
 
     await this.afterSaleChange(farmId, [...involvedBatches]);
@@ -213,6 +240,18 @@ export class SalesService {
   }
 
   /** Trouve ou crée le client (jamais bloquant : la vente aboutit toujours). */
+  private async findByIdempotent(farmId: string, key: string) {
+    const sale = await this.saleRepo.findOne({
+      where: { farmId, idempotencyKey: key },
+    });
+    if (!sale) return null;
+    const [items, payments] = await Promise.all([
+      this.itemRepo.find({ where: { saleId: sale.id } }),
+      this.paymentRepo.find({ where: { saleId: sale.id } }),
+    ]);
+    return { sale, items, payments };
+  }
+
   private async resolveCustomer(
     em: EntityManager,
     farmId: string,
@@ -775,10 +814,27 @@ export class SalesService {
     reason?: string,
     opts?: { skipStockRestore?: boolean },
   ) {
-    const skipStockRestore = opts?.skipStockRestore === true;
     await this.farmsService.assertAccessible(user, farmId);
+    const involved = await this.dataSource.transaction((em) =>
+      this.cancelInTransaction(em, user, farmId, saleId, reason, opts),
+    );
+    await this.afterSaleChange(farmId, [...involved]);
+    return this.getOne(user, farmId, saleId);
+  }
+
+  /** Corps d'annulation exécuté dans une transaction fournie (réutilisable par
+   *  l'annulation de commande pour former UNE seule unité de travail). */
+  async cancelInTransaction(
+    em: EntityManager,
+    user: AuthUser,
+    farmId: string,
+    saleId: string,
+    reason?: string,
+    opts?: { skipStockRestore?: boolean },
+  ): Promise<Set<string>> {
+    const skipStockRestore = opts?.skipStockRestore === true;
     const involvedBatches = new Set<string>();
-    await this.dataSource.transaction(async (em) => {
+    {
       const sale = await em.getRepository(Sale).findOne({
         where: { id: saleId, farmId },
         lock: { mode: 'pessimistic_write' },
@@ -900,10 +956,8 @@ export class SalesService {
       sale.cancelledAt = new Date();
       sale.cancelledReason = reason ?? null;
       await em.getRepository(Sale).save(sale);
-    });
-
-    await this.afterSaleChange(farmId, [...involvedBatches]);
-    return this.getOne(user, farmId, saleId);
+    }
+    return involvedBatches;
   }
 
   // ---------- Reçu PDF ----------

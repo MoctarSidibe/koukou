@@ -4,6 +4,7 @@ import { EntityManager, Repository } from 'typeorm';
 import { SaleItemProductType } from '../../common/enums/sale-item-type.enum.js';
 import { SaleStatus } from '../../common/enums/sale-status.enum.js';
 import { SlaughterStatus } from '../../common/enums/slaughter-status.enum.js';
+import { OrderStatus } from '../../common/enums/order-status.enum.js';
 import { SaleItem } from '../finance/entities/sale-item.entity.js';
 import { Sale } from '../finance/entities/sale.entity.js';
 import { SlaughterOrder } from '../slaughter/entities/slaughter-order.entity.js';
@@ -50,6 +51,14 @@ export class FlockReconciliationService {
         ],
       })
       .andWhere('item.source_slaughter_order_id IS NULL')
+      // Une vente enveloppe d'un bon de commande NON livré/annulé ne sort pas
+      // du cheptel : les oiseaux sont réservés (assertBirdsAvailable), jamais
+      // décrémentés avant la livraison. Les compter ici et les resoustraire à
+      // la réservation les décrirait deux fois.
+      .andWhere(
+        'NOT EXISTS (SELECT 1 FROM orders o WHERE o.sale_id = sale.id AND o.status IN (:...openStatuses))',
+        { openStatuses: [OrderStatus.PENDING, OrderStatus.CONFIRMED] },
+      )
       .select('COALESCE(SUM(COALESCE(item.piece_count, 0)), 0)', 'total')
       .getRawOne();
     return Math.max(0, Number(row?.total ?? 0));

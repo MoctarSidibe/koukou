@@ -76,6 +76,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
   if (res.status === 401 && getToken()) {
     clearSession();
+    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+      window.location.replace('/login');
+    }
   }
 
   if (!res.ok) {

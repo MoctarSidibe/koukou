@@ -93,6 +93,10 @@ export class CreateSaleDto {
   )
   saleDate?: string;
 
+  @IsOptional()
+  @IsString({ message: 'La clé d’idempotence doit être une chaîne.' })
+  idempotencyKey?: string;
+
   @IsArray({ message: 'La liste des articles est invalide.' })
   @IsNotEmpty({ message: 'Au moins un article est requis.' })
   @ValidateNested({ each: true })

@@ -587,7 +587,10 @@ export class OrdersService {
       }
       // Les oiseaux n'ont jamais été décrémentés à la création : on ne réintègre
       // rien. Le remboursement des acomptes est géré par l'annulation de vente.
-      await this.salesService.cancel(
+      // Même EntityManager → une seule unité de travail (annule + rembourse
+      // ensemble, sinon une commande bloquée laisserait une vente annulée).
+      await this.salesService.cancelInTransaction(
+        em,
         user,
         farmId,
         order.saleId,

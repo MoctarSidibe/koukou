@@ -43,6 +43,18 @@ export function SalesPage() {
     enabled: !!farmId,
   });
 
+  // Une vente (ou son annulation) change la liste des ventes, le cheptel, les
+  // métriques du dashboard et le solde de caisse.
+  const refreshFarm = () => {
+    const keys: unknown[][] = [
+      ['sales', farmId],
+      ['batches', farmId],
+      ['dashboard', farmId],
+      ['caisse-current', farmId],
+    ];
+    keys.forEach((k) => void queryClient.invalidateQueries({ queryKey: k }));
+  };
+
   const batches = useQuery({
     queryKey: ['batches', farmId],
     queryFn: () => api.get<BatchWithMetrics[]>(`/farms/${farmId}/batches`),
@@ -70,7 +82,7 @@ export function SalesPage() {
     mutationFn: (payload: Record<string, unknown>) =>
       api.post<{ sale: Sale; warnings: string[] }>(`/farms/${farmId}/sales`, payload),
     onSuccess: (res) => {
-      void queryClient.invalidateQueries({ queryKey: ['sales', farmId] });
+      refreshFarm();
       setWarnings(res.warnings);
       setLines([{ productType: 'POULET_PIECE', quantity: '', unitPriceFcfa: '', batchId: '', inputLotId: '' }]);
       setCustomerPhone('');
@@ -82,7 +94,7 @@ export function SalesPage() {
   const cancelSale = useMutation({
     mutationFn: (saleId: string) =>
       api.del(`/farms/${farmId}/sales/${saleId}`),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['sales', farmId] }),
+    onSuccess: () => refreshFarm(),
   });
 
   const subtotal = useMemo(

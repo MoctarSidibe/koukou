@@ -126,6 +126,7 @@ describe('capture hors-ligne — enfile et rejette', () => {
     expect(op.payload).toEqual({
       saleDate: '2026-08-28',
       items: [],
+      idempotencyKey: op.id,
       payments: [{ method: 'CASH', amountFcfa: 2500, idempotencyKey: op.id }],
     });
   });
