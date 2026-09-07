@@ -154,6 +154,7 @@ export class SalesService {
           customerId: resolvedCustomerId,
           pointOfSaleId: resolvedPointOfSaleId,
           batchId: dto.batchId ?? null,
+          idempotencyKey: dto.idempotencyKey ?? null,
           createdById: user.id,
         }),
       );

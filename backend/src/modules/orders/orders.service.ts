@@ -603,6 +603,7 @@ export class OrdersService {
       await orderRepo.save(order);
       return order;
     });
+    await this.afterOrderChange(farmId, result.batchId ? [result.batchId] : []);
     return this.getOne(user, farmId, result.id);
   }
 

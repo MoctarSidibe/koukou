@@ -44,13 +44,14 @@ export function SalesPage() {
   });
 
   // Une vente (ou son annulation) change la liste des ventes, le cheptel, les
-  // métriques du dashboard et le solde de caisse.
+  // métriques du dashboard, le solde de caisse et le stock d'intrants (provende).
   const refreshFarm = () => {
     const keys: unknown[][] = [
       ['sales', farmId],
       ['batches', farmId],
       ['dashboard', farmId],
       ['caisse-current', farmId],
+      ['inputs', farmId],
     ];
     keys.forEach((k) => void queryClient.invalidateQueries({ queryKey: k }));
   };
