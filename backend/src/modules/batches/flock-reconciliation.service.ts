@@ -12,9 +12,10 @@ import { HealthEventKind } from '../../common/enums/health-event-kind.enum.js';
 
 /**
  * Reconcilie les sorties réelles d'un lot : ventes POULET (PIECE/KG, nettes des
- * annulations) et abattages PROCESSED. Le cheptel vivant doit rester en phase
- * avec ces flux pour que la garde de stock du POS et les métriques reflètent
- * la réalité (tout doit rester synchronisé).
+ * annulations), ventes ABATTU directes (sans ordre d'abattage source, elles
+ * décrémentent le lot au POS) et abattages PROCESSED. Le cheptel vivant doit
+ * rester en phase avec ces flux pour que la garde de stock du POS et les
+ * métriques reflètent la réalité (tout doit rester synchronisé).
  */
 @Injectable()
 export class FlockReconciliationService {
@@ -44,8 +45,11 @@ export class FlockReconciliationService {
         types: [
           SaleItemProductType.POULET_PIECE,
           SaleItemProductType.POULET_KG,
+          SaleItemProductType.ABATTU_PIECE,
+          SaleItemProductType.ABATTU_KG,
         ],
       })
+      .andWhere('item.source_slaughter_order_id IS NULL')
       .select('COALESCE(SUM(COALESCE(item.piece_count, 0)), 0)', 'total')
       .getRawOne();
     return Math.max(0, Number(row?.total ?? 0));

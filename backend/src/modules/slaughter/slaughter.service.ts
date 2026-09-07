@@ -240,6 +240,21 @@ export class SlaughterService {
     // Synchronisation avec le cheptel : on ne peut abattre que les oiseaux
     // réellement présents sur le lot (verrou pessimiste, dans la transaction).
     return this.dataSource.transaction(async (em) => {
+      // Ordre de verrouillage lot → ordre d'abattage, identique au POS
+      // (ventes : lot puis pool de carcasses) pour éviter tout deadlock.
+      const batch = await em
+        .getRepository(ProductionBatch)
+        .createQueryBuilder('batch')
+        .setLock('pessimistic_write')
+        .where('batch.id = :id', { id: order.batchId })
+        .andWhere('batch.farm_id = :farmId', { farmId })
+        .getOne();
+      if (!batch) {
+        throw new NotFoundException(
+          'Ordre d’abattage introuvable dans cette ferme.',
+        );
+      }
+
       // Re-lecture de l'ordre sous verrou pessimiste : deux traitements
       // concurrents ne peuvent pas décrémenter le cheptel deux fois.
       const locked = await em
@@ -260,19 +275,6 @@ export class SlaughterService {
         );
       }
       order = locked;
-
-      const batch = await em
-        .getRepository(ProductionBatch)
-        .createQueryBuilder('batch')
-        .setLock('pessimistic_write')
-        .where('batch.id = :id', { id: order.batchId })
-        .andWhere('batch.farm_id = :farmId', { farmId })
-        .getOne();
-      if (!batch) {
-        throw new BadRequestException(
-          'Lot de production introuvable dans cette ferme.',
-        );
-      }
       if (order.birdCount > batch.quantityAlive) {
         throw new BadRequestException(
           `Cheptel insuffisant pour l'abattage : il reste ${batch.quantityAlive} oiseau(x) vivant(s) sur le lot, ordre de ${order.birdCount}.`,

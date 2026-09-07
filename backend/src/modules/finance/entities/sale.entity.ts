@@ -16,6 +16,7 @@ import { ProductionBatch } from '../../batches/entities/production-batch.entity.
 import { Customer } from './customer.entity.js';
 import { Promotion } from './promotion.entity.js';
 import { SaleItem } from './sale-item.entity.js';
+import { Payment } from './payment.entity.js';
 
 @Entity('sales')
 export class Sale {
@@ -89,6 +90,9 @@ export class Sale {
 
   @OneToMany(() => SaleItem, (item) => item.sale)
   items: SaleItem[];
+
+  @OneToMany(() => Payment, (payment) => payment.sale)
+  payments: Payment[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

@@ -11,7 +11,7 @@ const PRODUCT_TYPES = [
   { value: 'POULET_PIECE', label: 'Poulet (pièce)', unit: 'PIECE', needsBatch: true },
   { value: 'POULET_KG', label: 'Poulet (kg)', unit: 'KG', needsBatch: true },
   { value: 'PROVENDE', label: 'Provende / aliment', unit: 'KG', needsInputLot: true },
-  { value: 'OEUFS', label: 'Œufs (alvéole)', unit: 'ALVEOLE', needsBatch: true },
+  { value: 'OEUFS', label: 'Œufs (alvéole)', unit: 'ALVEOLES', needsBatch: true },
   { value: 'AUTRE', label: 'Autre', unit: 'UNITE', needsBatch: false },
 ];
 
@@ -106,6 +106,9 @@ export function SalesPage() {
           unitPriceFcfa: Number(l.unitPriceFcfa),
           batchId: l.batchId || undefined,
           inputLotId: l.inputLotId || undefined,
+          // La vente au kilo requiert le nombre de pièces (nb de poulets).
+          pieceCount:
+            l.productType === 'POULET_KG' ? Math.ceil(Number(l.quantity)) : undefined,
         };
       });
     if (!items.length) return;

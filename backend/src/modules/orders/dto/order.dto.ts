@@ -86,6 +86,12 @@ export class CreateOrderDto {
   @IsEnum(OrderCanal, { message: 'Canal de commande invalide.' })
   canal: OrderCanal;
 
+  /** Clé d'idempotence (rejeu offline) : une seconde création avec la même
+   *  clé pour la même ferme renvoie la commande existante. */
+  @IsOptional()
+  @IsString({ message: 'La clé d’idempotence doit être une chaîne.' })
+  idempotencyKey?: string;
+
   @IsOptional()
   @IsDateString(
     {},

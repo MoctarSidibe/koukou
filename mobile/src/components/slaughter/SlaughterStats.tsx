@@ -43,6 +43,7 @@ function computeStats(orders: SlaughterOrder[], lot?: ProductionBatch): Slaughte
   const interne = active.filter((o) => o.destination === 'INTERNE');
   const externe = active.filter((o) => o.destination === 'EXTERNE' && o.status !== 'DRAFT');
   const lotOrders = lot ? active.filter((o) => o.batchId === lot.id) : [];
+  const lotOpenOrders = lotOrders.filter((o) => o.status === 'DRAFT' || o.status === 'SENT');
 
   return {
     openCount: open.length,
@@ -62,7 +63,7 @@ function computeStats(orders: SlaughterOrder[], lot?: ProductionBatch): Slaughte
     lotName: lot?.batchName ?? null,
     lotSpecies: lot ? (lot.customSpecies ?? speciesLabel(lot.species)) : null,
     lotReady: lot?.quantityAlive ?? 0,
-    lotOrdered: lotOrders.reduce((s, o) => s + o.birdCount, 0),
+    lotOrdered: lotOpenOrders.reduce((s, o) => s + o.birdCount, 0),
     lotProcessed: lotOrders.filter((o) => o.status === 'PROCESSED').reduce((s, o) => s + o.birdCount, 0),
   };
 }

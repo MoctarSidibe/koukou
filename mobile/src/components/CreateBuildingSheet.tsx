@@ -32,7 +32,7 @@ interface CreateBuildingSheetProps {
 }
 
 export function CreateBuildingSheet({ visible, onClose }: CreateBuildingSheetProps) {
-  const { farmId } = useAuth();
+  const { farmId, mode } = useAuth();
   const qc = useQueryClient();
 
   const [name, setName] = useState('');
@@ -75,12 +75,17 @@ export function CreateBuildingSheet({ visible, onClose }: CreateBuildingSheetPro
     : null;
 
   const createMutation = useMutation({
-    mutationFn: () => createBuilding(farmId, {
-      name: name.trim(),
-      buildingAreaM2: areaNum > 0 ? areaNum : undefined,
-      capacity: effectiveCapacity > 0 ? effectiveCapacity : undefined,
-      lastVideSanitaireAt: lastVideDate ? lastVideDate.toISOString().slice(0, 10) : undefined,
-    }),
+    mutationFn: () => {
+      if (mode === 'demo') {
+        return Promise.resolve({ id: 'demo-building' });
+      }
+      return createBuilding(farmId, {
+        name: name.trim(),
+        buildingAreaM2: areaNum > 0 ? areaNum : undefined,
+        capacity: effectiveCapacity > 0 ? effectiveCapacity : undefined,
+        lastVideSanitaireAt: lastVideDate ? lastVideDate.toISOString().slice(0, 10) : undefined,
+      });
+    },
     onSuccess: () => {
       invalidateFarmQueries(qc, { farmId });
       resetForm();

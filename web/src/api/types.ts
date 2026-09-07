@@ -232,8 +232,9 @@ export interface CashSession {
   id: string;
   farmId: string;
   openingBalanceFcfa: number;
-  expectedBalanceFcfa: number;
-  declaredBalanceFcfa: number | null;
+  closingBalanceFcfa: number | null;
+  closingExpectedFcfa: number | null;
+  closingDifferenceFcfa: number | null;
   status: string;
   openedAt: string;
   closedAt: string | null;

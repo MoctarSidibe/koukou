@@ -158,22 +158,29 @@ async function lossQueued(farmId: string, payload: RecordFeedLossInput): Promise
 
 // ── Commandes (acompte / livraison / annulation) ─────────────
 
-/** Création de commande (bon de commande) : mise en file si hors ligne. */
+/** Création de commande (bon de commande) : mise en file si hors ligne.
+ *  Une même clé d'idempotence (op.id) est envoyée en direct puis au rejeu :
+ *  un envoi parti mais non confirmé ne duplique jamais la commande. */
 export async function createOrderQueued(
   farmId: string,
   input: CreateOrderInput,
 ): Promise<SendResult> {
+  const opId = nextId('order-create');
+  const payload: CreateOrderInput = {
+    ...input,
+    idempotencyKey: input.idempotencyKey ?? opId,
+  };
   try {
-    await createOrder(farmId, input);
+    await createOrder(farmId, payload);
     void flushQueue();
     return { status: 'sent' };
   } catch (e) {
     if (shouldQueue(e)) {
       enqueueOp({
-        id: nextId('order-create'),
+        id: opId,
         kind: 'order-create',
         farmId,
-        payload: input,
+        payload,
         createdAt: new Date().toISOString(),
       });
       return { status: 'queued' };

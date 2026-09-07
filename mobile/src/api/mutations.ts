@@ -676,6 +676,9 @@ export function deletePointOfSale(farmId: string, pointOfSaleId: string): Promis
 export interface CreateOrderInput {
   customerName?: string;
   customerPhone?: string;
+  /** Clé d'idempotence : le serveur renvoie la commande existante pour une même
+   *  clé (rejeu offline / double envoi sans doublon). */
+  idempotencyKey?: string;
   canal: 'FERME' | 'PRECOMMANDE';
   expectedDate?: string;
   address?: string;

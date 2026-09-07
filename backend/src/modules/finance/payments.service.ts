@@ -29,6 +29,13 @@ export interface RecordPaymentInput {
   operatorId: string;
 }
 
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err as { code?: string }).code === '23505'
+  );
+}
+
 const DISABLED_METHOD_MESSAGE: Record<PaymentMethod, string> = {
   [PaymentMethod.CASH]:
     'Le règlement en espèces est indisponible. Vérifier la configuration.',
@@ -128,7 +135,20 @@ export class PaymentsService {
         cashSessionId: cashSession?.id ?? null,
         operatorId: input.operatorId,
       }),
-    );
+    ).catch(async (err: unknown) => {
+      // Deux appels concurrents avec la même idempotency_key : la contrainte
+      // unique (ferme, vente, clé) tranche — on retourne l'existant.
+      if (!input.idempotencyKey || !isUniqueViolation(err)) throw err;
+      const existing = await paymentRepo.findOne({
+        where: {
+          farmId: input.farm.id,
+          saleId: input.sale.id,
+          idempotencyKey: input.idempotencyKey,
+        },
+      });
+      if (existing) return existing;
+      throw err;
+    });
 
     if (cashSession) {
       await movementRepo.save(

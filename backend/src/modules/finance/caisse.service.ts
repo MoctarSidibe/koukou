@@ -1,10 +1,6 @@
-import {
-  BadRequestException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { AuthUser } from '../../common/decorators/current-user.decorator.js';
 import {
   CashMovementSource,
@@ -26,6 +22,12 @@ export interface CaisseSummary {
   expectedBalanceFcfa: number;
   inFcfa: number;
   outFcfa: number;
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    (err as { code?: unknown })?.code === '23505'
+  );
 }
 
 @Injectable()
@@ -52,15 +54,27 @@ export class CaisseService {
       );
     }
     const today = new Date().toISOString().slice(0, 10);
-    return this.sessionRepo.save(
-      this.sessionRepo.create({
-        farmId,
-        status: CashSessionStatus.OPEN,
-        openedAt: dto.openedAt ?? today,
-        openingBalanceFcfa: dto.openingBalanceFcfa,
-        openedById: user.id,
-      }),
-    );
+    try {
+      return await this.sessionRepo.save(
+        this.sessionRepo.create({
+          farmId,
+          status: CashSessionStatus.OPEN,
+          openedAt: dto.openedAt ?? today,
+          openingBalanceFcfa: dto.openingBalanceFcfa,
+          openedById: user.id,
+        }),
+      );
+    } catch (err) {
+      // Index unique partiel (ferme, statut OPEN) : deux ouvertures
+      // concurrentes → 23505. On re-lit la session gagnante pour la signaler.
+      if (isUniqueViolation(err)) {
+        const winner = await this.findOpen(farmId);
+        throw new BadRequestException(
+          `Une session de caisse est déjà ouverte${winner ? ` depuis le ${winner.openedAt}` : ''}. La clôturer avant d'en ouvrir une nouvelle.`,
+        );
+      }
+      throw err;
+    }
   }
 
   async close(
@@ -69,22 +83,27 @@ export class CaisseService {
     dto: CloseCashSessionDto,
   ): Promise<CashSession & { summary: CaisseSummary }> {
     await this.farmsService.assertAccessible(user, farmId);
-    const session = await this.findOpen(farmId);
-    if (!session) {
-      throw new BadRequestException(
-        'Aucune session de caisse ouverte à clôturer.',
-      );
-    }
-    const summary = await this.summary(farmId, session);
-    const difference = dto.declaredBalanceFcfa - summary.expectedBalanceFcfa;
-    session.status = CashSessionStatus.CLOSED;
-    session.closedAt = new Date();
-    session.closedById = user.id;
-    session.closingBalanceFcfa = dto.declaredBalanceFcfa;
-    session.closingExpectedFcfa = summary.expectedBalanceFcfa;
-    session.closingDifferenceFcfa = difference;
-    const saved = await this.sessionRepo.save(session);
-    return { ...saved, summary };
+    return this.dataSource.transaction(async (em) => {
+      const session = await em.getRepository(CashSession).findOne({
+        where: { farmId, status: CashSessionStatus.OPEN },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!session) {
+        throw new BadRequestException(
+          'Aucune session de caisse ouverte à clôturer.',
+        );
+      }
+      const summary = await this.summary(farmId, session, em);
+      const difference = dto.declaredBalanceFcfa - summary.expectedBalanceFcfa;
+      session.status = CashSessionStatus.CLOSED;
+      session.closedAt = new Date();
+      session.closedById = user.id;
+      session.closingBalanceFcfa = dto.declaredBalanceFcfa;
+      session.closingExpectedFcfa = summary.expectedBalanceFcfa;
+      session.closingDifferenceFcfa = difference;
+      const saved = await em.getRepository(CashSession).save(session);
+      return { ...saved, summary };
+    });
   }
 
   async createMovement(
@@ -163,8 +182,10 @@ export class CaisseService {
   private async summary(
     farmId: string,
     session: CashSession,
+    em?: EntityManager,
   ): Promise<CaisseSummary> {
-    const movements = await this.movementRepo.find({
+    const movementRepo = em ? em.getRepository(CashMovement) : this.movementRepo;
+    const movements = await movementRepo.find({
       where: { cashSessionId: session.id },
       order: { createdAt: 'ASC' },
     });

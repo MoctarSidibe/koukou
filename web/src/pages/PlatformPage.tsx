@@ -84,7 +84,7 @@ export function PlatformPage() {
   const patchConstant = useMutation({
     mutationFn: ({ key, value }: { key: string; value: number }) =>
       api.patch(`/reference-constants/${key}`, { value }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['admin-constants', 'reference-constants'] }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['admin-constants'] }),
   });
 
   return (
@@ -94,7 +94,7 @@ export function PlatformPage() {
         subtitle="Toutes fermes, utilisateurs, configuration globale — Administrateur plateforme."
         actions={
           <span className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white">
-            KouKou Platform Administrator
+            Administrateur plateforme
           </span>
         }
       />
@@ -168,10 +168,12 @@ export function PlatformPage() {
                   provision.mutate({
                     name: String(f.get('name')),
                     administrativeCity: String(f.get('administrativeCity')),
-                    fullName: String(f.get('fullName')),
-                    phone: String(f.get('phone')),
-                    email: (f.get('email') as string) || undefined,
-                    code: String(f.get('code')),
+                    owner: {
+                      fullName: String(f.get('fullName')),
+                      phone: String(f.get('phone')),
+                      email: (f.get('email') as string) || undefined,
+                      code: String(f.get('code')),
+                    },
                   });
                 }}
               >

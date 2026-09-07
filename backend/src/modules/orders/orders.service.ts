@@ -14,6 +14,11 @@ import {
   PaymentStatus,
 } from '../../common/enums/payment-method.enum.js';
 import {
+  CashMovementSource,
+  CashMovementType,
+  CashSessionStatus,
+} from '../../common/enums/cash-session-status.enum.js';
+import {
   SaleItemProductType,
   SaleItemUnit,
 } from '../../common/enums/sale-item-type.enum.js';
@@ -26,6 +31,8 @@ import { ProductionBatch } from '../batches/entities/production-batch.entity.js'
 import { DailyEntry } from '../daily-entries/entities/daily-entry.entity.js';
 import { FarmsService } from '../farms/farms.service.js';
 import { PointsOfSaleService } from '../points-of-sale/points-of-sale.service.js';
+import { CashMovement } from '../finance/entities/cash-movement.entity.js';
+import { CashSession } from '../finance/entities/cash-session.entity.js';
 import { Customer } from '../finance/entities/customer.entity.js';
 import { Payment } from '../finance/entities/payment.entity.js';
 import { Sale } from '../finance/entities/sale.entity.js';
@@ -109,6 +116,10 @@ function birdsOf(item: {
   return 0;
 }
 
+function isUniqueViolation(err: unknown): boolean {
+  return (err as { code?: string })?.code === '23505';
+}
+
 @Injectable()
 export class OrdersService {
   constructor(
@@ -133,6 +144,15 @@ export class OrdersService {
       throw new BadRequestException(
         'Ferme suspendue : aucune nouvelle commande ne peut être créée tant que la ferme est suspendue.',
       );
+    }
+    // Rejeu offline : une même clé d'idempotence renvoie la commande déjà créée.
+    if (dto.idempotencyKey) {
+      const existing = await this.orderRepo.findOne({
+        where: { farmId, idempotencyKey: dto.idempotencyKey },
+      });
+      if (existing) {
+        return this.getOne(user, farmId, existing.id);
+      }
     }
     if (!dto.items || dto.items.length === 0) {
       throw new BadRequestException('Au moins un article est requis.');
@@ -315,6 +335,7 @@ export class OrdersService {
           canal: dto.canal,
           saleId: sale.id,
           status: depositFcfa > 0 ? OrderStatus.CONFIRMED : OrderStatus.PENDING,
+          idempotencyKey: dto.idempotencyKey ?? null,
           customerId,
           expectedDate: dto.expectedDate ?? null,
           pointOfSaleId: resolvedPointOfSaleId,
@@ -327,6 +348,15 @@ export class OrdersService {
           createdById: user.id,
         }),
       );
+    }).catch(async (err: unknown) => {
+      // Deux créations concurrentes avec la même clé : l'index unique
+      // (ferme, clé) tranche → on renvoie la commande existante.
+      if (!dto.idempotencyKey || !isUniqueViolation(err)) throw err;
+      const existing = await this.orderRepo.findOne({
+        where: { farmId, idempotencyKey: dto.idempotencyKey },
+      });
+      if (existing) return existing;
+      throw err;
     });
 
     await this.afterOrderChange(farmId, order.batchId ? [order.batchId] : []);
@@ -443,7 +473,16 @@ export class OrdersService {
         }
         if (seen.has(o.saleItemId)) continue;
         seen.add(o.saleItemId);
-        if (o.pieceCount != null) item.pieceCount = o.pieceCount;
+        const isPieceKind =
+          item.productType === SaleItemProductType.POULET_PIECE ||
+          item.productType === SaleItemProductType.ABATTU_PIECE;
+        if (isPieceKind) {
+          // À la pièce, la quantité finale EST le nombre d'oiseaux : on
+          // resynchronise pieceCount pour éviter un sous-décrément du cheptel.
+          item.pieceCount = Math.ceil(o.quantity);
+        } else if (o.pieceCount != null) {
+          item.pieceCount = o.pieceCount;
+        }
         item.quantity = o.quantity;
         item.amountFcfa = Math.round(o.quantity * item.unitPriceFcfa);
       }
@@ -476,10 +515,9 @@ export class OrdersService {
 
       const total = items.reduce((s, i) => s + i.amountFcfa, 0);
       sale.totalAmountFcfa = total;
-      sale.status =
-        (await this.paidSum(em, sale.id)) >= total
-          ? SaleStatus.SETTLED
-          : SaleStatus.OUTSTANDING;
+      const paid = await this.paidSum(em, sale.id);
+      await this.refundDepositExcess(em, farmId, order, sale, total, paid);
+      sale.status = paid >= total ? SaleStatus.SETTLED : SaleStatus.OUTSTANDING;
       await saleRepo.save(sale);
 
       if (dto.payment) {
@@ -507,9 +545,11 @@ export class OrdersService {
         snap.pieceCount = item.pieceCount;
         snap.amountFcfa = item.amountFcfa;
       }
+      // Le bon de commande reflète le montant réellement facturé.
+      order.totalAmountFcfa = total;
       order.status = OrderStatus.LIVRE;
       order.livredAt = new Date();
-      order.depositFcfa = await this.paidSum(em, sale.id);
+      order.depositFcfa = Math.min(await this.paidSum(em, sale.id), total);
       await orderRepo.save(order);
 
       return { order, touchedBatches };
@@ -528,32 +568,92 @@ export class OrdersService {
     reason?: string,
   ) {
     await this.farmsService.assertAccessible(user, farmId);
-    const order = await this.orderRepo.findOne({
-      where: { id: orderId, farmId },
+    // Transaction + verrou pessimiste sur la commande : sérialise avec
+    // livrer/fulfil pour qu'une livraison concurrente ne soit pas écrasée.
+    const result = await this.dataSource.transaction(async (em) => {
+      const orderRepo = em.getRepository(Order);
+      const order = await orderRepo.findOne({
+        where: { id: orderId, farmId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!order) throw new NotFoundException('Commande introuvable.');
+      if (order.status === OrderStatus.CANCELLED) {
+        throw new BadRequestException('Cette commande est déjà annulée.');
+      }
+      if (order.status === OrderStatus.LIVRE) {
+        throw new BadRequestException(
+          'Commande déjà livrée : annuler la vente associée si nécessaire.',
+        );
+      }
+      // Les oiseaux n'ont jamais été décrémentés à la création : on ne réintègre
+      // rien. Le remboursement des acomptes est géré par l'annulation de vente.
+      await this.salesService.cancel(
+        user,
+        farmId,
+        order.saleId,
+        reason ?? undefined,
+        { skipStockRestore: true },
+      );
+      order.status = OrderStatus.CANCELLED;
+      order.cancelledAt = new Date();
+      order.cancelledReason = reason ?? null;
+      await orderRepo.save(order);
+      return order;
     });
-    if (!order) throw new NotFoundException('Commande introuvable.');
-    if (order.status === OrderStatus.CANCELLED) {
-      throw new BadRequestException('Cette commande est déjà annulée.');
-    }
-    if (order.status === OrderStatus.LIVRE) {
+    return this.getOne(user, farmId, result.id);
+  }
+
+  /**
+   * Surpaiement d'acompte après réduction du total final : rembourse l'excédent
+   * en caisse (mouvement OUT) et plafonne l'acompte retracé sur le bon.
+   */
+  private async refundDepositExcess(
+    em: EntityManager,
+    farmId: string,
+    order: Order,
+    sale: Sale,
+    total: number,
+    paid: number,
+  ): Promise<void> {
+    if (paid <= total) return;
+    const excess = paid - total;
+    const session = await em.getRepository(CashSession).findOne({
+      where: { farmId, status: CashSessionStatus.OPEN },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!session) {
       throw new BadRequestException(
-        'Commande déjà livrée : annuler la vente associée si nécessaire.',
+        `Le total final (${total} FCFA) est inférieur aux acomptes encaissés (${paid} FCFA) : ouvrir une session de caisse pour tracer le remboursement de ${excess} FCFA.`,
       );
     }
-    // Les oiseaux n'ont jamais été décrémentés à la création : on ne réintègre
-    // rien. Le remboursement des acomptes est géré par l'annulation de vente.
-    await this.salesService.cancel(
-      user,
-      farmId,
-      order.saleId,
-      reason ?? undefined,
-      { skipStockRestore: true },
+    const movements = await em.getRepository(CashMovement).find({
+      where: { cashSessionId: session.id },
+    });
+    let inFcfa = 0;
+    let outFcfa = 0;
+    for (const m of movements) {
+      if (m.type === CashMovementType.IN) inFcfa += m.amountFcfa;
+      else outFcfa += m.amountFcfa;
+    }
+    const available = session.openingBalanceFcfa + inFcfa - outFcfa;
+    if (excess > available) {
+      throw new BadRequestException(
+        `Remboursement du surplus d'acompte (${excess} FCFA) refusé : solde de caisse disponible ${available} FCFA. Une caisse ne peut pas être négative.`,
+      );
+    }
+    await em.getRepository(CashMovement).save(
+      em.getRepository(CashMovement).create({
+        farmId,
+        cashSessionId: session.id,
+        type: CashMovementType.OUT,
+        source: CashMovementSource.REFUND,
+        amountFcfa: excess,
+        reason: `Remboursement surplus d'acomptes commande ${order.referenceNumber}`,
+        saleId: sale.id,
+        movementDate: new Date().toISOString().slice(0, 10),
+        createdById: order.createdById ?? null,
+      }),
     );
-    order.status = OrderStatus.CANCELLED;
-    order.cancelledAt = new Date();
-    order.cancelledReason = reason ?? null;
-    await this.orderRepo.save(order);
-    return this.getOne(user, farmId, order.id);
   }
 
   // ---------- Lecture ----------

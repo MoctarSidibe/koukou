@@ -17,6 +17,16 @@ function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+function isUniqueViolation(err: unknown): boolean {
+  return (err as { code?: unknown })?.code === '23505';
+}
+
+function alreadyExists(code: string): ConflictException {
+  return new ConflictException(
+    `Un code promo « ${code} » existe déjà dans cette ferme.`,
+  );
+}
+
 @Injectable()
 export class PromotionsService {
   constructor(
@@ -36,9 +46,7 @@ export class PromotionsService {
       where: { farmId, code },
     });
     if (existing)
-      throw new ConflictException(
-        `Un code promo « ${code} » existe déjà dans cette ferme.`,
-      );
+      throw alreadyExists(code);
     if (dto.customerId) {
       await this.assertCustomerInFarm(farmId, dto.customerId);
     }
@@ -47,21 +55,28 @@ export class PromotionsService {
         'Un pourcentage de réduction ne peut pas dépasser 100%.',
       );
     }
-    return this.promoRepo.save(
-      this.promoRepo.create({
-        farmId,
-        code,
-        label: dto.label.trim(),
-        type: dto.type,
-        value: dto.value,
-        active: dto.active ?? true,
-        startDate: dto.startDate ?? null,
-        endDate: dto.endDate ?? null,
-        minSubtotalFcfa: dto.minSubtotalFcfa ?? null,
-        customerId: dto.customerId ?? null,
-        createdById: user.id,
-      }),
-    );
+    try {
+      return await this.promoRepo.save(
+        this.promoRepo.create({
+          farmId,
+          code,
+          label: dto.label.trim(),
+          type: dto.type,
+          value: dto.value,
+          active: dto.active ?? true,
+          startDate: dto.startDate ?? null,
+          endDate: dto.endDate ?? null,
+          minSubtotalFcfa: dto.minSubtotalFcfa ?? null,
+          customerId: dto.customerId ?? null,
+          createdById: user.id,
+        }),
+      );
+    } catch (err) {
+      // Course entre deux créations concurrentes : la contrainte unique
+      // (ferme, code) tranche → 409 au lieu d'un 500.
+      if (isUniqueViolation(err)) throw alreadyExists(code);
+      throw err;
+    }
   }
 
   async findAll(user: AuthUser, farmId: string): Promise<Promotion[]> {
@@ -115,7 +130,12 @@ export class PromotionsService {
       }
       promo.customerId = dto.customerId;
     }
-    return this.promoRepo.save(promo);
+    try {
+      return await this.promoRepo.save(promo);
+    } catch (err) {
+      if (isUniqueViolation(err)) throw alreadyExists(promo.code);
+      throw err;
+    }
   }
 
   async remove(

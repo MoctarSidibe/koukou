@@ -15,7 +15,8 @@ interface CashMovement {
   movementDate: string;
 }
 
-type CaisseSummary = CashSession & {
+type CaisseSummary = {
+  session: CashSession;
   movements: CashMovement[];
   expectedBalanceFcfa: number;
   inFcfa: number;
@@ -84,7 +85,7 @@ export function CaissePage() {
             <div className="mt-4 grid grid-cols-3 gap-3 text-center">
               <div className="rounded-xl bg-emerald-50 p-3">
                 <p className="text-xs text-emerald-700">Ouverture</p>
-                <p className="text-sm font-bold text-emerald-800">{fcfa(current.data.openingBalanceFcfa)}</p>
+                <p className="text-sm font-bold text-emerald-800">{fcfa(current.data.session.openingBalanceFcfa)}</p>
               </div>
               <div className="rounded-xl bg-sky-50 p-3">
                 <p className="text-xs text-sky-700">Attendu</p>
@@ -92,7 +93,7 @@ export function CaissePage() {
               </div>
               <div className="rounded-xl bg-slate-50 p-3">
                 <p className="text-xs text-slate-500">Depuis</p>
-                <p className="text-sm font-bold text-slate-700">{dateTimeFr(current.data.openedAt)}</p>
+                <p className="text-sm font-bold text-slate-700">{dateTimeFr(current.data.session.openedAt)}</p>
               </div>
             </div>
           ) : (
@@ -119,9 +120,9 @@ export function CaissePage() {
           >
             <label className="block text-xs">
               <span className="mb-1 block font-medium text-slate-600">
-                {current.data ? 'Solde déclaré dans la caisse (FCFA)' : 'Fonds de caisse initial (FCFA)'}
-              </span>
-              <input name="amount" type="number" min={0} required defaultValue={current.data?.expectedBalanceFcfa ?? 0} className={inputCls} />
+{current.data ? 'Solde déclaré dans la caisse (FCFA)' : 'Fonds de caisse initial (FCFA)'}
+                  </span>
+                  <input name="amount" type="number" min={0} required defaultValue={current.data?.expectedBalanceFcfa ?? 0} className={inputCls} />
             </label>
             <button
               type="submit"
@@ -253,16 +254,16 @@ export function CaissePage() {
                   .sort((a, b) => b.openedAt.localeCompare(a.openedAt))
                   .map((s) => {
                     const gap =
-                      s.declaredBalanceFcfa != null
-                        ? s.declaredBalanceFcfa - s.expectedBalanceFcfa
+                      s.closingDifferenceFcfa != null
+                        ? s.closingDifferenceFcfa
                         : null;
                     return (
                       <tr key={s.id} className="border-t border-slate-100">
                         <Td>{dateTimeFr(s.openedAt)}</Td>
                         <Td>{s.closedAt ? dateTimeFr(s.closedAt) : '—'}</Td>
                         <Td>{fcfa(s.openingBalanceFcfa)}</Td>
-                        <Td>{fcfa(s.expectedBalanceFcfa)}</Td>
-                        <Td>{s.declaredBalanceFcfa != null ? fcfa(s.declaredBalanceFcfa) : '—'}</Td>
+                        <Td>{s.closingExpectedFcfa != null ? fcfa(s.closingExpectedFcfa) : '—'}</Td>
+                        <Td>{s.closingBalanceFcfa != null ? fcfa(s.closingBalanceFcfa) : '—'}</Td>
                         <Td>
                           {gap != null ? (
                             <span className={classNames('font-medium', gap === 0 ? 'text-emerald-600' : 'text-red-600')}>

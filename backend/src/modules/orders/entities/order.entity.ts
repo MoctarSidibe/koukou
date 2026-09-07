@@ -62,6 +62,12 @@ export class Order {
   @Index()
   saleId: string;
 
+  @Column({ name: 'idempotency_key', type: 'varchar', nullable: true })
+  @Index('UQ_orders_farm_idem', ['farmId', 'idempotencyKey'], {
+    unique: true,
+  })
+  idempotencyKey: string | null;
+
   @Column({ type: 'enum', enum: OrderStatus, default: OrderStatus.PENDING })
   status: OrderStatus;
 

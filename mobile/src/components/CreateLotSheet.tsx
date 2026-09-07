@@ -165,7 +165,7 @@ interface CreateLotSheetProps {
 }
 
 export function CreateLotSheet({ visible, onClose }: CreateLotSheetProps) {
-  const { farmId } = useAuth();
+  const { farmId, mode } = useAuth();
   const qc = useQueryClient();
 
   // Required fields
@@ -479,6 +479,9 @@ export function CreateLotSheet({ visible, onClose }: CreateLotSheetProps) {
 
   const createMutation = useMutation({
     mutationFn: async (input: BatchInput) => {
+      if (mode === 'demo') {
+        return { id: 'demo-lot' } as { id: string };
+      }
       const result = await createBatch(farmId, input);
       // For running lots, create treatment records for completed steps
       if (isRunning && completedStepIds.size > 0 && result?.id) {

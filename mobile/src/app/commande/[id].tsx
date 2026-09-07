@@ -167,6 +167,10 @@ export default function CommandeDetailScreen() {
   };
 
   const doCancel = () => {
+    if (mode === 'demo') {
+      Alert.alert('Disponible en mode connecté', 'L’annulation d’une commande est gérée par le serveur.');
+      return;
+    }
     Alert.alert('Annuler la commande', `${order.referenceNumber} sera passée « Annulée ». Confirmer ?`, [
       { text: 'Retour', style: 'cancel' },
       {
@@ -187,6 +191,10 @@ export default function CommandeDetailScreen() {
   };
 
   const doDeliver = () => {
+    if (mode === 'demo') {
+      Alert.alert('Disponible en mode connecté', 'La livraison (décrément du cheptel et bon de commande) est gérée par le serveur.');
+      return;
+    }
     if (order.status !== 'CONFIRMED') {
       Alert.alert('Impossible', 'Encoder un acompte (→ Confirmer) avant de livrer.');
       return;

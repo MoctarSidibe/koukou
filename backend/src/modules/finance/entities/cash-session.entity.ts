@@ -23,6 +23,10 @@ export class CashSession {
 
   @Column({ name: 'farm_id', type: 'uuid' })
   @Index()
+  @Index('UQ_cash_sessions_open_farm', {
+    unique: true,
+    where: `"status" = 'OPEN'`,
+  })
   farmId: string;
 
   @Column({

@@ -683,6 +683,8 @@ export class SalesService {
     const qb = this.saleRepo
       .createQueryBuilder('sale')
       .leftJoinAndSelect('sale.customer', 'customer')
+      .leftJoinAndSelect('sale.items', 'items')
+      .leftJoinAndSelect('sale.payments', 'payments')
       .where('sale.farm_id = :farmId', { farmId })
       .orderBy('sale.sale_date', 'DESC')
       .addOrderBy('sale.created_at', 'DESC');

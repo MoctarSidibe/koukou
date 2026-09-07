@@ -50,7 +50,9 @@ export class Payment {
   paymentDate: string;
 
   @Column({ name: 'idempotency_key', type: 'varchar', nullable: true })
-  @Index()
+  @Index('UQ_payments_farm_sale_idem', ['farmId', 'saleId', 'idempotencyKey'], {
+    unique: true,
+  })
   idempotencyKey: string | null;
 
   @Column({ name: 'cash_session_id', type: 'uuid', nullable: true })
