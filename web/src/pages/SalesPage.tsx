@@ -44,14 +44,16 @@ export function SalesPage() {
   });
 
   // Une vente (ou son annulation) change la liste des ventes, le cheptel, les
-  // métriques du dashboard, le solde de caisse et le stock d'intrants (provende).
+  // métriques du dashboard, le solde de caisse, le stock d'aliment (provende)
+  // et la liste des clients (find-or-create par téléphone au POS).
   const refreshFarm = () => {
     const keys: unknown[][] = [
       ['sales', farmId],
       ['batches', farmId],
       ['dashboard', farmId],
       ['caisse-current', farmId],
-      ['inputs', farmId],
+      ['feed-stock', farmId],
+      ['customers', farmId],
     ];
     keys.forEach((k) => void queryClient.invalidateQueries({ queryKey: k }));
   };
@@ -69,7 +71,7 @@ export function SalesPage() {
   const inputs = useQuery({
     queryKey: ['inputs', farmId],
     queryFn: () =>
-      api.get<Array<{ id: string; lotNumber: string; supplierName: string; kind: string }>>(
+      api.get<Array<{ id: string; supplierLotNumber: string; supplier: string; productName: string; kind: string }>>(
         `/farms/${farmId}/inputs`,
       ),
     enabled: !!farmId,
@@ -212,7 +214,9 @@ export function SalesPage() {
                     <option value="">— Lot d'aliment (HACCP) —</option>
                     {feedInputs.map((x) => (
                       <option key={x.id} value={x.id}>
-                        {x.lotNumber ?? x.supplierName ?? x.id.slice(0, 8)}
+                        {x.supplierLotNumber && x.productName
+                          ? `${x.supplierLotNumber} — ${x.productName}`
+                          : x.id.slice(0, 8)}
                       </option>
                     ))}
                   </select>

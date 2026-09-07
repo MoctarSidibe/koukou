@@ -40,6 +40,7 @@ import { CashMovement } from './entities/cash-movement.entity.js';
 import { Payment } from './entities/payment.entity.js';
 import { Sale } from './entities/sale.entity.js';
 import { SaleItem } from './entities/sale-item.entity.js';
+import { Order } from '../orders/entities/order.entity.js';
 import { PaymentsService } from './payments.service.js';
 import { RentabiliteService } from './rentabilite.service.js';
 import { PromotionsService } from './promotions.service.js';
@@ -93,6 +94,8 @@ export class SalesService {
     private readonly batchRepo: Repository<ProductionBatch>,
     @InjectRepository(SlaughterOrder)
     private readonly slaughterOrderRepo: Repository<SlaughterOrder>,
+    @InjectRepository(Order)
+    private readonly orderRepo: Repository<Order>,
     private readonly farmsService: FarmsService,
     private readonly pointsOfSaleService: PointsOfSaleService,
     private readonly paymentsService: PaymentsService,
@@ -127,6 +130,31 @@ export class SalesService {
 
     const result = await this.dataSource.transaction(async (em) => {
       const saleRepo = em.getRepository(Sale);
+
+      // Verrouille TOUS les lots impliqués dans un ordre trié, AVANT de traiter
+      // chaque article. Les ventes « abattu » lockent un ordre d'abattage (que
+      // slaughter.process verrouille APRÈS son lot) ; en pré-verrouillant les
+      // lots ici, le graphe de verrous reste « lot → ordre » indépendamment de
+      // l'ordre des articles du DTO (évite l'inversion batch/ordre → deadlock).
+      const involvedBatchIds = [
+        ...new Set(
+          dto.items
+            .map((i) => i.batchId)
+            .filter((b): b is string => Boolean(b)),
+        ),
+      ].sort();
+      if (involvedBatchIds.length > 0 || dto.batchId) {
+        const batchRepo = em.getRepository(ProductionBatch);
+        const toLock = [
+          ...involvedBatchIds,
+          ...(dto.batchId && !involvedBatchIds.includes(dto.batchId)
+            ? [dto.batchId]
+            : []),
+        ];
+        for (const batchId of toLock) {
+          await this.loadBatch(batchRepo, farmId, batchId);
+        }
+      }
 
       const resolvedCustomerId = await this.resolveCustomer(
         em,
@@ -816,6 +844,19 @@ export class SalesService {
     opts?: { skipStockRestore?: boolean },
   ) {
     await this.farmsService.assertAccessible(user, farmId);
+    // Une vente enveloppe d'un bon de commande ne peut PAS être annulée
+    // directement : cela laisserait sa commande dans un état bloqué (ni
+    // livrable ni annulable). L'annulation doit passer par la commande.
+    if (!opts?.skipStockRestore) {
+      const linkedOrder = await this.orderRepo.findOne({
+        where: { saleId },
+      });
+      if (linkedOrder) {
+        throw new BadRequestException(
+          'Cette vente est rattachée à un bon de commande : annuler la commande (qui rembourse les acomptes et annule la vente associée) plutôt que la vente seule.',
+        );
+      }
+    }
     const involved = await this.dataSource.transaction((em) =>
       this.cancelInTransaction(em, user, farmId, saleId, reason, opts),
     );
@@ -842,6 +883,11 @@ export class SalesService {
       });
       if (!sale) throw new NotFoundException('Vente introuvable.');
       if (sale.status === SaleStatus.CANCELLED) {
+        // Cas commande : la vente enveloppe peut déjà avoir été annulée
+        // (flux antérieurs) ; c'est acceptable pour l'annulation de commande
+        // (skipStockRestore), rien à réintégrer ni à rembourser. Pour une
+        // annulation directe en POS on refuse (déjà intercepté ci-dessus).
+        if (skipStockRestore) return involvedBatches;
         throw new BadRequestException('Cette vente est déjà annulée.');
       }
 

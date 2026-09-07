@@ -385,7 +385,7 @@ function CreateOrderSheet({ onClose }: { onClose: () => void }) {
           </AppText>
         ) : null}
 
-        <Button label={deposit > 0 ? `Créer et encaisser ${fmt(deposit)} FCFA` : 'Créer la commande'} tone="accent" loading={busy} disabled={items.length === 0} onPress={() => void submit()} />
+        <Button label={deposit > 0 ? `Créer et encaisser ${fmt(deposit)} FCFA` : 'Créer la commande'} tone="accent" loading={busy} disabled={items.length === 0 || busy} onPress={() => void submit()} />
       </View>
     </Sheet>
   );

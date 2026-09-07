@@ -326,7 +326,7 @@ async function processOne(op: OfflineOp): Promise<'ok' | 'retry' | 'dropped'> {
       await createOrder(op.farmId, op.payload as CreateOrderInput);
     } else if (op.kind === 'order-payment') {
       const p = op.payload as { orderId: string; amountFcfa: number; idempotencyKey?: string };
-      await ensureCashOpen(op.farmId);
+      await ensureCashOpenOrRetry(op.farmId);
       await recordOrderPayment(op.farmId, p.orderId, p.amountFcfa, { idempotencyKey: p.idempotencyKey });
     } else if (op.kind === 'order-deliver') {
       await deliverOrder(op.farmId, (op.payload as { orderId: string }).orderId);
@@ -341,13 +341,29 @@ async function processOne(op: OfflineOp): Promise<'ok' | 'retry' | 'dropped'> {
     } else if (op.kind === 'pdv-delete') {
       await deletePointOfSale(op.farmId, (op.payload as { pointOfSaleId: string }).pointOfSaleId);
     } else {
-      await ensureCashOpen(op.farmId);
+      await ensureCashOpenOrRetry(op.farmId);
       await createSale(op.farmId, op.payload as SalePayload);
     }
     return 'ok';
   } catch (e) {
     if (shouldDrop(e)) return 'dropped';
     return 'retry';
+  }
+}
+
+/**
+ * Ouvre la caisse si besoin puis vérifie qu'elle est ouverte, MAIS ne rend
+ * JAMAIS un échec « jetable » (4xx) pour une opération en espèces : si la
+ * caisse ne peut pas être ouverte (ex. session bloquée, rôle non autorisé),
+ * l'opération doit rester en file ('retry') plutôt que d'être abandonnée —
+ * sinon l'encaissement serait perdu silencieusement.
+ */
+async function ensureCashOpenOrRetry(farmId: string): Promise<void> {
+  try {
+    await ensureCashOpen(farmId);
+  } catch {
+    // Plain Error (et non ApiError) : shouldDrop() ne le matche pas → 'retry'.
+    throw new Error('opération en espèces en attente : session de caisse non ouverte');
   }
 }
 
@@ -371,19 +387,30 @@ export function flushQueue(): Promise<FlushSummary> {
 }
 
 async function runFlush(): Promise<FlushSummary> {
-  let synced = 0;
-  let dropped = 0;
-  for (const op of loadOps()) {
-    const result = await processOne(op);
-    if (result === 'ok') {
-      removeOp(op.id);
-      synced += 1;
-    } else if (result === 'dropped') {
-      removeOp(op.id);
-      dropped += 1;
-    } else {
-      break;
+  const total = { synced: 0, dropped: 0 };
+  // Si de nouvelles opérations sont enfilées PENDANT une passe (réseau
+  // instable), on relance tant que la file est stabilisée, sans jamais
+  // bloquer une opération entrée après le snapshot initial.
+  for (let round = 0; round < 20; round++) {
+    const ops = loadOps();
+    if (ops.length === 0) break;
+    let roundSynced = 0;
+    let roundDropped = 0;
+    for (const op of ops) {
+      const result = await processOne(op);
+      if (result === 'ok') {
+        removeOp(op.id);
+        roundSynced += 1;
+      } else if (result === 'dropped') {
+        removeOp(op.id);
+        roundDropped += 1;
+      } else {
+        break;
+      }
     }
+    total.synced += roundSynced;
+    total.dropped += roundDropped;
+    if (roundSynced === 0 && roundDropped === 0) break;
   }
-  return { synced, dropped, remaining: loadOps().length };
+  return { synced: total.synced, dropped: total.dropped, remaining: loadOps().length };
 }

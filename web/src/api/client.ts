@@ -62,6 +62,15 @@ function buildUrl(path: string): string {
   return `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
+function handleUnauthorized(res: Response): void {
+  if (res.status === 401 && getToken()) {
+    clearSession();
+    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+      window.location.replace('/login');
+    }
+  }
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json' };
   const token = getToken();
@@ -74,12 +83,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
 
-  if (res.status === 401 && getToken()) {
-    clearSession();
-    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
-      window.location.replace('/login');
-    }
-  }
+  handleUnauthorized(res);
 
   if (!res.ok) {
     throw new ApiError(res.status, await parseError(res));
@@ -100,6 +104,7 @@ export const api = {
     const token = getToken();
     if (token) headers.Authorization = `Bearer ${token}`;
     const res = await fetch(buildUrl(path), { headers });
+    handleUnauthorized(res);
     if (!res.ok) throw new ApiError(res.status, await parseError(res));
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);

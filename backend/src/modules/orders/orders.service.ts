@@ -502,7 +502,9 @@ export class OrdersService {
             (batchBirds.get(item.batchId) ?? 0) + birds,
           );
         } else if (item.productType === SaleItemProductType.OEUFS) {
-          await this.assertEggsAvailable(em, farmId, item.quantity);
+          // Exclut la vente enveloppe courante : ses items œufs existent déjà
+          // et ne doivent pas compter comme « déjà vendus » contre eux-mêmes.
+          await this.assertEggsAvailable(em, farmId, item.quantity, sale.id);
         }
       }
 
@@ -874,6 +876,7 @@ export class OrdersService {
     em: EntityManager,
     farmId: string,
     alveoles: number,
+    excludeSaleId?: string,
   ): Promise<void> {
     const pondBatches = await em.getRepository(ProductionBatch).find({
       where: { farmId, type: BatchType.PONDEUSE },
@@ -888,9 +891,10 @@ export class OrdersService {
         0,
       );
     }
-    const sales = await em.getRepository(Sale).find({
+    let sales = await em.getRepository(Sale).find({
       where: { farmId, status: Not(SaleStatus.CANCELLED) },
     });
+    if (excludeSaleId) sales = sales.filter((s) => s.id !== excludeSaleId);
     let soldEggs = 0;
     if (sales.length > 0) {
       const eggItems = await em.getRepository(SaleItem).find({
