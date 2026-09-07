@@ -65,6 +65,9 @@ Poultry farm management app (**offline-first**) for Gabon (SaaS). Monorepo: `bac
 ### Commandes & bons de commande (`orders`)
 - **`Order` enveloppe une `Sale`** : création = bon de commande/précommande sans décrémenter le cheptel. La livraison (`fulfil`) décrémente `quantityAlive` (verrou pessimiste) ou vérifie le stock d'œufs.
 - **État machine** : `PENDING → CONFIRMED (acompte) → LIVRE | CANCELLED`. `livrer` refuse non-CONFIRMED (400). Annulation = `SalesService.cancel(..., { skipStockRestore: true })` — le cheptel n'ayant pas été décrémenté, rien n'est réintégré.
+- **La vente enveloppe d'une commande ne doit JAMAIS être annulée directement** (uniquement via `orders/:id/cancel`) — `sales.cancel` interdit si `orderRepo.findOne({where:{saleId}})` existe (400) ; et `orders.cancel` tolère une enveloppe déjà `CANCELLED` (idempotence, blinde le `skipStockRestore`).
+- **Fulfil (livraison œufs) exclut la commande courante** : `assertEggsAvailable(..., excludeSaleId)` ne compte pas les items OEUFS de la vente enveloppe en cours contre eux-mêmes (la vente est déjà créée → sinon double-compte).
+- **Verrouillages : toujours lot AVANT ordre d'abattage.** `sales.create` pré-verrouille TOUS les lots impliqués (triés, déterministes) avant de traiter les items POS — sinon un item ABATTU (lock ordre) suivi d'un POULET (lock lot) inverse le graphe vs `slaughter.process` (lot→ordre) → deadlock.
 - **Réservation = cap souple calculé serveur** : `vivants − Σ oiseaux des commandes non LIVRE/CANCELLED`. Multi-lots refusé : une commande = un lot.
 - **Acomptes via `PaymentsService.recordPayment`** : caisse CASH ouverte requise, montant ≤ reste dû (le total de la vente enveloppée est la référence). Références `CMD-YYYYMMDD-######` / `VTE-`.
 - **Snapshot JSONB `items`** : prix figés au bon de commande; les quantités finales (`POST :id/livrer`) recalculent montants et resynchronisent le snapshot.
@@ -93,7 +96,9 @@ Poultry farm management app (**offline-first**) for Gabon (SaaS). Monorepo: `bac
 - **PLATFORM_ADMIN only** — farmers use `mobile/`. Non-admin login refused with `MobileOnlyScreen`.
 - Commands (from `web/`): `npm run dev` (proxy `/api` → `localhost:3000`) · `npm run build` = `tsc --noEmit` + `vite build` · `npm run lint` (oxlint) · `npm run format` (prettier) · `npm run types` = generate OpenAPI types (needs backend running; output committed but **not imported** — local `src/api/types.ts` is authoritative)
 - Types: `src/api/client.ts` (fetch + localStorage token `koukou.token` + `.download()` for PDFs) · `src/api/types.ts` (local interfaces, NOT the generated schema)
+- **`api.download()` maps 401 → logout redirect** via shared `handleUnauthorized` (same as `request`), so a stale token on PDF export doesn't strand the user.
 - Routes: `/login`; `/app` shell → `dashboard|batches|alerts|finance|stock|sanitary|slaughter|team|settings`; `/app/platform` gated to PLATFORM_ADMIN. Admin lands on `/app/platform` via HomeRedirect.
+- `GET /farms/:id/inputs` returns full `InputLot` — feed option label = `supplierLotNumber — productName` (**not** `lotNumber`/`supplierName`, those fields don't exist). Query keys for POST-sale refresh (`refreshFarm`) are `['sales','batches','dashboard','caisse-current','feed-stock','customers']` — `['inputs']` is not a subscribed key.
 - Colors: `--color-brand-*` (teal `#206080`), `--color-accent-*` (orange `#F08010`) in `src/index.css` `@theme`
 
 ## Mobile (`mobile/`)
@@ -104,6 +109,7 @@ Poultry farm management app (**offline-first**) for Gabon (SaaS). Monorepo: `bac
 - **Client API facade**: `src/api/index.ts` switches between mock (`src/api/mock.ts`) and live (`src/api/live.ts`) based on session. Always import from `@/api`, **never** `@/api/mock` directly in screens.
 - Commands (from `mobile/`): `npm run start` · `npm run typecheck` (= `tsc --noEmit`, **no `build` script**) · `npm run lint` (= **`eslint .`** — `npx expo lint` crashes on Node 22) · `npm run test` (= `vitest run`, environment node, tests in `src/api/*.test.ts` + `src/offline/engine.test.ts`)
 - **React Compiler rule** (lint `react-hooks/purity`): `Math.random`/`Date.now` must live **outside render** in module-scope helpers (e.g. `SaleSheet.demoSaleRef`, `newIdempotencyKey`).
+- **Submit buttons that build state offline must bind `disabled={... || busy}`** (not just `loading`): a double-tap before `busy` flips could enqueue two ops (e.g. duplicate order-create). Include the local `busy` flag in `disabled`.
 - **`CustomTabBar` uses intentionally loose types** (`state`/`navigation` typed loosely, `emit/navigate` as `any`) — the types from `@react-navigation/bottom-tabs@7` forked by expo-router are incompatible. Do NOT reimport `BottomTabBarProps`.
 
 ### Windows gotcha
@@ -117,7 +123,9 @@ Poultry farm management app (**offline-first**) for Gabon (SaaS). Monorepo: `bac
 - Custom engine, no dependencies. FIFO queue of `OfflineOp` in `localStorage`/memory.
 - Network failure (`TypeError` or `ApiError ≥ 500`) → enqueue; 4xx propagated as real errors / dropped at flush.
 - Pending sale uses `idempotencyKey = op.id` → retry without duplicates. Customer info (`customerName`/`customerPhone`/`promoCode`) preserved through queue and online POST.
-- `flushQueue()` stops at first unsendable op, returns `{synced, dropped, remaining}`.
+- `flushQueue()` stops at first unsendable op, returns `{synced, dropped, remaining}`. **Mutex** (`flushing` promise): concurrent calls (post-enqueue + `OfflineAutoSync`) share ONE pass so an idempotent-but-not-replayed op is never POSTed twice.
+- `runFlush()` **re-loopes up to 20 rounds** while new ops keep arriving during a pass (network flapping) — don't snapshot the queue once, keep draining until stable.
+- **Cash ops must never be `dropped`** (`sale`, `order-payment`): `ensureCashOpenOrRetry()` wraps `ensureCashOpen` and rethrows a plain `Error` (not `ApiError`) so a 4xx from the caisse step maps to `retry`, not `drop` — otherwise the cash op is discarded silently. A genuine 4xx from the sale/payment POST itself still drops.
 - `OfflineAutoSync` component (mounted in `_layout.tsx`): flushes on connection transition or new pending op, guarded by refs to avoid loops.
 - Cache invalidation after successful sync via `invalidateFarmQueries(queryClient, {farmId, batchId?})`.
 
