@@ -23,14 +23,21 @@ export interface DailyEntryPayload {
   feedBags?: number;
   feedQuantity?: number;
   feedUnit?: 'SAC' | 'KG';
+  /** Poids d'un sac (kg) quand le mode sacs est choisi. */
+  bagSizeKg?: number;
   feedPhase?: FeedPhase;
   customFeedPhaseName?: string;
   inputLotId?: string;
+  /** Achat externe : consommation enregistrée sans décrémenter le stock suivi (exclusif avec inputLotId). */
+  skipStockDeduction?: boolean;
   waterL?: number;
   avgWeightKg?: number;
   eggsCollected?: number;
   eggsSellable?: number;
   eggsCracked?: number;
+  eggsSmall?: number;
+  eggsDoubleYolk?: number;
+  eggsDirty?: number;
   source?: 'MANUELLE';
 }
 
@@ -38,21 +45,30 @@ export interface DailyEntryValues {
   deaths: number;
   feedKg: number;
   feedSacs: number;
+  /** Poids d'un sac (kg) retenu pour la conversion sacs → kg. */
+  bagSizeKg?: number;
   waterL: number;
   weightG: number;
   eggs: number;
   eggsCracked: number;
+  eggsSmall: number;
+  eggsDoubleYolk: number;
+  eggsDirty: number;
   feedPhase: FeedPhase | null | undefined;
   inputLotId: string | null | undefined;
+  /** Achat externe : ne pas décrémenter le stock suivi. */
+  skipStockDeduction: boolean;
 }
 
 export interface DailyEntryBuildOptions {
   isLayer: boolean;
   feedMode: 'kg' | 'sacs';
+  /** Date de la saisie (défaut : aujourd'hui) — le serveur upserte par date. */
+  entryDate?: string;
 }
 
 export function buildDailyEntryPayload(values: DailyEntryValues, opts: DailyEntryBuildOptions): DailyEntryPayload {
-  const p: DailyEntryPayload = { entryDate: todayStr() };
+  const p: DailyEntryPayload = { entryDate: opts.entryDate ?? todayStr() };
   if (values.deaths > 0) p.deaths = values.deaths;
   const hasFeed =
     (opts.feedMode === 'kg' && values.feedKg > 0) || (opts.feedMode === 'sacs' && values.feedSacs > 0);
@@ -62,18 +78,32 @@ export function buildDailyEntryPayload(values: DailyEntryValues, opts: DailyEntr
   } else if (opts.feedMode === 'sacs' && values.feedSacs > 0) {
     p.feedUnit = 'SAC';
     p.feedBags = values.feedSacs;
+    if (values.bagSizeKg != null && values.bagSizeKg > 0) p.bagSizeKg = values.bagSizeKg;
   }
   if (hasFeed) {
     if (values.feedPhase) p.feedPhase = values.feedPhase;
-    if (values.inputLotId) p.inputLotId = values.inputLotId;
+    if (values.skipStockDeduction) {
+      p.skipStockDeduction = true;
+    } else if (values.inputLotId) {
+      p.inputLotId = values.inputLotId;
+    }
   }
   if (values.waterL > 0) p.waterL = values.waterL;
   if (values.weightG > 0) p.avgWeightKg = values.weightG / 1000;
-  if (opts.isLayer) {
-    if (values.eggs > 0) p.eggsCollected = values.eggs;
-    if (values.eggs > 0) p.eggsSellable = Math.max(0, values.eggs - values.eggsCracked);
-    if (values.eggsCracked > 0) p.eggsCracked = values.eggsCracked;
-  }
+  if (values.eggs > 0) p.eggsCollected = values.eggs;
+  if (values.eggs > 0)
+    p.eggsSellable = Math.max(
+      0,
+      values.eggs -
+        values.eggsCracked -
+        values.eggsSmall -
+        values.eggsDoubleYolk -
+        values.eggsDirty,
+    );
+  if (values.eggsCracked > 0) p.eggsCracked = values.eggsCracked;
+  if (values.eggsSmall > 0) p.eggsSmall = values.eggsSmall;
+  if (values.eggsDoubleYolk > 0) p.eggsDoubleYolk = values.eggsDoubleYolk;
+  if (values.eggsDirty > 0) p.eggsDirty = values.eggsDirty;
   return p;
 }
 
@@ -730,6 +760,54 @@ export function deliverOrder(farmId: string, orderId: string): Promise<unknown> 
 export function cancelOrder(farmId: string, orderId: string, reason: string): Promise<unknown> {
   const qs = reason ? `?reason=${encodeURIComponent(reason)}` : '';
   return apiFetch(`/farms/${farmId}/orders/${orderId}${qs}`, {
+    method: 'DELETE',
+  });
+}
+
+// ── Tâches d'équipe ──────────────────────────────────────────
+
+export type TaskStatusValue = 'A_FAIRE' | 'EN_COURS' | 'FAIT' | 'ANNULEE';
+
+export interface CreateTaskInput {
+  title: string;
+  dueDate: string;
+  assigneeId?: string;
+  batchId?: string;
+  notes?: string;
+}
+
+/** Crée une tâche d'équipe (PROPRIETAIRE) — statut initial A_FAIRE côté serveur. */
+export function createTask(farmId: string, input: CreateTaskInput): Promise<unknown> {
+  return apiFetch(`/farms/${farmId}/tasks`, {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export interface UpdateTaskInput {
+  title?: string;
+  dueDate?: string;
+  assigneeId?: string | null;
+  batchId?: string | null;
+  notes?: string | null;
+  status?: TaskStatusValue;
+}
+
+/** Met à jour une tâche — ELEVEUR limité au statut de ses propres tâches (403 sinon). */
+export function updateTask(
+  farmId: string,
+  taskId: string,
+  input: UpdateTaskInput,
+): Promise<unknown> {
+  return apiFetch(`/farms/${farmId}/tasks/${taskId}`, {
+    method: 'PATCH',
+    body: input,
+  });
+}
+
+/** Supprime une tâche (PROPRIETAIRE uniquement). */
+export function deleteTask(farmId: string, taskId: string): Promise<void> {
+  return apiFetch<void>(`/farms/${farmId}/tasks/${taskId}`, {
     method: 'DELETE',
   });
 }

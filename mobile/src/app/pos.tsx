@@ -30,7 +30,7 @@ function lotTitle(b: BatchWithMetrics): string {
 
 export default function PosScreen() {
   const router = useRouter();
-  const { farmId, mode } = useAuth();
+  const { farmId } = useAuth();
   const queryClient = useQueryClient();
   const { batch } = useLocalSearchParams<{ batch?: string }>();
   const autoOpenDone = useRef(false);
@@ -111,8 +111,10 @@ export default function PosScreen() {
     return result;
   };
 
+  // Edge 'bottom' : évite que la barre de panier passe sous la barre système
+  // Android (3 boutons) en mode edge-to-edge.
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right', 'bottom']}>
       <View style={styles.header}>
         <View style={styles.headerRow}>
           {router.canGoBack() ? (
@@ -301,7 +303,6 @@ export default function PosScreen() {
         promotions={promotionsQuery.data ?? []}
         pdvName={pdv?.name ?? 'Ferme'}
         pointOfSaleId={pdv?.id}
-        mode={mode}
         onSell={handleSell}
         onSettled={() => setLines([])}
         onClose={() => setRegisterOpen(false)}

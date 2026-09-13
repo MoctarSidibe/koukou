@@ -29,7 +29,7 @@ function PdvForm({
   initial?: PointOfSale;
   onClose: () => void;
 }) {
-  const { farmId, mode } = useAuth();
+  const { farmId } = useAuth();
   const queryClient = useQueryClient();
   const [name, setName] = useState(initial?.name ?? '');
   const [kind, setKind] = useState<'FERME' | 'BOUTIQUE'>(initial?.kind ?? 'BOUTIQUE');
@@ -57,11 +57,6 @@ function PdvForm({
         : {}),
     };
     try {
-      if (mode === 'demo') {
-        invalidateFarmQueries(queryClient, { farmId });
-        onClose();
-        return;
-      }
       const res = initial
         ? await updatePointOfSaleQueued(farmId, initial.id, input)
         : await createPointOfSaleQueued(farmId, input);
@@ -156,7 +151,7 @@ function PdvForm({
 }
 
 export default function PointsVenteScreen() {
-  const { farmId, user, mode } = useAuth();
+  const { farmId, user } = useAuth();
   const queryClient = useQueryClient();
   const canManage = canManageFarm(user.role);
   const pdvQuery = useQuery({ queryKey: ['points-of-sale', farmId], queryFn: () => fetchPointsOfSale(farmId) });
@@ -174,11 +169,6 @@ export default function PointsVenteScreen() {
     if (!confirmDelete) return;
     setDeleting(true);
     try {
-      if (mode === 'demo') {
-        invalidateFarmQueries(queryClient, { farmId });
-        setConfirmDelete(null);
-        return;
-      }
       const res = await deletePointOfSaleQueued(farmId, confirmDelete.id);
       invalidateFarmQueries(queryClient, { farmId });
       setConfirmDelete(null);

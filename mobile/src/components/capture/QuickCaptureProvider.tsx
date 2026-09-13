@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { BookUp, ClipboardList, PackageOpen } from 'lucide-react-native';
 
@@ -29,6 +29,13 @@ export function QuickCaptureProvider({ children }: { children: React.ReactNode }
   const router = useRouter();
   const [mode, setMode] = useState<Mode>('none');
   const [targetBatch, setTargetBatch] = useState<string | undefined>(undefined);
+  const [dailySticky, setDailySticky] = useState<React.ReactNode>(undefined);
+  const [dailyFooter, setDailyFooter] = useState<React.ReactNode>(undefined);
+
+  // En quittant le mode « saisie du jour », on ne laisse pas trainer son pied de page.
+  useEffect(() => {
+    if (mode !== 'daily') setDailyFooter(undefined);
+  }, [mode]);
 
   const close = () => setMode('none');
 
@@ -53,7 +60,7 @@ export function QuickCaptureProvider({ children }: { children: React.ReactNode }
 
   const titles: Record<Exclude<Mode, 'none'>, { title: string; subtitle: string; icon: React.ReactNode }> = {
     quick: { title: 'Nouvelle capture', subtitle: 'Choisissez une action', icon: <BookUp size={22} color={color.brand[600]} /> },
-    daily: { title: 'Saisie du jour', subtitle: 'Une section à la fois', icon: <ClipboardList size={22} color={color.brand[600]} /> },
+    daily: { title: 'Saisie du jour', subtitle: 'Tout sur un écran · analyses en direct', icon: <ClipboardList size={22} color={color.brand[600]} /> },
     feed: { title: 'Entrée de provende', subtitle: 'Nouveau lot HACCP', icon: <PackageOpen size={22} color={color.ink[600]} /> },
   };
 
@@ -72,7 +79,9 @@ export function QuickCaptureProvider({ children }: { children: React.ReactNode }
         onClose={close}
         title={meta?.title}
         subtitle={meta?.subtitle}
-        icon={meta?.icon}>
+        icon={meta?.icon}
+        stickyHeader={dailySticky}
+        footer={dailyFooter}>
         {mode === 'quick' && (
           <QuickActions
             onPick={(key) => {
@@ -85,7 +94,7 @@ export function QuickCaptureProvider({ children }: { children: React.ReactNode }
             }}
           />
         )}
-        {mode === 'daily' && <DailyEntrySheet initialBatchId={targetBatch} onClose={close} />}
+        {mode === 'daily' && <DailyEntrySheet initialBatchId={targetBatch} onClose={close} onStickyChange={setDailySticky} onFooterChange={setDailyFooter} />}
         {mode === 'feed' && <FeedEntrySheet onClose={close} />}
       </Sheet>
     </QuickCaptureContext.Provider>

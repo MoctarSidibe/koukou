@@ -8,10 +8,10 @@ import { AppText } from '@/components/ui/AppText';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Chip } from '@/components/ui/Chip';
+import { NumberInput } from '@/components/ui/NumberInput';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { Segmented } from '@/components/ui/Segmented';
 import { Spinner } from '@/components/ui/Spinner';
-import { Stepper } from '@/components/ui/Stepper';
 import { SlaughterStats } from '@/components/slaughter/SlaughterStats';
 import { useAuth } from '@/auth/AuthContext';
 import { fetchBatches, fetchSlaughterOrders } from '@/api';
@@ -53,7 +53,7 @@ function toneFor(status: SlaughterStatus) {
 }
 
 export default function SlaughterScreen() {
-  const { mode, farms, user, farmId } = useAuth();
+  const { farms, user, farmId } = useAuth();
   const canManage = canManageFarm(user.role);
   const queryClient = useQueryClient();
 
@@ -74,10 +74,6 @@ export default function SlaughterScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const download = async (order: SlaughterOrder) => {
-    if (mode === 'demo') {
-      Alert.alert('Disponible en mode connecté', 'Le bordereau PDF est généré par le serveur. Connectez-vous à votre ferme pour le télécharger.');
-      return;
-    }
     setBusy(order.id);
     try {
       await downloadPdf(`/farms/${farmId}/slaughter-orders/${order.id}/bordereau`, `${order.referenceNumber}.pdf`);
@@ -90,10 +86,6 @@ export default function SlaughterScreen() {
   };
 
   const downloadPasseport = async (b: ProductionBatch) => {
-    if (mode === 'demo') {
-      Alert.alert('Disponible en mode connecté', 'Le passeport sanitaire PDF est généré par le serveur. Connectez-vous à votre ferme pour le télécharger.');
-      return;
-    }
     setBusy(b.id);
     try {
       await downloadPdf(`/farms/${farmId}/batches/${b.id}/passeport`, `passeport-${b.batchName ?? b.id}.pdf`);
@@ -115,19 +107,15 @@ export default function SlaughterScreen() {
     setError(null);
     setBusy('create');
     try {
-      if (mode === 'live') {
-        await createSlaughterOrder(farmId, {
-          batchId: lotNow.id,
-          slaughterType: sType,
-          destination: dest,
-          plannedDate: date || todayStr(),
-          birdCount: birds,
-          ...(abattoirCode.trim() ? { abattoirLotCode: abattoirCode.trim() } : {}),
-          ...(notes.trim() ? { abattoirNotes: notes.trim() } : {}),
-        });
-      } else {
-        await new Promise<void>((r) => setTimeout(r, 400));
-      }
+      await createSlaughterOrder(farmId, {
+        batchId: lotNow.id,
+        slaughterType: sType,
+        destination: dest,
+        plannedDate: date || todayStr(),
+        birdCount: birds,
+        ...(abattoirCode.trim() ? { abattoirLotCode: abattoirCode.trim() } : {}),
+        ...(notes.trim() ? { abattoirNotes: notes.trim() } : {}),
+      });
       setBirds(0);
       setAbattoirCode('');
       setNotes('');
@@ -152,16 +140,12 @@ export default function SlaughterScreen() {
     async function run() {
       setBusy(order.id);
       try {
-        if (mode === 'live') {
-          if (action === 'send') {
-            await sendSlaughterOrder(farmId, order.id, { abattoirLotCode: order.abattoirLotCode ?? undefined });
-          } else if (action === 'process') {
-            await processSlaughterOrder(farmId, order.id, { abattoirLotCode: order.abattoirLotCode ?? undefined });
-          } else {
-            await cancelSlaughterOrder(farmId, order.id, 'Annulé depuis le mobile');
-          }
+        if (action === 'send') {
+          await sendSlaughterOrder(farmId, order.id, { abattoirLotCode: order.abattoirLotCode ?? undefined });
+        } else if (action === 'process') {
+          await processSlaughterOrder(farmId, order.id, { abattoirLotCode: order.abattoirLotCode ?? undefined });
         } else {
-          await new Promise<void>((r) => setTimeout(r, 400));
+          await cancelSlaughterOrder(farmId, order.id, 'Annulé depuis le mobile');
         }
         await invalidate();
       } catch (e) {
@@ -175,8 +159,7 @@ export default function SlaughterScreen() {
   const orders = ordersQuery.data ?? [];
 
   return (
-    <Screen>
-      <ScreenHeader title="Abattage & passeport" subtitle={farms[0]?.name ?? 'Ferme'} back right={<Scale size={18} color={color.ink[300]} />} />
+    <Screen header={<ScreenHeader title="Abattage & passeport" subtitle={farms[0]?.name ?? 'Ferme'} back right={<Scale size={18} color={color.ink[300]} />} />}>
 
       {batchesQuery.isLoading ? (
         <Spinner label="Chargement des lots…" />
@@ -227,17 +210,14 @@ export default function SlaughterScreen() {
                   value={dest}
                   onChange={setDest}
                 />
-                <Stepper
-                  value={birds}
-                  onChange={(n) => {
-                    setBirds(n);
+                <NumberInput
+                  value={birds > 0 ? String(birds) : ''}
+                  onChangeText={(t) => {
+                    setBirds(Math.min(parseInt(t, 10) || 0, lot?.quantityAlive ?? 0));
                     setError(null);
                   }}
-                  step={1}
-                  quickSteps={[5, 10, 25, 50]}
-                  min={0}
-                  max={lot?.quantityAlive ?? 0}
                   suffix="oiseaux"
+                  placeholder="0"
                 />
                 <TextInput
                   value={date}
@@ -275,8 +255,8 @@ export default function SlaughterScreen() {
                 ) : null}
                 <Button label="Créer l’ordre" tone="accent" icon={FileText} onPress={() => void create()} disabled={busy !== null} loading={busy === 'create'} />
                 <AppText size="caption" color="faint" style={{ textAlign: 'center' }}>
-                  {mode === 'live' ? 'Envoi : les critères sanitaires du lot sont vérifiés côté serveur.' : 'Démo · opération simulée'}
-                </AppText>
+                    Envoi : les critères sanitaires du lot sont vérifiés côté serveur.
+                  </AppText>
               </Card>
             </>
           ) : (

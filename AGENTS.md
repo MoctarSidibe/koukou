@@ -1,10 +1,10 @@
 # KouKou Ferme — AGENTS
 
-Poultry farm management app (**offline-first**) for Gabon (SaaS). Monorepo: `backend/` (NestJS), `web/` (admin console), `mobile/` (Expo prototype), `docs/`. GitHub: https://github.com/MoctarSidibe/koukou. Modules 1–5 delivered.
+Poultry farm management app (**offline-first**) for Gabon (SaaS), now multi-species (chicken, pintade, dinde, caille, canard, oie, faisan). Monorepo: `backend/` (NestJS), `web/` (admin console), `mobile/` (Expo prototype), `docs/`. GitHub: https://github.com/MoctarSidibe/koukou. Modules 1–5 delivered.
 
 ## Backend commands (from `backend/`)
 
-- `npm run start:dev` — dev watch · `npm run build` — compile (**serves as typecheck**, no dedicated script) · `npm run lint` — **oxlint** · `npm run format` — prettier on `src/**` and `test/**`
+- `npm run start:dev` — dev watch · `npm run build` — compile (**serves as typecheck**, no dedicated script) · `npm run lint` — **oxlint** · `npm run format` — prettier on `src/**/*.ts` and `test/**/*.ts`
 - `npm run test` — unit tests (`**/*.spec.ts`) · `npm run test:e2e` — e2e (`**/*.e2e-spec.ts`)
 - **e2e requires a local PostgreSQL.** Config via `backend/.env` (gitignored, **no `.env.example`**). Defaults: `localhost:5432`, user `postgres`, password `postgres`, database `koukou_ferme`
 - **e2e runs sequentially** (`fileParallelism:false`, `maxWorkers:1`) — specs share the same DB and boot `AppModule` with `synchronize:true`
@@ -45,6 +45,9 @@ Poultry farm management app (**offline-first**) for Gabon (SaaS). Monorepo: `bac
 | `tasks` | Équipe: `FarmTask` (A_FAIRE…), assignable to employee/batch, overdue `TACHE` alert. ELEVEUR sees only own tasks |
 | `advisory` | `GET /farms/:farmId/advisory/next-actions` — aggregated for mobile |
 | `platform` | `/admin/*` — PLATFORM_ADMIN only: metrics, provisioning, config |
+| `weather` | Weather observations, THI heat-stress alerts |
+| `points-of-sale` | POS terminal management |
+| `breeds` · `buildings` · `farms` · `users` · `reference-constants` | Support modules (own controllers/services, no invariants listed above) |
 
 ## Key invariants (would cause bugs if missed)
 
@@ -84,6 +87,7 @@ Poultry farm management app (**offline-first**) for Gabon (SaaS). Monorepo: `bac
 - PROPHYLAXIE RED if care is `EN_RETARD`, YELLOW if next care ≤ `calendar_lead_days`.
 - Health events `REFORME` or `MORTALITE` with `quantity>0` decrement `quantityAlive` immediately (pessimistic lock). Deletion restores it.
 - DELETE health event = PROPRIETAIRE only (403 for ELEVEUR).
+- **Pre-loaded vaccination programs (`vacc-*`) are species- AND type-specific.** The mobile wizard queries `GET /sanitary/protocols?species=&type=` scoped to the selected lots (single species + single type required); a mixed-species selection disables the program mode. `generateVaccineProgram` rejects with 400 (`BadRequestException`, French message) any lot whose `species`/`type` doesn't match the program — never ship a POULET program onto a non-POULET lot. Manual schedules unfold species from the server-side lot (no client species field).
 
 ### Advisory & alerts
 - **Advisory only, never blocking** — even for HACCP and sanitary. Red alert + recommendation + trace; user decides.
@@ -106,9 +110,9 @@ Poultry farm management app (**offline-first**) for Gabon (SaaS). Monorepo: `bac
 - **Expo SDK 54** + React Native 0.81.5 + React 19.1 + expo-router ~6.0.24 + TS ~5.9.2
 - SDK 54 chosen because Expo Go in stores was stuck on SDK 57 (not yet approved); SDK 55+ won't run in store Expo Go.
 - No NativeWind — StyleSheet + theme tokens. UI in French, code in English.
-- **Client API facade**: `src/api/index.ts` switches between mock (`src/api/mock.ts`) and live (`src/api/live.ts`) based on session. Always import from `@/api`, **never** `@/api/mock` directly in screens.
-- Commands (from `mobile/`): `npm run start` · `npm run typecheck` (= `tsc --noEmit`, **no `build` script**) · `npm run lint` (= **`eslint .`** — `npx expo lint` crashes on Node 22) · `npm run test` (= `vitest run`, environment node, tests in `src/api/*.test.ts` + `src/offline/engine.test.ts`)
-- **React Compiler rule** (lint `react-hooks/purity`): `Math.random`/`Date.now` must live **outside render** in module-scope helpers (e.g. `SaleSheet.demoSaleRef`, `newIdempotencyKey`).
+- **Client API facade 100 % live** : `src/api/index.ts` délègue uniquement à `src/api/live.ts` — la démo locale (`mock.ts`) a été supprimée. Toujours importer depuis `@/api`, **jamais** `@/api/live` directement. L'authentification est obligatoire (`AuthContext.signedIn`) ; le routage est verrouillé en dur via `<Stack.Protected guard={signedIn}>` dans `_layout.tsx` (login/register hors protected) — pas de `SessionGate`, pas de redirection `router.replace` au montage (évite le crash « no routes matched »). Le mode hors-ligne reste géré par la file FIFO (retry au retour en ligne), jamais par une simulation locale.
+- Commands (from `mobile/`): `npm run start` · `npm run typecheck` (= `tsc --noEmit`, **no `build` script**) · `npm run lint` (= **`eslint .`** — `npx expo lint` crashes on Node 22) · `npm run test` (= `vitest run`, environment node, tests in `src/**/*.test.ts` — `src/api/*.test.ts`, `src/offline/engine.test.ts`, `src/constants/phone.test.ts`)
+- **React Compiler rule** (lint `react-hooks/purity`): `Math.random`/`Date.now` must live **outside render** in module-scope helpers (e.g. `newIdempotencyKey`).
 - **Submit buttons that build state offline must bind `disabled={... || busy}`** (not just `loading`): a double-tap before `busy` flips could enqueue two ops (e.g. duplicate order-create). Include the local `busy` flag in `disabled`.
 - **`CustomTabBar` uses intentionally loose types** (`state`/`navigation` typed loosely, `emit/navigate` as `any`) — the types from `@react-navigation/bottom-tabs@7` forked by expo-router are incompatible. Do NOT reimport `BottomTabBarProps`.
 
@@ -131,7 +135,7 @@ Poultry farm management app (**offline-first**) for Gabon (SaaS). Monorepo: `bac
 
 ## Seeded data
 
-- Breeds: Chair (Cobb 500, Hubbard, Ross 308), Pondeuses (ISA Brown, Lohmann Brown). Custom breeds via `POST /breeds`.
+- Breeds: 33 default breeds across 8 species — Chair (Cobb 500, Ross 308, Ross 708, Hubbard, Arbor Acres, Sasso T451), Pondeuses (ISA Brown, Lohmann Brown, Hy-Line Brown, Novogen Brown, Bovans Brown, Shaver Brown), plus Pintade, Dinde, Caille, Canard, Oie, Faisan and Volaille Locale. Custom breeds via `POST /breeds`. Each seeded breed ships zootechnic reference curves (weight/FCR for chair, lay rate for pondeuse).
 - Constants: `standard_module`=3000 (POUFA reference), density 15/18 birds/m², empty-clean 14–21 days, age gap 4 weeks, mortality/water/feed/IPE/GMQ thresholds.
 - Protocols: `proto-poulet-chair-standard`, `proto-poule-pondeuse-standard` + Gabon vaccination programs (`GABON_VACC_PROTOCOLS`).
 - Reference constants: `GET /reference-constants` (read for PROPRIETAIRE+ELEVEUR), `PATCH` only by PLATFORM_ADMIN. Values strictly positive (0 rejected).

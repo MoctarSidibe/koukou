@@ -41,16 +41,32 @@ interface ApiInit {
   body?: unknown;
 }
 
+const REQUEST_TIMEOUT_MS = 15_000;
+
 export async function apiFetch<T>(path: string, init: ApiInit = {}): Promise<T> {
   const session = loadSession();
-  const res = await fetch(`${API_BASE_URL}${path}`, {
-    method: init.method ?? 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(session ? { Authorization: `Bearer ${session.token}` } : {}),
-    },
-    body: init.body != null ? JSON.stringify(init.body) : undefined,
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}${path}`, {
+      method: init.method ?? 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(session ? { Authorization: `Bearer ${session.token}` } : {}),
+      },
+      body: init.body != null ? JSON.stringify(init.body) : undefined,
+      signal: controller.signal,
+    });
+  } catch (e: unknown) {
+    if (controller.signal.aborted) {
+      throw new Error('Le serveur ne répond pas. Vérifiez votre connexion et réessayez.');
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 
   const contentType = res.headers.get('content-type') ?? '';
   let body: unknown = null;

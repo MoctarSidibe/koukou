@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { Circle, Line, Polyline, Svg, Text as SvgText } from 'react-native-svg';
+import { Circle, Line, Path, Svg, Text as SvgText } from 'react-native-svg';
 
 import { AppText } from './AppText';
 import { color, palette } from '@/constants/theme';
@@ -38,24 +38,41 @@ export function LineChart({
 }: LineChartProps) {
   const H = height;
 
-  const { min, max, hasNull } = useMemo(() => {
-    const ys = points.map((p) => p.y).filter((y): y is number => y != null);
-    const refs = referencePoints?.map((p) => p.y) ?? [];
+  const domain = useMemo(() => {
+    const isFiniteNum = (y: number | null | undefined): y is number => typeof y === 'number' && Number.isFinite(y);
+    const ys = points.map((p) => p.y).filter(isFiniteNum);
+    const refs = referencePoints?.map((p) => p.y).filter(isFiniteNum) ?? [];
     const all = [...ys, ...refs];
-    return { min: Math.min(...all) * 0.97, max: Math.max(...all) * 1.03, hasNull: points.some((p) => p.y == null) };
+    if (all.length === 0) return null;
+    const lo = Math.min(...all);
+    const hi = Math.max(...all);
+    const span = Math.max(0.0001, hi - lo);
+    return { min: lo - span * 0.03, max: hi + span * 0.03, hasNull: points.some((p) => p.y == null) };
   }, [points, referencePoints]);
+
+  if (!domain) {
+    return (
+      <View>
+        <AppText size="small" color="muted" align="center" style={{ paddingVertical: 24 }}>
+          Aucune donnée
+        </AppText>
+      </View>
+    );
+  }
+  const { min, max, hasNull } = domain;
 
   const mainPath = hasNull
     ? null
-    : buildPath(points.map((p) => p.y as number), H, min, max);
+    : buildPath(points.map((p) => p.y).filter((y): y is number => typeof y === 'number' && Number.isFinite(y)), H, min, max);
   const referencePath = referencePoints
-    ? buildPath(referencePoints.map((p) => p.y), H, min, max)
+    ? buildPath(referencePoints.map((p) => p.y).filter((y): y is number => typeof y === 'number' && Number.isFinite(y)), H, min, max)
     : null;
 
   const lastIndex = points.length - 1;
+  const lastYRaw = points[lastIndex]?.y;
   const lastY =
-    !hasNull && points[lastIndex]?.y != null
-      ? PAD_T + (1 - ((points[lastIndex].y as number) - min) / Math.max(0.0001, max - min)) * (H - PAD_T - PAD_B)
+    !hasNull && typeof lastYRaw === 'number' && Number.isFinite(lastYRaw)
+      ? PAD_T + (1 - (lastYRaw - min) / Math.max(0.0001, max - min)) * (H - PAD_T - PAD_B)
       : null;
   const lastX = W - PAD_R;
 
@@ -84,9 +101,9 @@ export function LineChart({
           </SvgText>
         ))}
         {referencePath ? (
-          <Polyline points={referencePath} fill="none" stroke={color.ink[200]} strokeWidth={2} strokeDasharray="6 5" />
+          <Path d={referencePath} fill="none" stroke={color.ink[200]} strokeWidth={2} strokeDasharray="6 5" />
         ) : null}
-        {mainPath ? <Polyline points={mainPath} fill="none" stroke={stroke} strokeWidth={3} strokeLinejoin="round" /> : null}
+        {mainPath ? <Path d={mainPath} fill="none" stroke={stroke} strokeWidth={3} strokeLinejoin="round" /> : null}
         {lastY != null ? <Circle cx={lastX} cy={lastY} r={4.5} fill={stroke} /> : null}
       </Svg>
       <View style={styles.xLabels}>

@@ -1,11 +1,12 @@
 import React, { useMemo } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, View, type ImageSourcePropType } from 'react-native';
 import { Image } from 'expo-image';
 import { X } from 'lucide-react-native';
 
 import { AppText } from '@/components/ui/AppText';
 import { palette, radii } from '@/constants/theme';
 import { SPECIES_ICONS, speciesLabel } from '@/api/format';
+import { BREED_IMAGES } from '@/constants/breedImages';
 import type { BatchWithMetrics, Species } from '@/api/types';
 
 interface CheptelModalProps {
@@ -25,29 +26,42 @@ const SPECIES_IMAGES: Record<Species, number> = {
   AUTRE: require('@/assets/images/chiken.jpg'),
 };
 
-interface SpeciesGroup {
+interface BreedGroup {
   key: string;
   species: Species;
   label: string;
-  image: number;
+  code: string | null;
+  speciesCaption: string;
+  image: ImageSourcePropType;
   alive: number;
   started: number;
   losses: number;
 }
 
 export function CheptelModal({ visible, batches, onClose }: CheptelModalProps) {
-  const groups = useMemo<SpeciesGroup[]>(() => {
-    const byKey = new Map<string, SpeciesGroup>();
+  const groups = useMemo<BreedGroup[]>(() => {
+    const byKey = new Map<string, BreedGroup>();
     for (const b of batches) {
       const species = b.species ?? 'AUTRE';
-      const key = species === 'AUTRE' ? `AUTRE|${b.customSpecies ?? ''}` : species;
+      const label = b.breedName?.trim()
+        ? b.breedName.trim()
+        : species === 'AUTRE'
+          ? (b.customSpecies ?? speciesLabel(species))
+          : speciesLabel(species);
+      // Le groupe porte le nom de la souche quand elle est connue :
+      // on affiche donc son visuel en priorité (espèce en secours).
+      const image =
+        (b.breedName?.trim() ? BREED_IMAGES[b.breedName.trim()] : undefined) ?? SPECIES_IMAGES[species];
+      const key = `${species}|${label}`;
       let g = byKey.get(key);
       if (!g) {
         g = {
           key,
           species,
-          label: species === 'AUTRE' ? (b.customSpecies ?? speciesLabel(species)) : speciesLabel(species),
-          image: SPECIES_IMAGES[species],
+          label,
+          code: b.breedCode ?? null,
+          speciesCaption: speciesLabel(species),
+          image,
           alive: 0,
           started: 0,
           losses: 0,
@@ -74,7 +88,7 @@ export function CheptelModal({ visible, batches, onClose }: CheptelModalProps) {
             <View>
               <AppText size="h3" weight="bold" color="text">Cheptel vivant</AppText>
               <AppText size="small" color="faint">
-                {groups.length > 0 ? `${groups.length} espèce(s) · ${fmtNumber(totalAlive)} oiseau(x)` : 'Aucune donnée'}
+                {groups.length > 0 ? `${groups.length} souche(s) · ${fmtNumber(totalAlive)} oiseau(x)` : 'Aucune donnée'}
               </AppText>
             </View>
             <Pressable
@@ -102,6 +116,7 @@ export function CheptelModal({ visible, batches, onClose }: CheptelModalProps) {
                       <AppText size="body" weight="bold" color="text" numberOfLines={1} style={styles.rowLabel}>{g.label}</AppText>
                       <AppText size="small">{SPECIES_ICONS[g.species]}</AppText>
                     </View>
+                    <AppText size="caption" color="faint" numberOfLines={1}>{g.speciesCaption}{g.code ? ` · ${g.code}` : ''}</AppText>
                     <View style={styles.statsRow}>
                       <View style={styles.stat}>
                         <AppText size="body" weight="bold" color="success">{fmtNumber(g.alive)}</AppText>

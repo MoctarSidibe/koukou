@@ -51,7 +51,7 @@ function BreakdownRow({ label, quantity, amount }: { label: string; quantity?: n
 }
 
 export default function RapportsScreen() {
-  const { mode, farms, farmId } = useAuth();
+  const { farms, farmId } = useAuth();
 
   const batchesQuery = useQuery({ queryKey: ['batches', farmId], queryFn: () => fetchBatches(farmId) });
   const overviewQuery = useQuery({ queryKey: ['rentabilite', farmId], queryFn: () => fetchRentabiliteOverview(farmId) });
@@ -69,11 +69,7 @@ export default function RapportsScreen() {
 
   const ov: OverviewPnl | undefined = overviewQuery.data;
 
-  const demoPdfNotice = () =>
-    Alert.alert('Disponible en mode connecté', 'Le rapport PDF est généré par le serveur. Connectez-vous à votre ferme pour le télécharger.');
-
   const exportOverview = async () => {
-    if (mode === 'demo') return demoPdfNotice();
     const from = ov?.period?.from?.slice(0, 10);
     const to = ov?.period?.to?.slice(0, 10);
     const query = from ? `?from=${from}${to ? `&to=${to}` : ''}` : '';
@@ -86,7 +82,6 @@ export default function RapportsScreen() {
   };
 
   const exportBatch = async () => {
-    if (mode === 'demo') return demoPdfNotice();
     if (!batchId) return;
     try {
       await downloadPdf(`/farms/${farmId}/rentabilite/batches/${batchId}/export`, `pnl-lot-${batchId}.pdf`);
@@ -97,8 +92,7 @@ export default function RapportsScreen() {
   };
 
   return (
-    <Screen>
-      <ScreenHeader title="Rentabilité & rapports" subtitle={farms[0]?.name ?? 'Ferme'} back right={<FileBarChart2 size={18} color={color.ink[300]} />} />
+    <Screen header={<ScreenHeader title="Rentabilité & rapports" subtitle={farms[0]?.name ?? 'Ferme'} back right={<FileBarChart2 size={18} color={color.ink[300]} />} />}>
 
       {overviewQuery.isLoading ? (
         <Spinner label="Calcul du P&L…" />
@@ -169,7 +163,7 @@ export default function RapportsScreen() {
         batchQuery.isLoading ? (
           <Spinner label="P&L du lot…" />
         ) : batchQuery.data ? (
-          <BatchPnlCard pnl={batchQuery.data} onExport={() => void exportBatch()} mode={mode} />
+          <BatchPnlCard pnl={batchQuery.data} onExport={() => void exportBatch()} />
         ) : null
       ) : (
         <AppText size="caption" color="muted">
@@ -184,7 +178,7 @@ function STYLE_TONE(status: BatchStatus) {
   return STATUS_TONE[status] ?? 'neutral';
 }
 
-function BatchPnlCard({ pnl, onExport, mode }: { pnl: BatchPnl; onExport: () => void; mode: string }) {
+function BatchPnlCard({ pnl, onExport }: { pnl: BatchPnl; onExport: () => void }) {
   const negative = pnl.netFcfa < 0;
   return (
     <Card tone={negative ? 'alert' : 'brand'} style={styles.card}>
@@ -249,7 +243,7 @@ function BatchPnlCard({ pnl, onExport, mode }: { pnl: BatchPnl; onExport: () => 
         </View>
       ) : null}
       <AppText size="caption" color="faint" style={{ textAlign: 'center' }}>
-        {mode === 'live' ? 'Coûts de poussins et aliments déduits automatiquement des intrants HACCP.' : 'Démo · chiffres simulés'}
+        Coûts de poussins et aliments déduits automatiquement des intrants HACCP.
       </AppText>
       <Button label="Exporter le P&L du lot" tone="ghost" size="md" icon={Download} onPress={onExport} />
     </Card>

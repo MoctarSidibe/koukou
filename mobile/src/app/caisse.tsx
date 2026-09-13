@@ -89,7 +89,7 @@ function RowRow({ label, value, warn }: { label: string; value: string; warn?: b
 }
 
 export default function CaisseScreen() {
-  const { farms, mode, user, farmId } = useAuth();
+  const { farms, user, farmId } = useAuth();
   const canManage = canManageFarm(user.role);
   const queryClient = useQueryClient();
 
@@ -114,13 +114,8 @@ export default function CaisseScreen() {
     setBusy(true);
     setError(null);
     try {
-      if (mode === 'live') {
-        if (kind === 'open') await openCaisse(farmId, value);
-        else await closeCaisse(farmId, value);
-      } else {
-        const latency = () => new Promise<void>((r) => setTimeout(r, 400));
-        await latency();
-      }
+      if (kind === 'open') await openCaisse(farmId, value);
+      else await closeCaisse(farmId, value);
       setAmount('');
       const invalidate = [
         ['caisse', farmId] as const,
@@ -136,8 +131,7 @@ export default function CaisseScreen() {
   };
 
   return (
-    <Screen>
-      <ScreenHeader title="Caisse du jour" subtitle={farms[0]?.name ?? 'Ferme'} back right={<Coins size={18} color={color.ink[300]} />} />
+    <Screen header={<ScreenHeader title="Caisse du jour" subtitle={farms[0]?.name ?? 'Ferme'} back right={<Coins size={18} color={color.ink[300]} />} />}>
 
       {caisse.isLoading ? (
         <Spinner label="Lecture de la caisse…" />
@@ -196,11 +190,6 @@ export default function CaisseScreen() {
                 disabled={busy}
                 loading={busy}
               />
-              {mode !== 'live' ? (
-                <AppText size="caption" color="faint" style={{ textAlign: 'center', marginTop: 4 }}>
-                  Démo · opération simulée
-                </AppText>
-              ) : null}
             </Card>
           ) : (
             <Card tone="default" style={styles.card}>

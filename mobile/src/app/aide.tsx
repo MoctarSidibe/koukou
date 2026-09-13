@@ -44,7 +44,6 @@ export default function AideScreen() {
           lines={[
             'Créez votre ferme dans la console web : nom, commune, capacité.',
             'Ensuite, connectez cette application avec vos identifiants (« Connexion au serveur »).',
-            'En démo, les données sont simulées pour découvrir l’application.',
           ]}
         />
         <GuideCard
@@ -115,7 +114,7 @@ export default function AideScreen() {
         <GuideCard
           icon={<Timer size={18} color={color.ink[400]} />}
           title="Statut"
-          lines={['Application mobile en phase prototype — les données démo sont fictives.']}
+          lines={['Application mobile reliée au serveur ; les saisies hors-ligne se synchronisent au retour en ligne.']}
         />
       </View>
 

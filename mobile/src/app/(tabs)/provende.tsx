@@ -3,6 +3,7 @@ import { Image, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import {
+  AlertTriangle,
   ArrowDownRight,
   Box,
   Package,
@@ -11,6 +12,7 @@ import {
   Pill,
   Plus,
   Scale,
+  TrendingUp,
   Truck,
   Wheat,
   type LucideIcon,
@@ -22,12 +24,12 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Chip, levelTone } from '@/components/ui/Chip';
 import { MetricTile } from '@/components/ui/MetricTile';
+import { NumberInput } from '@/components/ui/NumberInput';
 import { PeriodBar, periodWindow, type PeriodWindow } from '@/components/ui/PeriodBar';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { Segmented } from '@/components/ui/Segmented';
 import { Sheet } from '@/components/ui/Sheet';
 import { Spinner } from '@/components/ui/Spinner';
-import { Stepper } from '@/components/ui/Stepper';
 import { useAuth } from '@/auth/AuthContext';
 import { useQuickCapture } from '@/components/capture/QuickCaptureProvider';
 import { useLiveMinute } from '@/hooks/useLiveMinute';
@@ -143,6 +145,130 @@ function TypeCard({ t, pricePerKg }: { t: FeedTypeStock; pricePerKg: number | nu
           </AppText>
         </View>
       ) : null}
+    </Card>
+  );
+}
+
+/** Insight consommation provende : rythme / jour, tendance, couverture et ordre suggéré. */
+function ConsumptionInsight({ byType, mvts }: { byType: FeedTypeStock[]; mvts: FeedMovement[] }) {
+  const today = useMemo(() => {
+    const t = new Date();
+    return new Date(Date.UTC(t.getFullYear(), t.getMonth(), t.getDate()));
+  }, []);
+  const dayStr = (d: Date) => d.toISOString().slice(0, 10);
+  const d7 = dayStr(new Date(today.getTime() - 7 * 86_400_000));
+  const d14 = dayStr(new Date(today.getTime() - 14 * 86_400_000));
+
+  const { avg7, days7, avg14, days14 } = useMemo(() => {
+    const byDay = new Map<string, number>();
+    for (const m of mvts) {
+      if (m.type !== 'CONSOMMATION' || m.quantityKg <= 0) continue;
+      const d = m.date.slice(0, 10);
+      byDay.set(d, (byDay.get(d) ?? 0) + m.quantityKg);
+    }
+    const windowAvg = (from: string) => {
+      let sum = 0;
+      let days = 0;
+      for (const [d, kg] of byDay) {
+        if (d >= from) {
+          sum += kg;
+          days += 1;
+        }
+      }
+      return { avg: days > 0 ? sum / days : 0, days };
+    };
+    const a = windowAvg(d7);
+    const b = windowAvg(d14);
+    return { avg7: a.avg, days7: a.days, avg14: b.avg, days14: b.days };
+  }, [mvts, d7, d14]);
+
+  const hasCons = days7 > 0;
+  const totalKg = byType.reduce((s, t) => s + t.availableKg, 0);
+  const coverageDays = hasCons && avg7 > 0 ? totalKg / avg7 : null;
+  const trendPct = hasCons && days14 > 0 && avg14 > 0 ? ((avg7 - avg14) / avg14) * 100 : null;
+
+  const pricePerKg = useMemo(() => {
+    const priced = mvts.filter((m) => m.valueFcfa != null && m.quantityKg > 0);
+    if (priced.length === 0) return null;
+    const kg = priced.reduce((s, m) => s + m.quantityKg, 0);
+    const fcfa = priced.reduce((s, m) => s + (m.valueFcfa ?? 0), 0);
+    return kg > 0 ? fcfa / kg : null;
+  }, [mvts]);
+  const costPerDay = hasCons && pricePerKg != null ? avg7 * pricePerKg : null;
+
+  const critical = useMemo(() => {
+    const withAuto = byType.filter((t) => t.autonomyDays != null);
+    if (withAuto.length === 0) return null;
+    return withAuto.reduce((a, b) => ((a.autonomyDays ?? 0) < (b.autonomyDays ?? 0) ? a : b));
+  }, [byType]);
+  const critDays = critical?.autonomyDays ?? null;
+  const critRate = critical && critDays != null && critDays > 0 ? critical.availableKg / critDays : avg7;
+  const need7Kg = critDays != null && critDays < 8 && critRate > 0 ? Math.ceil(critRate * 7) : null;
+
+  const coverTone = coverageDays == null ? 'muted' : coverageDays < 5 ? 'danger' : coverageDays < 8 ? 'warn' : 'text';
+  const cardTone = coverageDays != null ? (coverageDays < 5 ? 'warn' : 'green') : 'default';
+
+  return (
+    <Card tone={cardTone} style={styles.insightCard}>
+      <View style={styles.insightHead}>
+        <View style={styles.insightIcon}>
+          <TrendingUp size={16} color={palette.brand[600]} strokeWidth={2.3} />
+        </View>
+        <View style={{ flex: 1, gap: 1 }}>
+          <AppText size="body" weight="bold" color="text">Consommation & couverture</AppText>
+          <AppText size="caption" color="muted">Rythme des {Math.max(days7, 1)} derniers jours de relevés</AppText>
+        </View>
+        {trendPct != null ? (
+          <Chip
+            label={`${trendPct >= 0 ? '▲ +' : '▼ '}${trendPct.toFixed(0)} %`}
+            tone={Math.abs(trendPct) > 10 ? 'amber' : 'neutral'}
+          />
+        ) : null}
+      </View>
+
+      <View style={styles.summaryStrip}>
+        <View style={styles.summaryItem}>
+          <AppText size="caption" color="muted">Consommation / jour</AppText>
+          <AppText size="body" weight="bold" color={hasCons ? 'text' : 'faint'}>
+            {hasCons ? `${Math.round(avg7)} kg` : '—'}
+          </AppText>
+          <AppText size="caption" color="muted">{hasCons ? 'moyenne relevée' : 'saisies du jour'}</AppText>
+        </View>
+        <View style={styles.summaryDivider} />
+        <View style={styles.summaryItem}>
+          <AppText size="caption" color="muted">Couverture du stock</AppText>
+          <AppText size="body" weight="bold" color={coverTone}>
+            {coverageDays != null ? `${Math.round(coverageDays)} j` : '—'}
+          </AppText>
+          <AppText size="caption" color="muted">à ce rythme</AppText>
+        </View>
+        <View style={styles.summaryDivider} />
+        <View style={styles.summaryItem}>
+          <AppText size="caption" color="muted">Coût estimé / jour</AppText>
+          <AppText size="body" weight="bold" color={costPerDay != null ? 'text' : 'faint'}>
+            {costPerDay != null ? `${Math.round(costPerDay).toLocaleString('fr-FR')} FCFA` : '—'}
+          </AppText>
+          <AppText size="caption" color="muted">{pricePerKg != null ? `≈ ${Math.round(pricePerKg)} FCFA/kg` : 'prix inconnu'}</AppText>
+        </View>
+      </View>
+
+      {need7Kg != null && critical && critDays != null ? (
+        <View style={[styles.insightTip, { backgroundColor: color.amber[50], borderColor: palette.amber[200] }]}>
+          <AlertTriangle size={14} color={palette.amber[700]} />
+          <AppText size="small" style={{ color: palette.amber[700], flex: 1, lineHeight: 17 }}>
+            <AppText size="small" weight="bold">{FEED_PHASE_LABELS[critical.feedPhase]} : {Math.round(critDays)} j restants.</AppText>
+            {' '}Prévoyez ≈ {need7Kg.toLocaleString('fr-FR')} kg (soit ~{Math.ceil(need7Kg / 50)} sacs de 50 kg) pour couvrir 7 jours.
+          </AppText>
+        </View>
+      ) : critical ? (
+        <AppText size="small" style={{ color: critDays != null && critDays < 8 ? palette.amber[700] : palette.green[700], lineHeight: 17 }}>
+          {critDays != null && critDays < 8 ? 'Stock suffisant mais à surveiller —' : 'Stock suffisant —'} minimum {Math.round(critDays ?? 0)} j d’autonomie ({critical.feedPhase ? FEED_PHASE_LABELS[critical.feedPhase] : 'aliment'}).
+        </AppText>
+      ) : (
+        <AppText size="small" color="muted" style={{ lineHeight: 17 }}>
+          Aucun stock suivi : ajoutez des entrées de provende pour calculer l’autonomie et la recommandation.
+        </AppText>
+      )}
     </Card>
   );
 }
@@ -284,22 +410,24 @@ export default function ProvendeScreen() {
       bottomPad={120}
       refreshing={stock.isFetching}
       onRefresh={() => void stock.refetch()}
+      header={
+        <>
+          {/* ── HEADER + DATE BAR (fixes, comme Accueil) ── */}
+          <View style={styles.customHeader}>
+            <Image source={require('@/assets/images/logo-nav.png')} style={styles.headerLogo} />
+            <View style={{ flex: 1 }}>
+              <AppText size="h2" weight="bold" color="text" numberOfLines={1}>
+                Provende
+              </AppText>
+              <AppText size="small" color="muted" numberOfLines={1}>
+                Stock & inventaire · pertes & mouvements
+              </AppText>
+            </View>
+          </View>
+          <PeriodBar defaultSpan="all" onChange={handlePeriodChange} />
+        </>
+      }
     >
-      <View style={styles.customHeader}>
-        <Image source={require('@/assets/images/logo-nav.png')} style={styles.headerLogo} />
-        <View style={{ flex: 1 }}>
-          <AppText size="h2" weight="bold" color="text" numberOfLines={1}>
-            Provende
-          </AppText>
-          <AppText size="small" color="muted" numberOfLines={1}>
-            Stock & inventaire · pertes & mouvements
-          </AppText>
-        </View>
-      </View>
-
-      {/* ── DATE BAR (Accueil style) : filtre la fenêtre du journal ── */}
-      <PeriodBar defaultSpan="all" onChange={handlePeriodChange} />
-
       <View style={styles.tabBar}>
         <Segmented
           options={[
@@ -383,6 +511,8 @@ export default function ProvendeScreen() {
               icon={Package}
             />
           </View>
+
+          {byType.length > 0 ? <ConsumptionInsight byType={byType} mvts={mvts} /> : null}
 
           <SectionHeader title="Inventaire par type" subtitle="Autonomie en jours · valeur estimée au prix moyen" />
           <View style={{ gap: 10 }}>
@@ -549,18 +679,14 @@ export default function ProvendeScreen() {
                 onChange={setLossUnit}
                 haptic
               />
-              <Stepper
-                value={lossQty}
-                onChange={(n) => {
-                  setLossQty(n);
+              <NumberInput
+                value={lossQty > 0 ? String(lossQty) : ''}
+                onChangeText={(t) => {
+                  setLossQty(Math.min(parseInt(t, 10) || 0, lossCap));
                   setLossError(null);
                 }}
-                step={lossUnit === 'SAC' ? 1 : 25}
-                quickSteps={lossUnit === 'SAC' ? [1, 2, 5] : [25, 50, 100]}
-                min={0}
-                max={lossCap}
                 suffix={lossUnit === 'SAC' ? 'sacs' : 'kg'}
-                big
+                placeholder="0"
               />
             </View>
 
@@ -716,6 +842,33 @@ const styles = StyleSheet.create({
   card: {
     gap: 8,
     padding: 14,
+  },
+  insightCard: {
+    gap: 10,
+    padding: 14,
+    marginBottom: 12,
+  },
+  insightHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  insightIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: palette.brand[50],
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  insightTip: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
   },
   cardHead: {
     flexDirection: 'row',

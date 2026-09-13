@@ -217,7 +217,7 @@ function SectionTitle({ icon: Icon, title }: { icon: LucideIcon; title: string }
 }
 
 export function FeedEntrySheet({ onClose }: FeedEntrySheetProps) {
-  const { mode, farmId } = useAuth();
+  const { farmId } = useAuth();
   const queryClient = useQueryClient();
 
   const feedStock = useQuery({
@@ -404,25 +404,18 @@ export function FeedEntrySheet({ onClose }: FeedEntrySheetProps) {
       return;
     }
 
-    if (mode === 'live') {
-      setSaving(true);
-      try {
-        const result = await createFeedInputQueued(farmId, typed);
-        if (result.status === 'sent') invalidateFarmQueries(queryClient, { farmId });
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-        setQueued(result.status === 'queued');
-        setSaved(true);
-        setTimeout(onClose, 1100);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'Erreur lors de l’enregistrement.');
-        setSaving(false);
-        return;
-      }
-    } else {
-      await new Promise<void>((r) => setTimeout(r, 400));
+    setSaving(true);
+    try {
+      const result = await createFeedInputQueued(farmId, typed);
+      if (result.status === 'sent') invalidateFarmQueries(queryClient, { farmId });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      setQueued(result.status === 'queued');
       setSaved(true);
       setTimeout(onClose, 1100);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erreur lors de l’enregistrement.');
+      setSaving(false);
+      return;
     }
   };
 
@@ -436,11 +429,9 @@ export function FeedEntrySheet({ onClose }: FeedEntrySheetProps) {
           Entrée enregistrée
         </AppText>
         <AppText size="caption" color="muted" align="center">
-          {mode === 'live'
-            ? queued
-              ? 'Mise en attente · sera synchronisée le retour en ligne'
-              : 'Lot HACCP créé, stock provende mis à jour.'
-            : 'En attente de synchronisation'}
+          {queued
+            ? 'Mise en attente · sera synchronisée le retour en ligne'
+            : 'Lot HACCP créé, stock provende mis à jour.'}
         </AppText>
       </View>
     );

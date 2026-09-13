@@ -1,6 +1,4 @@
-import { loadSession } from './token';
 import { LiveApi } from './live';
-import * as mock from './mock';
 import type {
   AdvisoryData,
   BatchCurve,
@@ -14,6 +12,8 @@ import type {
   DashboardData,
   Expense,
   FarmMember,
+  FarmTask,
+  DailyEntryRecord,
   FeedMovement,
   FeedProduct,
   FeedStockSummary,
@@ -41,131 +41,133 @@ import type {
 
 const live = new LiveApi();
 
+/**
+ * L'application est désormais 100 % connectée (plus de démo en local) :
+ * chaque appel part vers le serveur. Conservée pour compatibilité API.
+ */
 export function isLive(): boolean {
-  const s = loadSession();
-  if (!s?.token) return false;
-  const farmId = s.activeFarmId ?? s.farms[0]?.id;
-  return farmId !== 'farm-demo';
+  return true;
 }
 
 export function fetchDashboard(farmId: string, date?: string, time?: string): Promise<DashboardData> {
-  return isLive() ? live.fetchDashboard(farmId, date, time) : mock.fetchDashboard(farmId, date);
+  return live.fetchDashboard(farmId, date, time);
 }
 
-export function fetchBatches(farmId: string): Promise<BatchWithMetrics[]> {
-  return isLive() ? live.fetchBatches(farmId) : mock.fetchBatches(farmId);
+export function fetchBatches(farmId: string, asOf?: string): Promise<BatchWithMetrics[]> {
+  return live.fetchBatches(farmId, asOf);
 }
 
-export function fetchBatch(farmId: string, batchId: string): Promise<BatchWithMetrics> {
-  return isLive() ? live.fetchBatch(farmId, batchId) : mock.fetchBatch(farmId, batchId);
+export function fetchBatch(farmId: string, batchId: string, asOf?: string): Promise<BatchWithMetrics> {
+  return live.fetchBatch(farmId, batchId, asOf);
 }
 
 export function fetchCurve(farmId: string, batchId: string): Promise<BatchCurve> {
-  return isLive() ? live.fetchCurve(farmId, batchId) : mock.fetchCurve(farmId, batchId);
+  return live.fetchCurve(farmId, batchId);
 }
 
 export function fetchAdvisory(farmId: string): Promise<AdvisoryData> {
-  return isLive() ? live.fetchAdvisory(farmId) : mock.fetchAdvisory(farmId);
+  return live.fetchAdvisory(farmId);
 }
 
 export function fetchFeedStock(farmId: string): Promise<FeedStockSummary> {
-  return isLive() ? live.fetchFeedStock(farmId) : mock.fetchFeedStock(farmId);
+  return live.fetchFeedStock(farmId);
 }
 
 export function fetchFeedProducts(farmId: string): Promise<FeedProduct[]> {
-  return isLive() ? live.fetchFeedProducts(farmId) : mock.fetchFeedProducts(farmId);
+  return live.fetchFeedProducts(farmId);
 }
 
 export function fetchFeedMovements(farmId: string): Promise<FeedMovement[]> {
-  return isLive() ? live.fetchFeedMovements(farmId) : mock.fetchFeedMovements(farmId);
+  return live.fetchFeedMovements(farmId);
 }
 
 export function fetchCaisseCurrent(farmId: string): Promise<CaisseSummary | null> {
-  return isLive() ? live.fetchCaisseCurrent(farmId) : mock.fetchCaisseCurrent(farmId);
+  return live.fetchCaisseCurrent(farmId);
 }
 
 export function fetchCaisseSessions(farmId: string): Promise<CashSession[]> {
-  return isLive() ? live.fetchCaisseSessions(farmId) : mock.fetchCaisseSessions(farmId);
+  return live.fetchCaisseSessions(farmId);
 }
 
-export function fetchProtocols(): Promise<SanitaryProtocol[]> {
-  return isLive() ? live.fetchProtocols() : mock.fetchProtocols();
+export function fetchProtocols(
+  species?: string,
+  type?: string,
+): Promise<SanitaryProtocol[]> {
+  return live.fetchProtocols(species, type);
 }
 
 export function fetchSanitaryProgram(
   id: string,
 ): Promise<SanitaryProtocolWithSteps> {
-  return isLive()
-    ? live.fetchSanitaryProgram(id)
-    : mock.fetchSanitaryProgram(id);
+  return live.fetchSanitaryProgram(id);
 }
 
 export function fetchFarmInputs(farmId: string): Promise<InputLot[]> {
-  return isLive() ? live.fetchFarmInputs(farmId) : mock.fetchFarmInputs(farmId);
+  return live.fetchFarmInputs(farmId);
 }
 
 export function fetchProphylaxis(farmId: string, batchId: string): Promise<ProphylaxisEvent[]> {
-  return isLive() ? live.fetchProphylaxis(farmId, batchId) : mock.fetchProphylaxis(farmId, batchId);
+  return live.fetchProphylaxis(farmId, batchId);
 }
 
 export function fetchTreatments(farmId: string, batchId: string): Promise<TreatmentRecord[]> {
-  return isLive() ? live.fetchTreatments(farmId, batchId) : mock.fetchTreatments(farmId, batchId);
+  return live.fetchTreatments(farmId, batchId);
 }
 
 export function fetchBatchHealth(farmId: string, batchId: string): Promise<BatchHealth> {
-  return isLive() ? live.fetchBatchHealth(farmId, batchId) : mock.fetchBatchHealth(farmId, batchId);
+  return live.fetchBatchHealth(farmId, batchId);
 }
 
 export function fetchHealthEvents(farmId: string, batchId: string): Promise<HealthEvent[]> {
-  return isLive() ? live.fetchHealthEvents(farmId, batchId) : mock.fetchHealthEvents(farmId, batchId);
+  return live.fetchHealthEvents(farmId, batchId);
 }
 
 export function fetchSlaughterOrders(farmId: string): Promise<SlaughterOrder[]> {
-  return isLive() ? live.fetchSlaughterOrders(farmId) : mock.fetchSlaughterOrders(farmId);
+  return live.fetchSlaughterOrders(farmId);
 }
 
 export function fetchCustomers(farmId: string): Promise<Customer[]> {
-  return isLive() ? live.fetchCustomers(farmId) : mock.fetchCustomers(farmId);
+  return live.fetchCustomers(farmId);
 }
 
 export function fetchCustomer(farmId: string, customerId: string): Promise<Customer> {
-  return isLive() ? live.fetchCustomer(farmId, customerId) : mock.fetchCustomer(farmId, customerId);
+  return live.fetchCustomer(farmId, customerId);
 }
 
 export function fetchCustomerStats(farmId: string, customerId: string): Promise<CustomerStats> {
-  return isLive() ? live.fetchCustomerStats(farmId, customerId) : mock.fetchCustomerStats(farmId, customerId);
+  return live.fetchCustomerStats(farmId, customerId);
 }
 
 export function fetchCustomerHistory(farmId: string, customerId: string): Promise<SaleFull[]> {
-  return isLive() ? live.fetchCustomerHistory(farmId, customerId) : mock.fetchCustomerHistory(farmId, customerId);
+  return live.fetchCustomerHistory(farmId, customerId);
 }
 
 export function fetchPromotions(farmId: string): Promise<Promotion[]> {
-  return isLive() ? live.fetchPromotions(farmId) : mock.fetchPromotions(farmId);
+  return live.fetchPromotions(farmId);
 }
 
 export function fetchPointsOfSale(farmId: string): Promise<PointOfSale[]> {
-  return isLive() ? live.fetchPointsOfSale(farmId) : mock.fetchPointsOfSale(farmId);
+  return live.fetchPointsOfSale(farmId);
 }
 
 export function fetchPointOfSale(farmId: string, pointOfSaleId: string): Promise<PointOfSale> {
-  return isLive() ? live.fetchPointOfSale(farmId, pointOfSaleId) : mock.fetchPointOfSale(farmId, pointOfSaleId);
+  return live.fetchPointOfSale(farmId, pointOfSaleId);
 }
 
 export function fetchRentabiliteOverview(farmId: string, from?: string, to?: string): Promise<OverviewPnl> {
-  return isLive() ? live.fetchRentabiliteOverview(farmId, from, to) : mock.fetchRentabiliteOverview(farmId, from, to);
+  return live.fetchRentabiliteOverview(farmId, from, to);
 }
 
 export function fetchRentabiliteBatch(farmId: string, batchId: string): Promise<BatchPnl> {
-  return isLive() ? live.fetchRentabiliteBatch(farmId, batchId) : mock.fetchRentabiliteBatch(farmId, batchId);
+  return live.fetchRentabiliteBatch(farmId, batchId);
 }
 
 export function fetchSales(farmId: string, from?: string, to?: string): Promise<SaleSummary[]> {
-  return isLive() ? live.fetchSales(farmId, from, to) : mock.fetchSales(farmId, from, to);
+  return live.fetchSales(farmId, from, to);
 }
 
 export function fetchExpenses(farmId: string, from?: string, to?: string): Promise<Expense[]> {
-  return isLive() ? live.fetchExpenses(farmId, from, to) : mock.fetchExpenses(farmId, from, to);
+  return live.fetchExpenses(farmId, from, to);
 }
 
 export function fetchOrders(
@@ -173,35 +175,41 @@ export function fetchOrders(
   canal?: OrderCanal,
   status?: OrderStatus,
 ): Promise<OrderFull[]> {
-  return isLive()
-    ? live.fetchOrders(farmId, canal, status)
-    : mock.fetchOrders(farmId, canal, status);
+  return live.fetchOrders(farmId, canal, status);
 }
 
 export function fetchOrder(farmId: string, orderId: string): Promise<OrderFull> {
-  return isLive() ? live.fetchOrder(farmId, orderId) : mock.fetchOrder(farmId, orderId);
+  return live.fetchOrder(farmId, orderId);
 }
 
 export function fetchPondage(farmId: string, batchId: string): Promise<PondageSummary> {
-  return isLive() ? live.fetchPondage(farmId, batchId) : mock.fetchPondage(farmId, batchId);
+  return live.fetchPondage(farmId, batchId);
 }
 
 export function fetchFarmMembers(farmId: string): Promise<FarmMember[]> {
-  return isLive() ? live.fetchFarmMembers(farmId) : mock.fetchFarmMembers(farmId);
+  return live.fetchFarmMembers(farmId);
+}
+
+export function fetchDailyEntries(farmId: string, batchId: string): Promise<DailyEntryRecord[]> {
+  return live.fetchDailyEntries(farmId, batchId);
+}
+
+export function fetchTasks(farmId: string): Promise<FarmTask[]> {
+  return live.fetchTasks(farmId);
 }
 
 export function fetchReferenceConstants(): Promise<ReferenceConstant[]> {
-  return isLive() ? live.fetchReferenceConstants() : mock.fetchReferenceConstants();
+  return live.fetchReferenceConstants();
 }
 
 export function fetchBuildings(farmId: string): Promise<Building[]> {
-  return isLive() && farmId !== 'farm-demo' ? live.fetchBuildings(farmId) : mock.fetchBuildings(farmId);
+  return live.fetchBuildings(farmId);
 }
 
 export function fetchBreeds(): Promise<Breed[]> {
-  return isLive() ? live.fetchBreeds() : mock.fetchBreeds();
+  return live.fetchBreeds();
 }
 
 export function fetchBreedStandards(breedId: string): Promise<BreedStandard[]> {
-  return isLive() ? live.fetchBreedStandards(breedId) : mock.fetchBreedStandards(breedId);
+  return live.fetchBreedStandards(breedId);
 }

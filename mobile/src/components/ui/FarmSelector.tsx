@@ -3,9 +3,6 @@ import { StyleSheet, View, Pressable } from 'react-native';
 import { CheckCircle } from 'lucide-react-native';
 
 import { AppText } from '@/components/ui/AppText';
-import { Chip } from '@/components/ui/Chip';
-import { useOfflineQueue } from '@/offline';
-import { useAuth } from '@/auth/AuthContext';
 import { palette, color } from '@/constants/theme';
 import { Sheet } from '@/components/ui/Sheet';
 
@@ -17,7 +14,6 @@ interface FarmSelectorProps {
 }
 
 export function FarmSelector({ visible, onClose, farms, onSelect }: FarmSelectorProps) {
-  const { mode } = useAuth();
   const [activeFarmId, setActiveFarmId] = useState(farms[0]?.id ?? '');
 
   const handleSelect = (farmId: string) => {

@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
@@ -13,12 +13,15 @@ import { useAuth } from '@/auth/AuthContext';
 import { API_BASE_URL } from '@/api/client';
 import { roleLabel } from '@/api/roles';
 import { color, palette } from '@/constants/theme';
+import { useKeyboardInset } from '@/hooks/useKeyboardInset';
 
 export default function LoginScreen() {
-  const { mode, user, farms, busy, error, signIn, signOut } = useAuth();
+  const { signedIn, user, farms, busy, error, signIn, signOut } = useAuth();
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
+  const phoneRef = useRef<TextInput>(null);
   const codeRef = useRef<TextInput>(null);
+  const keyboardInset = useKeyboardInset();
 
   const canSubmit = phone.trim().length > 0 && code.length > 0 && !busy;
 
@@ -28,17 +31,19 @@ export default function LoginScreen() {
     if (ok) router.replace('/');
   };
 
+  const focusPhone = () => { phoneRef.current?.focus(); };
+  const focusCode = () => { codeRef.current?.focus(); };
+
   return (
     <View style={styles.root}>
       <StatusBar style="dark" />
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.flex}>
-        <ScrollView
-          contentContainerStyle={styles.scroll}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-          automaticallyAdjustKeyboardInsets={false}
-          showsVerticalScrollIndicator={false}
-        >
+      <ScrollView
+        contentContainerStyle={[styles.scroll, { paddingBottom: keyboardInset + 24 }]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        automaticallyAdjustKeyboardInsets={false}
+        showsVerticalScrollIndicator={false}
+      >
           <View style={styles.hero}>
             <Image
               source={require('@/assets/images/logo.png')}
@@ -57,7 +62,7 @@ export default function LoginScreen() {
             </AppText>
           </View>
 
-          {mode === 'live' ? (
+          {signedIn ? (
             <View style={{ gap: 10 }}>
               <View style={styles.connectedRow}>
                 <ShieldCheck size={18} color={palette.green[600]} />
@@ -85,11 +90,12 @@ export default function LoginScreen() {
             </View>
           ) : (
             <View style={{ gap: 14 }}>
-              <PhoneInput
+                  <PhoneInput
+                ref={phoneRef}
                 value={phone}
                 onChangeText={setPhone}
                 returnKeyType="next"
-                onSubmitEditing={() => codeRef.current?.focus()}
+                onSubmitEditing={focusCode}
               />
               <View style={styles.field}>
                 <Lock size={18} color={color.brand[600]} />
@@ -101,7 +107,6 @@ export default function LoginScreen() {
                   placeholder="Code secret"
                   placeholderTextColor={palette.ink[300]}
                   keyboardType="number-pad"
-                  secureTextEntry
                   autoCapitalize="none"
                   returnKeyType="go"
                   onSubmitEditing={submit}
@@ -145,7 +150,6 @@ export default function LoginScreen() {
             </View>
           )}
         </ScrollView>
-      </KeyboardAvoidingView>
     </View>
   );
 }
@@ -155,7 +159,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: palette.surface,
   },
-  flex: { flex: 1 },
   scroll: {
     flexGrow: 1,
     justifyContent: 'center',

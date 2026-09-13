@@ -1,4 +1,4 @@
-import React, { forwardRef } from 'react';
+import React, { forwardRef, useState, useEffect } from 'react';
 import { StyleSheet, Text, TextInput, TextInputProps, View } from 'react-native';
 import { CheckCircle2 } from 'lucide-react-native';
 
@@ -15,6 +15,19 @@ export interface PhoneInputProps extends Omit<TextInputProps, 'value' | 'onChang
 export const PhoneInput = forwardRef<TextInput, PhoneInputProps>(
   function PhoneInput({ value, onChangeText, showValidation = true, compact = false, ...rest }, ref) {
     const valid = showValidation && isGabonPhoneValid(value);
+    const [displayValue, setDisplayValue] = useState(value);
+
+    useEffect(() => {
+      // On blur or programmatic value change, normalize the value.
+      setDisplayValue(normalizeGabonPhone(value));
+    }, [value]);
+
+    const handleChangeText = (text: string) => {
+      // During typing, just pass through — normalize on blur to avoid cursor jump.
+      setDisplayValue(text);
+      onChangeText(normalizeGabonPhone(text));
+    };
+
     return (
       <View style={[styles.field, compact ? styles.fieldCompact : null]}>
         <Text style={[styles.prefix, compact ? styles.prefixCompact : null]}>
@@ -23,8 +36,8 @@ export const PhoneInput = forwardRef<TextInput, PhoneInputProps>(
         <TextInput
           ref={ref}
           style={[styles.input, compact ? styles.inputCompact : null]}
-          value={value}
-          onChangeText={(v) => onChangeText(normalizeGabonPhone(v))}
+          value={displayValue}
+          onChangeText={handleChangeText}
           placeholder="Téléphone"
           placeholderTextColor={palette.ink[300]}
           keyboardType="phone-pad"
@@ -32,6 +45,8 @@ export const PhoneInput = forwardRef<TextInput, PhoneInputProps>(
           autoCorrect={false}
           textContentType="telephoneNumber"
           accessibilityLabel="Téléphone"
+          blurOnSubmit={true}
+          onSubmitEditing={rest.onSubmitEditing}
           {...rest}
         />
         {valid ? <CheckCircle2 size={compact ? 18 : 20} color={palette.green[600]} /> : null}

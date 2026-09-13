@@ -13,6 +13,7 @@ import type {
   BatchWithMetrics,
   CaisseSummary,
   CashSession,
+  EggBreakdown,
   Customer,
   CustomerStats,
   DashboardData,
@@ -45,6 +46,8 @@ import type {
   Building,
   Breed,
   BreedStandard,
+  FarmTask,
+  DailyEntryRecord,
   Species,
 } from './types';
 
@@ -129,6 +132,7 @@ interface RawBatchMetrics {
   gmqGramsPerDay?: number | null;
   ipe?: number | null;
   eggsCollectedTotal?: number;
+  eggBreakdown?: EggBreakdown;
   layRatePercent?: number | null;
   status?: string;
   densityPerM2?: number | null;
@@ -186,6 +190,14 @@ function mapMetrics(m: RawBatchMetrics): BatchMetrics {
     gmqGramsPerDay: m.gmqGramsPerDay ?? null,
     ipe: m.ipe ?? null,
     eggsCollectedTotal: m.eggsCollectedTotal ?? m.eggsCollected ?? 0,
+    eggBreakdown: m.eggBreakdown ?? {
+      collected: m.eggsCollectedTotal ?? m.eggsCollected ?? 0,
+      sellable: 0,
+      cracked: 0,
+      small: 0,
+      doubleYolk: 0,
+      dirty: 0,
+    },
     layRatePercent: m.layRatePercent ?? null,
     status: (m.status as AlertLevel) ?? 'VERT',
     densityPerM2: m.densityPerM2 ?? null,
@@ -200,25 +212,30 @@ function mapMetrics(m: RawBatchMetrics): BatchMetrics {
   };
 }
 
-const breedNames = new Map<string, string>();
+const breedsById = new Map<string, { name: string; refCode: string | null }>();
 
 /** Test-only : vide le cache de souches entre deux tests. */
 export function _clearBreedCache(): void {
-  breedNames.clear();
+  breedsById.clear();
 }
 
 async function ensureBreeds(): Promise<void> {
-  if (breedNames.size > 0) return;
-  const breeds = await apiFetch<{ id: string; name: string }[]>('/breeds');
-  for (const b of breeds) breedNames.set(b.id, b.name);
+  if (breedsById.size > 0) return;
+  const breeds = await apiFetch<{ id: string; name: string; refCode: string | null }[]>('/breeds');
+  for (const b of breeds) breedsById.set(b.id, { name: b.name, refCode: b.refCode ?? null });
 }
 
 function mapBatch(b: RawBatch): BatchWithMetrics {
+  const cached =
+    b.breedId && breedsById.has(b.breedId)
+      ? breedsById.get(b.breedId)!
+      : null;
   return {
     id: b.id,
     farmId: b.farmId,
     batchName: b.batchName,
-    breedName: b.breedId ? (breedNames.get(b.breedId) ?? null) : (b.customBreed ?? null),
+    breedCode: b.breedId ? (cached?.refCode ?? null) : null,
+    breedName: b.breedId ? (cached?.name ?? null) : (b.customBreed ?? null),
     integrationDate: b.integrationDate,
     quantityAtStart: b.quantityAtStart,
     quantityAlive: b.quantityAlive,
@@ -264,7 +281,7 @@ export function mapAdvisory(raw: BackendAdvisory): AdvisoryData {
       status,
       message: a.title,
       recommendation: null,
-      why: [],
+      why: a.description ? [a.description] : [],
       createdAt: raw.generatedAt,
       alertId: a.alertId ?? null,
     };
@@ -293,15 +310,26 @@ export class LiveApi {
     return { ...raw, weather };
   }
 
-  async fetchBatches(farmId: string): Promise<BatchWithMetrics[]> {
+  async fetchBatches(
+    farmId: string,
+    asOf?: string,
+  ): Promise<BatchWithMetrics[]> {
     await ensureBreeds();
-    const raw = await apiFetch<RawBatch[]>(`/farms/${farmId}/batches`);
+    const raw = await apiFetch<RawBatch[]>(
+      `/farms/${farmId}/batches${asOf ? `?asOf=${asOf}` : ''}`,
+    );
     return raw.map(mapBatch);
   }
 
-  async fetchBatch(farmId: string, batchId: string): Promise<BatchWithMetrics> {
+  async fetchBatch(
+    farmId: string,
+    batchId: string,
+    asOf?: string,
+  ): Promise<BatchWithMetrics> {
     await ensureBreeds();
-    const raw = await apiFetch<RawBatch>(`/farms/${farmId}/batches/${batchId}`);
+    const raw = await apiFetch<RawBatch>(
+      `/farms/${farmId}/batches/${batchId}${asOf ? `?asOf=${asOf}` : ''}`,
+    );
     return mapBatch(raw);
   }
 
@@ -334,8 +362,14 @@ export class LiveApi {
     return apiFetch<CashSession[]>(`/farms/${farmId}/caisse/sessions`);
   }
 
-  async fetchProtocols(): Promise<SanitaryProtocol[]> {
-    return apiFetch<SanitaryProtocol[]>('/sanitary/protocols');
+  async fetchProtocols(species?: string, type?: string): Promise<SanitaryProtocol[]> {
+    const params = new URLSearchParams();
+    if (species) params.set('species', species);
+    if (type) params.set('type', type);
+    const qs = params.toString();
+    return apiFetch<SanitaryProtocol[]>(
+      `/sanitary/protocols${qs ? `?${qs}` : ''}`,
+    );
   }
 
   async fetchSanitaryProgram(id: string): Promise<SanitaryProtocolWithSteps> {
@@ -444,6 +478,14 @@ export class LiveApi {
 
   async fetchFarmMembers(farmId: string): Promise<FarmMember[]> {
     return apiFetch<FarmMember[]>(`/farms/${farmId}/eleveurs`);
+  }
+
+  async fetchTasks(farmId: string): Promise<FarmTask[]> {
+    return apiFetch<FarmTask[]>(`/farms/${farmId}/tasks`);
+  }
+
+  async fetchDailyEntries(farmId: string, batchId: string): Promise<DailyEntryRecord[]> {
+    return apiFetch<DailyEntryRecord[]>(`/farms/${farmId}/batches/${batchId}/daily-entries`);
   }
 
   async fetchReferenceConstants(): Promise<ReferenceConstant[]> {

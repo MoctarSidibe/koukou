@@ -1,6 +1,6 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { X } from 'lucide-react-native';
+import { ChevronsUpDown, X } from 'lucide-react-native';
 
 import { AppText } from './AppText';
 import { color, palette, layout, radii, shadow } from '@/constants/theme';
@@ -11,33 +11,41 @@ interface SheetProps {
   subtitle?: string;
   icon?: React.ReactNode;
   accentColor?: string;
+  footer?: React.ReactNode;
+  /** Contenu fixe affiché entre le titre et la zone défilante (ex. indicateur d'étapes). */
+  stickyHeader?: React.ReactNode;
   onClose: () => void;
   children: React.ReactNode;
 }
 
 const MAX_H = 0.92;
 
-export function Sheet({ visible, title, subtitle, icon, accentColor, onClose, children }: SheetProps) {
+export function Sheet({ visible, title, subtitle, icon, accentColor, footer, stickyHeader, onClose, children }: SheetProps) {
   useEffect(() => {
     if (!visible) return;
   }, [visible]);
+
+  const [contentH, setContentH] = useState(0);
+  const [viewH, setViewH] = useState(0);
+  const [offsetY, setOffsetY] = useState(0);
+  const scrollable = viewH > 0 && contentH > viewH + 2;
+  const atBottom = offsetY > 0 && offsetY + viewH >= contentH - 20;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.root}>
         <Pressable style={styles.backdrop} onPress={onClose} accessibilityRole="button" />
         <View style={[styles.sheet, accentColor && styles.sheetAccent, accentColor && { borderTopColor: accentColor }]}>
-          <View style={[styles.handle, accentColor && { backgroundColor: accentColor }]} />
           {(title || icon) && (
             <View style={styles.header}>
               <View style={styles.titleWrap}>
                 {icon}
                 <View style={{ flex: 1 }}>
-                  <AppText size="h3" weight="bold" numberOfLines={1}>
+                  <AppText size="h3" weight="bold" numberOfLines={2}>
                     {title}
                   </AppText>
                   {subtitle ? (
-                    <AppText size="caption" color="muted" numberOfLines={1}>
+                    <AppText size="caption" color="muted" numberOfLines={2}>
                       {subtitle}
                     </AppText>
                   ) : null}
@@ -48,9 +56,29 @@ export function Sheet({ visible, title, subtitle, icon, accentColor, onClose, ch
               </Pressable>
             </View>
           )}
-          <ScrollView style={styles.body} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps='handled'>
-            {children}
-          </ScrollView>
+          {stickyHeader ? <View style={styles.stickyHeader}>{stickyHeader}</View> : null}
+          <View style={styles.bodyZone}>
+            <ScrollView
+              style={styles.body}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              onContentSizeChange={(_w, h) => setContentH(h)}
+              onLayout={(e) => setViewH(e.nativeEvent.layout.height)}
+              onScroll={(e) => setOffsetY(e.nativeEvent.contentOffset.y)}
+              scrollEventThrottle={16}
+            >
+              {children}
+            </ScrollView>
+            {scrollable && !atBottom ? (
+              <View style={styles.scrollHint} pointerEvents="none">
+                <ChevronsUpDown size={12} color="#ffffff" strokeWidth={2.4} />
+                <AppText size="caption" weight="semibold" style={{ color: '#ffffff' }}>
+                  Défiler
+                </AppText>
+              </View>
+            ) : null}
+          </View>
+          {footer ? <View style={styles.footer}>{footer}</View> : null}
         </View>
       </View>
     </Modal>
@@ -79,21 +107,12 @@ const styles = StyleSheet.create({
     borderTopRightRadius: radii.xxl,
     maxHeight: `${MAX_H * 100}%`,
     paddingHorizontal: layout.contentPadding,
-    paddingBottom: 28,
-    paddingTop: 14,
+    paddingBottom: 14,
+    paddingTop: 12,
     ...shadow.fab,
   },
   sheetAccent: {
     borderTopWidth: 4,
-  },
-  handle: {
-    alignSelf: 'center',
-    width: 44,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: color.border,
-    marginTop: 10,
-    marginBottom: 14,
   },
   header: {
     flexDirection: 'row',
@@ -118,5 +137,33 @@ const styles = StyleSheet.create({
   },
   body: {
     gap: 12,
+  },
+  bodyZone: {
+    position: 'relative',
+    flexShrink: 1,
+  },
+  scrollHint: {
+    position: 'absolute',
+    bottom: 10,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(12, 35, 49, 0.62)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radii.pill,
+  },
+  stickyHeader: {
+    backgroundColor: palette.paper,
+    marginHorizontal: -layout.contentPadding,
+    paddingHorizontal: layout.contentPadding,
+    paddingBottom: 8,
+  },
+  footer: {
+    marginTop: 8,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: palette.border,
   },
 });

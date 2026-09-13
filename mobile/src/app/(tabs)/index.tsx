@@ -1,9 +1,9 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Easing, Pressable, StyleSheet, View } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Alert, Pressable, StyleSheet, View } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { Image } from 'expo-image';
-import { Bird, AlertTriangle, Wheat, Egg, Banknote, BarChart3, MapPin, ShieldCheck, Activity, TrendingUp, TrendingDown, Scale, Thermometer, Users, Medal, Maximize2, Store, ChevronDown, ChevronLeft, ChevronRight, Clock, Droplets, Building, ArrowRight, Stethoscope, Check } from 'lucide-react-native';
+import { Bird, AlertTriangle, Wheat, Egg, Banknote, BarChart3, MapPin, ShieldCheck, Activity, TrendingUp, TrendingDown, Scale, Thermometer, Users, Medal, Maximize2, Store, ChevronDown, Droplets, Building, ArrowRight, Stethoscope } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Svg, { Circle } from 'react-native-svg';
 
@@ -19,32 +19,24 @@ import { useQuickCapture } from '@/components/capture/QuickCaptureProvider';
 import { useAuth } from '@/auth/AuthContext';
 import { givenName, speciesLabel } from '@/api/format';
 import { color, emoji, fmt, fmtFcfa, gradeColor, palette, radii } from '@/constants/theme';import { fetchAdvisory, fetchDashboard, fetchBatches, fetchSlaughterOrders } from '@/api';
-import { Sheet } from '@/components/ui/Sheet';
 import { Spinner } from '@/components/ui/Spinner';
 import { MetricInfoSheet } from '@/components/MetricInfoSheet';
 import type { MetricKey } from '@/components/MetricInfoSheet';
 import { CheptelModal } from '@/components/CheptelModal';
-import { PickerFieldM } from '@/components/ui/PeriodBar';
-import type { HealthGrade } from '@/api/types';
+import { PeriodBar, periodWindow, toDateStr, type PeriodWindow } from '@/components/ui/PeriodBar';
+import type { FarmWeather, HealthGrade } from '@/api/types';
 
-// Bornes de dates stables (références constantes sur la journée) : empêcher
-// les re-renders de repousser un nouveau Date() au picker natif (sinon le
-// calendrier « saute » au mois courant pendant la navigation).
-function buildStableDates() {
-  const now = new Date();
-  return {
-    today: new Date(now.getFullYear(), now.getMonth(), now.getDate()),
-    dayMin: new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()),
-    dayMax: new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59),
-  };
+function weatherHint(w: FarmWeather): string {
+  const t = w.temperatureC ?? 0;
+  const h = w.humidityPct;
+  if (t >= 33) return 'Chaleur forte : ventilez et abreuvez bien vos oiseaux.';
+  if (t >= 30) return 'Chaleur soutenue : surveillez l’abreuvement.';
+  if (h != null && h >= 75) return 'Humidité élevée : pensez à ventiler les bâtiments.';
+  if (h != null && h <= 35) return 'Air sec : assurez l’abreuvement des sujets.';
+  return w.condition ? `Conditions : ${w.condition}.` : 'Conditions favorables pour vos élevages.';
 }
 
-function useStableDates() {
-  const ref = useRef<{ key: string } & ReturnType<typeof buildStableDates> | null>(null);
-  const key = new Date().toDateString();
-  if (!ref.current || ref.current.key !== key) ref.current = { key, ...buildStableDates() };
-  return ref.current;
-}
+// Bornes de dates stables : gérées en interne par PeriodBar.
 
 
 export default function AccueilScreen() {
@@ -52,65 +44,35 @@ export default function AccueilScreen() {
   const { openDaily, openFeed, openSale } = useQuickCapture();
   const { user, farms, farmId } = useAuth();
   const [statsExpanded, setStatsExpanded] = useState(false);
-  const [healthExpanded, setHealthExpanded] = useState(false);
   const [cheptelOpen, setCheptelOpen] = useState(false);
   const [metricInfo, setMetricInfo] = useState<MetricKey | null>(null);
-  const [dataAt, setDataAt] = useState<Date | null>(null);
+  const [window, setWindow] = useState<PeriodWindow>(() => periodWindow(30));
   const [liveNow, setLiveNow] = useState(new Date());
-  const [showPicker, setShowPicker] = useState(false);
-  const [spanDays, setSpanDays] = useState<number | 'all'>(30);
 
   useEffect(() => {
     const id = setInterval(() => setLiveNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
 
-  // Null dataAt = live/real-time mode, otherwise the applied filter.
-  const selectedAt = dataAt ?? liveNow;
-  const now = liveNow;
-  const isFiltered = dataAt != null;
-  const isToday = selectedAt.toDateString() === now.toDateString();
+  const isFiltered = window.isFiltered;
+  const isToday = window.to === toDateStr(liveNow);
 
-  const formatDateFull = (d: Date) =>
-    d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
   const formatDayShort = (d: Date) =>
     d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
-  const formatHour = (d: Date) =>
-    d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 
-  const applyFilter = (d: Date) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    setDataAt(d);
-    setShowPicker(false);
-  };
-  const clearFilter = () => {
-    Haptics.selectionAsync().catch(() => {});
-    setDataAt(null);
-    setShowPicker(false);
-  };
-  const shiftDay = (delta: number) => {
-    const base = dataAt ?? now;
-    const copy = new Date(base);
-    copy.setDate(copy.getDate() + delta);
-    if (copy.getTime() > Date.now()) return;
-    Haptics.selectionAsync().catch(() => {});
-    setDataAt(copy);
-  };
-
-
+  const handlePeriodChange = useCallback((w: PeriodWindow) => {
+    setWindow(w);
+  }, []);
 
   // Query params: in live mode we snap to the current minute so the dashboard
   // only refetches once per minute instead of every second (clock ticks in the UI).
-  const queryAt = dataAt ?? (() => {
-    const n = new Date(liveNow);
-    n.setSeconds(0, 0);
-    return n;
-  })();
-  const selectedDateStr = queryAt.toISOString().slice(0, 10);
-  const selectedTimeStr = `${String(queryAt.getHours()).padStart(2, '0')}:${String(queryAt.getMinutes()).padStart(2, '0')}`;
+  const queryDateStr = window.isFiltered ? (window.to ?? toDateStr(liveNow)) : toDateStr(liveNow);
+  const queryTimeStr = window.isFiltered
+    ? (window.time ?? '12:00')
+    : `${String(liveNow.getHours()).padStart(2, '0')}:${String(liveNow.getMinutes()).padStart(2, '0')}`;
   const dashboard = useQuery({
-    queryKey: ['dashboard', farmId, selectedDateStr, selectedTimeStr],
-    queryFn: () => fetchDashboard(farmId, selectedDateStr, selectedTimeStr),
+    queryKey: ['dashboard', farmId, queryDateStr, queryTimeStr],
+    queryFn: () => fetchDashboard(farmId, queryDateStr, queryTimeStr),
   });
   const advisory = useQuery({ queryKey: ['advisory', farmId], queryFn: () => fetchAdvisory(farmId) });
   const batchesQuery = useQuery({ queryKey: ['batches', farmId], queryFn: () => fetchBatches(farmId) });
@@ -150,11 +112,6 @@ export default function AccueilScreen() {
     ? layerBatches.reduce((s, b) => s + (b.metrics.layRatePercent ?? 0) * b.metrics.liveCount, 0) / layerLive
     : null;
   // Taux de ponte by type
-  const chairBatches = activeBatches.filter((b) => b.type === 'CHAIR');
-  const chairLive = chairBatches.reduce((s, b) => s + b.metrics.liveCount, 0);
-  const chairLayRate = chairLive > 0
-    ? chairBatches.reduce((s, b) => s + (b.metrics.layRatePercent ?? 0) * b.metrics.liveCount, 0) / chairLive
-    : null;
   const pondeuseBatches = activeBatches.filter((b) => b.type === 'PONDEUSE');
   const pondeuseLive = pondeuseBatches.reduce((s, b) => s + b.metrics.liveCount, 0);
   const pondeuseLayRate = pondeuseLive > 0
@@ -192,8 +149,27 @@ export default function AccueilScreen() {
   // --- Egg daily data from layer batches ---
   const eggDailyData = d ? buildEggDailyData(totalLive, avgLayRate) : [];
 
+  // --- Egg breakdown by category, aggregated across active batches ---
+  const eggBreakdown = {
+    collected: 0,
+    sellable: 0,
+    cracked: 0,
+    small: 0,
+    doubleYolk: 0,
+    dirty: 0,
+  };
+  for (const b of activeBatches) {
+    const eb = b.metrics.eggBreakdown;
+    eggBreakdown.collected += eb.collected;
+    eggBreakdown.sellable += eb.sellable;
+    eggBreakdown.cracked += eb.cracked;
+    eggBreakdown.small += eb.small;
+    eggBreakdown.doubleYolk += eb.doubleYolk;
+    eggBreakdown.dirty += eb.dirty;
+  }
+
   const refresh = () => {
-    void Promise.all([dashboard.refetch(), advisory.refetch()]);
+    void Promise.all([dashboard.refetch(), advisory.refetch(), batchesQuery.refetch()]);
   };
 
   const runTopAction = () => {
@@ -220,7 +196,7 @@ export default function AccueilScreen() {
   return (
     <Screen
       bottomPad={120}
-      refreshing={false}
+      refreshing={dashboard.isFetching || advisory.isFetching || batchesQuery.isFetching}
       onRefresh={refresh}
       header={
         <>
@@ -270,48 +246,12 @@ export default function AccueilScreen() {
                   {fmtFcfa(d?.collectedTodayFcfa ?? 0)}
                 </AppText>
                 <AppText size='caption' color='muted' numberOfLines={1}>
-                  {isToday ? "Encaissé aujourd'hui" : `Encaissé le ${formatDayShort(selectedAt)}`}
+                  {isToday ? "Encaissé aujourd'hui" : `Encaissé le ${formatDayShort(window.to ? new Date(window.to) : liveNow)}`}
                 </AppText>
               </View>
             </View>
           </View>
-          {/* ── Date & heure : barre compacte ── */}
-          <View style={styles.dateBar}>
-            <Pressable
-              onPress={() => shiftDay(-1)}
-              accessibilityRole='button'
-              accessibilityLabel='Jour précédent'
-              style={({ pressed }) => [styles.dateArrow, pressed && styles.dateArrowPressed]}>
-              <ChevronLeft size={16} color={palette.brand[600]} />
-            </Pressable>
-
-            <Pressable
-              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); setShowPicker(true); }}
-              accessibilityRole='button'
-              style={({ pressed }) => [styles.datePill, pressed && styles.datePillPressed]}>
-              <AppText size='small' weight='semibold' color='text'>
-                {formatDateFull(selectedAt)}
-              </AppText>
-              <View style={styles.datePillSep} />
-              {!isFiltered && <PulsingLiveDot />}
-              <Clock size={11} color={palette.brand[500]} />
-              <AppText size='small' weight='bold' color='brand'>{formatHour(selectedAt)}</AppText>
-            </Pressable>
-
-            <Pressable
-              onPress={() => shiftDay(1)}
-              accessibilityRole='button'
-              accessibilityLabel='Jour suivant'
-              disabled={isToday}
-              style={({ pressed }) => [styles.dateArrow, pressed && styles.dateArrowPressed, isToday && styles.dateArrowDisabled]}>
-              <ChevronRight size={16} color={palette.brand[600]} />
-            </Pressable>
-          </View>
-
-          {/* ── Date & heure picker ── */}
-          <Sheet visible={showPicker} title='Date & heure' onClose={() => setShowPicker(false)}>
-            <DateTimeSheet selected={selectedAt} onApply={applyFilter} onNow={clearFilter} span={spanDays} onSelectSpan={setSpanDays} />
-          </Sheet>
+          <PeriodBar defaultSpan={30} onChange={handlePeriodChange} />
         </>
       }
     >
@@ -333,28 +273,22 @@ export default function AccueilScreen() {
             <MetricTile label='Lots actifs' value={String(d.batches.actif)} sub={`${d.batches.enVente} en vente`} tone='brand' iconImage={require('@/assets/images/poussin33.jpg')} onPress={() => router.push('/lots')} compact />
           </View>
           {/* ── Health card — Pro View ── */}
-          <Pressable
-            onPress={() => { Haptics.selectionAsync().catch(() => {}); setHealthExpanded(!healthExpanded); }}
-            style={({ pressed }) => [
-              styles.healthCard,
-              { borderColor: gradeColor[d.health.grade] + '40' },
-              healthExpanded && styles.healthCardExpanded,
-              pressed && styles.healthCardPressed,
-            ]}
-            accessibilityRole="button"
-            accessibilityState={{ expanded: healthExpanded }}>
-            {/* Top section: Ring + Title + Toggle */}
+          <View style={styles.healthCard}>
             <View style={styles.healthTopRow}>
               <HealthRing score={d.health.score} grade={d.health.grade} />
               <View style={styles.healthTopInfo}>
                 <View style={styles.healthTitleRow}>
                   <AppText size="body" weight="bold" color="text">Santé</AppText>
                   <View style={{ flex: 1 }} />
-                  <View style={[styles.healthToggle, healthExpanded && styles.healthToggleActive]}>
-                    <AppText size="small" weight="bold" color={healthExpanded ? 'surface' : 'brand'}>
-                      {healthExpanded ? '−' : '+'}
-                    </AppText>
-                  </View>
+                  <Pressable
+                    onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); router.push('/sanitary'); }}
+                    accessibilityRole="button"
+                    style={({ pressed }) => [styles.healthSanitaireBtn, pressed && { opacity: 0.7 }]}
+                  >
+                    <Stethoscope size={13} color={palette.surface} strokeWidth={2.4} />
+                    <AppText size='small' weight='semibold' color='surface' numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>Centre Sanitaire</AppText>
+                    <ArrowRight size={12} color={palette.surface} />
+                  </Pressable>
                 </View>
                 {/* Grade label */}
                 <AppText size="small" weight="semibold" style={{ color: gradeColor[d.health.grade] }}>
@@ -398,85 +332,27 @@ export default function AccueilScreen() {
               </View>
               <AppText size="small" color="muted">Mortalité</AppText>
             </View>
-            {/* Bottom row: Meteo + Centre Sanitaire — compact */}
-            <View style={styles.healthBottomRow}>
-              {d?.weather && (
-                <View style={styles.weatherPill}>
-                  <AppText style={{ fontSize: 13 }}>{emoji(d.weather.condition ?? '')}</AppText>
-                  <AppText size='small' weight='bold' color='text'>{d.weather.temperatureC ?? '—'}°C</AppText>
-                  {d.weather.humidityPct != null && (
-                    <View style={styles.weatherHumidity}>
-                      <Droplets size={9} color={palette.brand[500]} />
-                      <AppText size='small' weight='semibold' color='brand'>{d.weather.humidityPct}%</AppText>
-                    </View>
-                  )}
-                </View>
-              )}
-              <View style={{ flex: 1 }} />
-              <Pressable
-                onPress={(e) => { e.stopPropagation(); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); router.push('/sanitary'); }}
-                accessibilityRole="button"
-                style={({ pressed }) => [styles.healthSanitaireBtn, pressed && { opacity: 0.7 }]}
-              >
-                <Stethoscope size={13} color={palette.surface} strokeWidth={2.4} />
-                <AppText size='small' weight='semibold' color='surface' numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>Centre Sanitaire</AppText>
-                <ArrowRight size={12} color={palette.surface} />
-              </Pressable>
-            </View>
-          </Pressable>
-          {healthExpanded && (
-            <Card tone="default" style={styles.healthExpanded}>
-              <View style={styles.healthExpandedRow}>
-                <View style={styles.healthExpandedStat}>
-                  <AppText size="small" color="muted">Consommation</AppText>
-                  <AppText size="bodyM" weight="bold" color="text">
-                    {(() => {
-                      const totalFeed = activeBatches.reduce((s, b) => s + b.metrics.totalFeedKg, 0);
-                      return totalLive > 0 ? `${Math.round(totalFeed / totalLive)} g` : '—';
-                    })()}
+            {/* Météo — pleine largeur avec un conseil lié au climat */}
+            {d?.weather && (
+              <View style={styles.healthWeatherRow}>
+                <AppText style={{ fontSize: 15 }}>{emoji(d.weather.condition ?? '')}</AppText>
+                <View style={{ flex: 1, gap: 1 }}>
+                  <View style={styles.weatherMainRow}>
+                    <AppText size='small' weight='bold' color='text'>{d.weather.temperatureC ?? '—'}°C</AppText>
+                    {d.weather.humidityPct != null && (
+                      <View style={styles.weatherHumidity}>
+                        <Droplets size={9} color={palette.brand[500]} />
+                        <AppText size='small' weight='semibold' color='brand'>{d.weather.humidityPct}%</AppText>
+                      </View>
+                    )}
+                  </View>
+                  <AppText size="small" color="muted" numberOfLines={2}>
+                    {weatherHint(d.weather)}
                   </AppText>
-                  <AppText size="small" color="faint">g/oiseau/jour</AppText>
-                </View>
-                <View style={styles.healthExpandedStat}>
-                  <AppText size="small" color="muted">Viabilité</AppText>
-                  <AppText size="bodyM" weight="bold" color={avgViability != null && avgViability >= 95 ? 'success' : 'text'}>
-                    {avgViability != null ? `${avgViability.toFixed(0)}%` : '—'}
-                  </AppText>
-                  <AppText size="small" color="faint">moyenne</AppText>
-                </View>
-                <View style={styles.healthExpandedStat}>
-                  <AppText size="small" color="muted">Ponte moy.</AppText>
-                  <AppText size="bodyM" weight="bold" color="text">
-                    {avgLayRate != null ? `${avgLayRate.toFixed(1)}%` : '—'}
-                  </AppText>
-                  <AppText size="small" color="faint">pondeuses</AppText>
                 </View>
               </View>
-              <View style={styles.healthExpandedRow}>
-                <View style={styles.healthExpandedStat}>
-                  <AppText size="small" color="muted">Maladies</AppText>
-                  <AppText size="bodyM" weight="bold" color={d.health.breakdown.rouge > 0 ? 'danger' : 'text'}>
-                    {d.health.breakdown.rouge}
-                  </AppText>
-                  <AppText size="small" color="faint">actives</AppText>
-                </View>
-                <View style={styles.healthExpandedStat}>
-                  <AppText size="small" color="muted">Soins en retard</AppText>
-                  <AppText size="bodyM" weight="bold" color={d.health.breakdown.jaune > 0 ? 'warn' : 'text'}>
-                    {d.health.breakdown.jaune}
-                  </AppText>
-                  <AppText size="small" color="faint">prophylaxie</AppText>
-                </View>
-                <View style={styles.healthExpandedStat}>
-                  <AppText size="small" color="muted">Densité max</AppText>
-                  <AppText size="bodyM" weight="bold" color={maxDensity > 15 ? 'danger' : 'text'}>
-                    {maxDensity > 0 ? `${maxDensity.toFixed(1)}` : '—'}
-                  </AppText>
-                  <AppText size="small" color="faint">oiseaux/m²</AppText>
-                </View>
-              </View>
-            </Card>
-          )}
+            )}
+          </View>
           <SectionHeader
             title='Statistiques'
             right={
@@ -708,14 +584,16 @@ export default function AccueilScreen() {
               </View>
             </Card>
           )}
-          <EggStockCard
-            selectedDate={selectedAt}
+<EggStockCard
+            selectedDate={liveNow}
             availableEggs={d.eggStock.availableEggs}
             availableAlveoles={d.eggStock.availableAlveoles}
+            soldAlveoles={(d.eggStock.soldAlveoles ?? 0)}
+            isFetching={dashboard.isFetching}
             layRatePercent={avgLayRate}
-            chairLayRate={chairLayRate}
             pondeuseLayRate={pondeuseLayRate}
             dailyData={eggDailyData}
+            breakdown={eggBreakdown}
           />
           <SectionHeader title='Classement' subtitle='Meilleurs lots & suivi' />
           <View style={styles.metricGrid}>
@@ -732,7 +610,7 @@ export default function AccueilScreen() {
             {bestBreedEntry?.breedStatus && (
               <MetricTile
                 label='Breed Intel'
-                value={bestBreedEntry.breedStatus!.breedName}
+                value={[bestBreedEntry.breedStatus!.breedCode, bestBreedEntry.breedStatus!.breedName].filter(Boolean).join(' · ')}
                 sub={bestBreedEntry.breedStatus!.fcrDeviationPct != null ? `IC ${bestBreedEntry.breedStatus!.fcrDeviationPct > 0 ? '+' : ''}${bestBreedEntry.breedStatus!.fcrDeviationPct.toFixed(1)}% vs cible` : bestBreedEntry.breedStatus!.layRateDeviationPct != null ? `Ponte ${bestBreedEntry.breedStatus!.layRateDeviationPct > 0 ? '+' : ''}${bestBreedEntry.breedStatus!.layRateDeviationPct.toFixed(1)}% vs cible` : 'Semaine ' + bestBreedEntry.breedStatus!.week}
                 tone={bestBreedEntry.breedStatus!.fcrDeviationPct != null ? (bestBreedEntry.breedStatus!.fcrDeviationPct > 10 ? 'red' : bestBreedEntry.breedStatus!.fcrDeviationPct < -5 ? 'green' : 'amber') : bestBreedEntry.breedStatus!.layRateDeviationPct != null ? (bestBreedEntry.breedStatus!.layRateDeviationPct < -10 ? 'amber' : 'green') : 'default'}
                 icon={BarChart3}
@@ -747,223 +625,6 @@ export default function AccueilScreen() {
     </Screen>
   );
 }
-
-function PulsingLiveDot({ size = 8 }: { size?: number }) {
-  const scale = useRef(new Animated.Value(1)).current;
-  const ring = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    const pulse = Animated.loop(
-      Animated.sequence([
-        Animated.timing(scale, {
-          toValue: 1.4,
-          duration: 600,
-          easing: Easing.out(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(scale, {
-          toValue: 1,
-          duration: 600,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: true,
-        }),
-      ]),
-    );
-    const ripple = Animated.loop(
-      Animated.sequence([
-        Animated.timing(ring, {
-          toValue: 1,
-          duration: 900,
-          easing: Easing.out(Easing.ease),
-          useNativeDriver: true,
-        }),
-        Animated.timing(ring, {
-          toValue: 0,
-          duration: 0,
-          useNativeDriver: true,
-        }),
-        Animated.delay(300),
-      ]),
-    );
-    pulse.start();
-    ripple.start();
-    return () => {
-      pulse.stop();
-      ripple.stop();
-    };
-  }, [scale, ring]);
-
-  const ringScale = ring.interpolate({ inputRange: [0, 1], outputRange: [1, 2.6] });
-  const ringOpacity = ring.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0] });
-
-  const box = { width: size, height: size, borderRadius: size / 2 };
-  const color = palette.green[500];
-
-  return (
-    <View style={{ width: size * 2.6, height: size * 2.6, alignItems: 'center', justifyContent: 'center' }}>
-      <Animated.View
-        pointerEvents='none'
-        style={[box, {
-          position: 'absolute',
-          borderWidth: 1.5,
-          borderColor: color,
-          opacity: ringOpacity,
-          transform: [{ scale: ringScale }],
-        }]} />
-      <Animated.View style={[box, { backgroundColor: color, transform: [{ scale }] }]} />
-    </View>
-  );
-}
-
-function DateTimeSheet({ selected, onApply, onNow, span, onSelectSpan }: {
-  selected: Date; onApply: (d: Date) => void; onNow: () => void;
-  span: number | 'all'; onSelectSpan: (s: number | 'all') => void;
-}) {
-  const stable = useStableDates();
-  const [date, setDate] = useState(new Date(selected));
-  const [time, setTime] = useState(new Date(selected));
-  const [showDatePicker, setShowDatePicker] = useState(false);
-  const [showTimePicker, setShowTimePicker] = useState(false);
-
-  // Références figées à l'ouverture de chaque champ : le picker memoïsé ne
-  // re-rend jamais pendant la session (molette iOS = aucune ré-application de
-  // `value`, même avec les ticks « en direct » du parent).
-  const dateSeed = useRef(new Date(selected));
-  const timeSeed = useRef(new Date(selected));
-  const closeDate = useCallback(() => setShowDatePicker(false), []);
-  const closeTime = useCallback(() => setShowTimePicker(false), []);
-
-  const handleNow = () => {
-    const n = new Date();
-    setDate(n);
-    setTime(n);
-    Haptics.selectionAsync().catch(() => {});
-    onNow();
-  };
-
-  const handleConfirm = () => {
-    const result = new Date(date);
-    result.setHours(time.getHours(), time.getMinutes(), 0, 0);
-    if (result.getTime() > Date.now()) {
-      const n = new Date();
-      result.setDate(n.getDate());
-      result.setHours(n.getHours(), n.getMinutes(), 0, 0);
-    }
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    onApply(result);
-  };
-
-  const fmtDate = (d: Date) =>
-    d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
-  const fmtTime = (d: Date) =>
-    d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-
-  return (
-    <View style={dts.wrap}>
-      <Pressable onPress={handleNow} style={dts.nowBtn}>
-        <Clock size={14} color={palette.brand[600]} />
-        <AppText size='small' weight='bold' color='brand'>En direct — heure actuelle</AppText>
-      </Pressable>
-
-      <View style={dts.spanWrap}>
-        <AppText size='label' weight='semibold' color='muted'>Fenêtre financière</AppText>
-        <View style={dts.spanRow}>
-          {SPAN_CHOICES.map((c) => {
-            const active = span === c.value;
-            return (
-              <Pressable
-                key={String(c.value)}
-                onPress={() => onSelectSpan(c.value)}
-                style={[dts.spanChip, active && dts.spanChipActive]}>
-                <AppText size='small' weight={active ? 'bold' : 'medium'} color={active ? 'brand' : 'muted'}>{c.label}</AppText>
-              </Pressable>
-            );
-          })}
-        </View>
-      </View>
-
-      <View style={dts.field}>
-        <AppText size='label' weight='semibold' color='muted'>Date</AppText>
-        <Pressable
-          onPress={() => {
-            dateSeed.current = new Date(date);
-            setShowDatePicker((v) => !v);
-          }}
-          style={dts.fieldBtn}>
-          <AppText size='body' weight='bold' color='text'>{fmtDate(date)}</AppText>
-          <ChevronDown size={14} color={palette.brand[500]} />
-        </Pressable>
-        <View style={dts.timeRow}>
-          <AppText size='label' weight='semibold' color='muted'>Heure</AppText>
-          <Pressable
-            onPress={() => {
-              timeSeed.current = new Date(time);
-              setShowTimePicker((v) => !v);
-            }}
-            style={dts.timeBtn}>
-            <Clock size={12} color={palette.brand[500]} />
-            <AppText size='body' weight='bold' color='text'>{fmtTime(time)}</AppText>
-          </Pressable>
-        </View>
-        {showDatePicker && (
-          <PickerFieldM seed={dateSeed.current} mode='date' maximumDate={stable.today} minimumDate={stable.dayMin} onSelect={setDate} onDismiss={closeDate} />
-        )}
-        {showTimePicker && (
-          <PickerFieldM seed={timeSeed.current} mode='time' maximumDate={stable.dayMax} minuteInterval={1} onSelect={setTime} onDismiss={closeTime} />
-        )}
-      </View>
-
-      <Pressable onPress={handleConfirm} style={dts.confirmBtn}>
-        <Check size={16} color='#fff' />
-        <AppText size='body' weight='bold' color='surface'>
-          Filtrer — {fmtDate(date)} à {fmtTime(time)}
-        </AppText>
-      </Pressable>
-    </View>
-  );
-}
-
-// Fenêtre financière (choix visuels dans la feuille Date & heure)
-const SPAN_CHOICES: { value: number | 'all'; label: string }[] = [
-  { value: 7, label: '7j' },
-  { value: 30, label: '30j' },
-  { value: 90, label: '90j' },
-  { value: 'all', label: 'Tout' },
-];
-
-const dts = StyleSheet.create({
-  wrap: { gap: 16 },
-  nowBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    paddingVertical: 10, borderRadius: radii.pill,
-    backgroundColor: palette.brand[50], borderWidth: 1, borderColor: palette.brand[200],
-  },
-  field: { gap: 8 },
-  spanWrap: { gap: 8 },
-  spanRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  spanChip: {
-    paddingHorizontal: 12, paddingVertical: 6, borderRadius: radii.pill,
-    backgroundColor: palette.surfaceAlt, borderWidth: 1, borderColor: 'transparent',
-  },
-  spanChipActive: { backgroundColor: palette.brand[50], borderWidth: 1, borderColor: palette.brand[200] },
-  fieldBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 14, paddingVertical: 12,
-    borderRadius: radii.md, backgroundColor: palette.surfaceAlt,
-    borderWidth: 1, borderColor: palette.border,
-  },
-  timeRow: { gap: 6 },
-  timeBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 14, paddingVertical: 10,
-    borderRadius: radii.md, backgroundColor: palette.surfaceAlt,
-    borderWidth: 1, borderColor: palette.border,
-  },
-  confirmBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    backgroundColor: palette.brand[600], borderRadius: radii.pill, height: 48, marginTop: 4,
-  },
-});
 
 function HealthRing({ score, grade }: { score: number; grade: HealthGrade }) {
   const size = 48;
@@ -1068,51 +729,6 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
   },
 
-  dateBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginTop: 4,
-  },
-  dateArrow: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: palette.brand[50],
-    borderWidth: 1,
-    borderColor: palette.brand[200],
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dateArrowPressed: {
-    backgroundColor: palette.brand[100],
-    transform: [{ scale: 0.92 }],
-  },
-  dateArrowDisabled: {
-    opacity: 0.3,
-  },
-  datePill: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    backgroundColor: palette.surface,
-    borderWidth: 1,
-    borderColor: palette.brand[200],
-    borderRadius: radii.pill,
-    height: 30,
-    paddingHorizontal: 12,
-  },
-  datePillPressed: {
-    backgroundColor: palette.brand[50],
-  },
-  datePillSep: {
-    width: 1,
-    height: 14,
-    backgroundColor: palette.brand[200],
-  },
-
   metricGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1138,14 +754,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 6,
     gap: 6,
-  },
-  healthCardExpanded: {
-    backgroundColor: palette.brand[50],
-    borderColor: palette.brand[200],
-  },
-  healthCardPressed: {
-    transform: [{ scale: 0.98 }],
-    opacity: 0.92,
   },
   healthTopRow: {
     flexDirection: 'row',
@@ -1193,25 +801,25 @@ const styles = StyleSheet.create({
     height: 3,
     borderRadius: 2,
   },
-  healthBottomRow: {
+  healthWeatherRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: palette.brand[50],
+    borderRadius: radii.md,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  weatherMainRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-  },
-  weatherPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: palette.surfaceAlt,
-    borderRadius: radii.pill,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
   },
   weatherHumidity: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 2,
-    backgroundColor: palette.brand[50],
+    backgroundColor: palette.brand[100],
     borderRadius: radii.pill,
     paddingHorizontal: 5,
     paddingVertical: 1,
@@ -1224,38 +832,6 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: radii.pill,
     backgroundColor: palette.green[600],
-  },
-  healthToggle: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    borderWidth: 1.5,
-    borderColor: palette.brand[300],
-    backgroundColor: palette.brand[50],
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  healthToggleActive: {
-    backgroundColor: palette.brand[600],
-    borderColor: palette.brand[600],
-    transform: [{ rotate: '180deg' }],
-  },
-  healthExpanded: {
-    marginTop: 6,
-    padding: 12,
-    gap: 10,
-  },
-  healthExpandedRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  healthExpandedStat: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 2,
-    paddingVertical: 6,
-    borderRadius: 10,
-    backgroundColor: palette.surfaceAlt,
   },
   ring: {
     width: 48,

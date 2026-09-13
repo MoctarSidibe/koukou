@@ -77,4 +77,23 @@ describe('apiFetch', () => {
     await expect(apiFetch('/farms/x')).rejects.toBeInstanceOf(ApiError);
     await expect(apiFetch('/farms/x')).rejects.toThrow('Erreur serveur (500)');
   });
+
+  it('timeout : erreur FR quand le serveur ne répond pas', async () => {
+    vi.useFakeTimers();
+    try {
+      stubFetch((...args: unknown[]) => {
+        const init = args[1] as { signal?: AbortSignal } | undefined;
+        return new Promise((_, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })),
+          );
+        });
+      });
+      const p = apiFetch('/farms/x/dashboard');
+      vi.advanceTimersByTime(15_000);
+      await expect(p).rejects.toThrow('Le serveur ne répond pas. Vérifiez votre connexion et réessayez.');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

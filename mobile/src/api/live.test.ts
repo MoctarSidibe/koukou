@@ -127,7 +127,7 @@ describe('LiveApi.fetchAdvisory', () => {
 describe('LiveApi.fetchBatches / fetchBatch', () => {
   it('résout le nom de souche via le cache /breeds', async () => {
     const fetchMock = stubFetchSequence([
-      jsonResponse(200, [{ id: 'b1', name: 'Cobb 500' }]),
+      jsonResponse(200, [{ id: 'b1', name: 'Cobb 500', refCode: 'CB-500' }]),
       jsonResponse(200, [
         {
           id: 'lot-1',
@@ -145,6 +145,7 @@ describe('LiveApi.fetchBatches / fetchBatch', () => {
     ]);
     const batches = await new LiveApi().fetchBatches('f-1');
     expect(batches[0].breedName).toBe('Cobb 500');
+    expect(batches[0].breedCode).toBe('CB-500');
     expect(batches[0].quantityAlive).toBe(2960);
     expect(batches[0].metrics.liveCount).toBe(0);
     expect(readCall(fetchMock, 0).url).toBe('http://10.0.0.5:3000/breeds');
@@ -164,7 +165,7 @@ describe('LiveApi.fetchBatches / fetchBatch', () => {
       metrics: {},
     };
     const fetchMock = stubFetchSequence([
-      jsonResponse(200, [{ id: 'b9', name: 'ISA Brown' }]),
+      jsonResponse(200, [{ id: 'b9', name: 'ISA Brown', refCode: 'ISA-43' }]),
       jsonResponse(200, [rawBatch]),
       jsonResponse(200, rawBatch),
     ]);
@@ -172,6 +173,7 @@ describe('LiveApi.fetchBatches / fetchBatch', () => {
     await api.fetchBatches('f-1');
     const batch = await api.fetchBatch('f-1', 'lot-9');
     expect(batch.breedName).toBe('ISA Brown');
+    expect(batch.breedCode).toBe('ISA-43');
     expect(readCall(fetchMock, 2).url).toContain('/batches/lot-9');
     const breedsCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('/breeds'));
     expect(breedsCalls).toHaveLength(1);
@@ -214,9 +216,15 @@ describe('LiveApi.fetchFeedStock / fetchCaisse', () => {
 
 describe('LiveApi — sanitaire, abattage, clients, rentabilité', () => {
   it('fetchProtocols lit le référentiel', async () => {
-    const fetchMock = stubFetch(async () => jsonResponse(200, [{ id: 'proto-1', name: 'Poulet de chair standard', steps: [] }]));
-    const protocols = await new LiveApi().fetchProtocols();
+    const fetchMock = stubFetch(async () => jsonResponse(200, [{ id: 'proto-1', name: 'Pintade chair Gabon', steps: [] }]));
+    const protocols = await new LiveApi().fetchProtocols('PINTADE', 'CHAIR');
     expect(protocols[0].id).toBe('proto-1');
+    expect(readCall(fetchMock).url).toBe('http://10.0.0.5:3000/sanitary/protocols?species=PINTADE&type=CHAIR');
+  });
+
+  it('fetchProtocols sans filtre ne passe aucun query string', async () => {
+    const fetchMock = stubFetch(async () => jsonResponse(200, []));
+    await new LiveApi().fetchProtocols();
     expect(readCall(fetchMock).url).toBe('http://10.0.0.5:3000/sanitary/protocols');
   });
 

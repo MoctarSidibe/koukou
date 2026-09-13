@@ -32,7 +32,7 @@ interface CreateBuildingSheetProps {
 }
 
 export function CreateBuildingSheet({ visible, onClose }: CreateBuildingSheetProps) {
-  const { farmId, mode } = useAuth();
+  const { farmId } = useAuth();
   const qc = useQueryClient();
 
   const [name, setName] = useState('');
@@ -76,9 +76,6 @@ export function CreateBuildingSheet({ visible, onClose }: CreateBuildingSheetPro
 
   const createMutation = useMutation({
     mutationFn: () => {
-      if (mode === 'demo') {
-        return Promise.resolve({ id: 'demo-building' });
-      }
       return createBuilding(farmId, {
         name: name.trim(),
         buildingAreaM2: areaNum > 0 ? areaNum : undefined,
@@ -209,7 +206,7 @@ export function CreateBuildingSheet({ visible, onClose }: CreateBuildingSheetPro
           {densityLevel === 'warn' && (
             <View style={[styles.advisory, styles.advisoryWarn]}>
               <AppText size='small' weight='semibold' color={palette.amber[600]}>
-                ⚠ Densité {density!.toFixed(1)} oiseaux/m² — seuil d'alerte
+                ⚠ Densité {density!.toFixed(1)} oiseaux/m² — seuil d&apos;alerte
               </AppText>
               <AppText size='small' color={palette.amber[700]}>
                 {selectedType === 'CHAIR'
@@ -234,7 +231,7 @@ export function CreateBuildingSheet({ visible, onClose }: CreateBuildingSheetPro
                 🔴 {kgPerM2!.toFixed(1)} kg/m² — dépasse le standard tropical
               </AppText>
               <AppText size='small' color={palette.red[700]}>
-                En zone tropicale (Gabon), ne jamais dépasser 20-25 kg de viande/m² en fin d'élevage.
+                En zone tropicale (Gabon), ne jamais dépasser 20-25 kg de viande/m² en fin d&apos;élevage.
               </AppText>
             </View>
           )}

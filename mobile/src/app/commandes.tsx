@@ -9,11 +9,11 @@ import { AppText } from '@/components/ui/AppText';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Chip } from '@/components/ui/Chip';
+import { NumberInput } from '@/components/ui/NumberInput';
 import { Screen, ScreenHeader } from '@/components/ui/Screen';
 import { Segmented } from '@/components/ui/Segmented';
 import { Sheet } from '@/components/ui/Sheet';
 import { Spinner } from '@/components/ui/Spinner';
-import { Stepper } from '@/components/ui/Stepper';
 import { orderCanalLabel, orderStatusLabel, orderStatusTone, productLabel } from '@/components/orders/labels';
 import { useAuth } from '@/auth/AuthContext';
 import { fetchBatches, fetchOrders, fetchPointsOfSale } from '@/api';
@@ -70,7 +70,7 @@ function toLocalDateString(d: Date): string {
 }
 
 function CreateOrderSheet({ onClose }: { onClose: () => void }) {
-  const { farmId, mode } = useAuth();
+  const { farmId } = useAuth();
   const queryClient = useQueryClient();
   const batchesQuery = useQuery({ queryKey: ['batches', farmId], queryFn: () => fetchBatches(farmId) });
   const pdvQuery = useQuery({ queryKey: ['points-of-sale', farmId], queryFn: () => fetchPointsOfSale(farmId) });
@@ -144,10 +144,6 @@ function CreateOrderSheet({ onClose }: { onClose: () => void }) {
     }
     if (deposit > total) {
       setError('L’acompte ne peut pas dépasser le total.');
-      return;
-    }
-    if (mode === 'demo') {
-      onClose();
       return;
     }
     setBusy(true);
@@ -310,15 +306,11 @@ function CreateOrderSheet({ onClose }: { onClose: () => void }) {
               style={styles.priceInput}
             />
           </View>
-          <Stepper
-            value={qty}
-            onChange={setQty}
-            step={1}
-            quickSteps={isKg ? [1, 2, 5] : product === 'OEUF' ? [1, 5, 10] : [1, 5, 10, 25]}
-            min={0}
-            max={Math.max(maxQty, 1)}
+          <NumberInput
+            value={qty > 0 ? String(qty) : ''}
+            onChangeText={(t) => setQty(Math.min(parseInt(t, 10) || 0, Math.max(maxQty, 1)))}
             suffix={ORDER_PRODUCTS.find((p) => p.key === product)?.unit}
-            big
+            placeholder="0"
           />
           {isKg ? (
             <AppText size="caption" color="muted">

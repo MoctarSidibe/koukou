@@ -72,20 +72,12 @@ function OrderItems({ order }: { order: OrderFull }) {
 }
 
 function DepositSheet({ order, onClose }: { order: OrderFull; onClose: () => void }) {
-  const { farmId, mode } = useAuth();
+  const { farmId } = useAuth();
   const queryClient = useQueryClient();
   const [amount, setAmount] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const remaining = Math.max(order.totalAmountFcfa - order.depositFcfa, 0);
-
-  if (mode === 'demo') {
-    return (
-      <Sheet visible onClose={onClose} title="Acompte" subtitle="Saisie possible en mode connecté avec caisse ouverte." icon={<Wallet size={22} color={color.brand[600]} />}>
-        <Button label="Fermer" tone="ghost" onPress={onClose} />
-      </Sheet>
-    );
-  }
 
   const submit = async () => {
     if (amount <= 0 || amount > remaining) {
@@ -140,7 +132,7 @@ function DepositSheet({ order, onClose }: { order: OrderFull; onClose: () => voi
 }
 
 export default function CommandeDetailScreen() {
-  const { farmId, user, mode } = useAuth();
+  const { farmId, user } = useAuth();
   const queryClient = useQueryClient();
   const { id } = useLocalSearchParams<{ id: string }>();
   const canManage = canManageFarm(user.role);
@@ -167,10 +159,6 @@ export default function CommandeDetailScreen() {
   };
 
   const doCancel = () => {
-    if (mode === 'demo') {
-      Alert.alert('Disponible en mode connecté', 'L’annulation d’une commande est gérée par le serveur.');
-      return;
-    }
     Alert.alert('Annuler la commande', `${order.referenceNumber} sera passée « Annulée ». Confirmer ?`, [
       { text: 'Retour', style: 'cancel' },
       {
@@ -191,10 +179,6 @@ export default function CommandeDetailScreen() {
   };
 
   const doDeliver = () => {
-    if (mode === 'demo') {
-      Alert.alert('Disponible en mode connecté', 'La livraison (décrément du cheptel et bon de commande) est gérée par le serveur.');
-      return;
-    }
     if (order.status !== 'CONFIRMED') {
       Alert.alert('Impossible', 'Encoder un acompte (→ Confirmer) avant de livrer.');
       return;
@@ -219,10 +203,6 @@ export default function CommandeDetailScreen() {
   };
 
   const doPdf = () => {
-    if (mode === 'demo') {
-      Alert.alert('Disponible en mode connecté', 'Le bon de commande PDF est généré par le serveur.');
-      return;
-    }
     downloadPdf(`/farms/${farmId}/orders/${order.id}/bon-de-commande`, `${order.referenceNumber}.pdf`)
       .then(() => Alert.alert('Bon de commande', `« ${order.referenceNumber}.pdf » enregistré sur votre appareil.`))
       .catch((e) => Alert.alert('Téléchargement impossible', e instanceof Error ? e.message : 'Erreur inattendue.'));

@@ -16,10 +16,12 @@ interface EggStockCardProps {
   selectedDate: Date;
   availableEggs: number;
   availableAlveoles: number;
+  soldAlveoles: number;
+  isFetching?: boolean;
   layRatePercent: number | null;
-  chairLayRate: number | null;
   pondeuseLayRate: number | null;
   dailyData: DailyCount[];
+  breakdown?: { collected: number; sellable: number; cracked: number; small: number; doubleYolk: number; dirty: number };
 }
 
 const DAY_LABELS = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
@@ -37,10 +39,12 @@ export function EggStockCard({
   selectedDate,
   availableEggs,
   availableAlveoles,
+  soldAlveoles,
+  isFetching,
   layRatePercent,
-  chairLayRate,
   pondeuseLayRate,
   dailyData,
+  breakdown,
 }: EggStockCardProps) {
   const [showTrays, setShowTrays] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -52,9 +56,26 @@ export function EggStockCard({
   const displayValue = showTrays ? availableAlveoles : availableEggs;
   const displayUnit = showTrays ? 'alvéoles' : 'œufs';
 
+  // Cohérence avec la « répartition » : quand le stock affiché est 0 mais que
+  // la production (breakdown) est non nulle, on ne parle de « tout vendu » que
+  // s'il existe réellement des ventes d'œufs (soldAlveoles > 0). Sinon le 0
+  // trahit des données en cours d'actualisation (requête tableau de bord).
+  const producedTotal = breakdown?.collected ?? 0;
+  const stockSeenZero = availableEggs === 0 && producedTotal > 0;
+  const soldOut = stockSeenZero && soldAlveoles > 0;
+
+  const subText = soldOut
+    ? `Tout le stock a été vendu · ${fmtCompact(producedTotal)} œufs produits`
+    : stockSeenZero && isFetching
+      ? 'Actualisation du stock…'
+      : stockSeenZero
+        ? `Pas de stock disponible · ${fmtCompact(producedTotal)} œufs produits`
+        : showTrays
+          ? `= ${(availableAlveoles * 30).toLocaleString('fr-FR')} œufs`
+          : `= ${availableAlveoles} alvéole${availableAlveoles !== 1 ? 's' : ''}`;
+
   const maxCount = Math.max(...dailyData.map((d) => d.count), 1);
   const totalCount = dailyData.reduce((s, d) => s + d.count, 0);
-  const avgCount = dailyData.length > 0 ? Math.round(totalCount / dailyData.length) : 0;
 
   return (
     <Card tone='default' style={styles.card}>
@@ -111,40 +132,24 @@ export function EggStockCard({
       <View style={styles.bodyRow}>
         <View style={styles.bigBlock}>
           <View style={styles.valueRow}>
-            <AppText size='h1' weight='bold' color={palette.brand[600]}>
+            <AppText size='h1' weight='bold' color={palette.brand[600]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.5}>
               {displayValue.toLocaleString('fr-FR')}
             </AppText>
             <AppText size='body' weight='medium' color='muted'>
               {displayUnit}
             </AppText>
           </View>
-          <AppText size='small' color='faint'>
-            {showTrays
-              ? `= ${(availableAlveoles * 30).toLocaleString('fr-FR')} œufs`
-              : `= ${availableAlveoles} alvéole${availableAlveoles !== 1 ? 's' : ''}`}
+          <AppText size='small' color={soldOut ? 'muted' : 'faint'}>
+            {subText}
           </AppText>
         </View>
 
         <View style={styles.miniMetricsPill}>
           <View style={styles.miniItem}>
-            <AppText size='small' weight='bold' color='brand'>
+            <AppText size='small' weight='bold' color='brand' numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.65}>
               {layRatePercent != null ? `${layRatePercent.toFixed(0)}%` : '—'}
             </AppText>
             <AppText size='small' color='faint'>Ponte</AppText>
-          </View>
-          <View style={styles.miniDivider} />
-          <View style={styles.miniItem}>
-            <AppText size='small' weight='bold' color='text'>
-              {fmtCompact(totalCount)}
-            </AppText>
-            <AppText size='small' color='faint'>total</AppText>
-          </View>
-          <View style={styles.miniDivider} />
-          <View style={styles.miniItem}>
-            <AppText size='small' weight='bold' color='text'>
-              {avgCount}
-            </AppText>
-            <AppText size='small' color='faint'>/ jour</AppText>
           </View>
         </View>
       </View>
@@ -155,23 +160,15 @@ export function EggStockCard({
           <View style={styles.chartDivider} />
           <View style={styles.layRateRow}>
             <View style={styles.layRateTile}>
-              <AppText size='small' color='muted'>Ponte CHAIR</AppText>
-              <AppText size='body' weight='bold' color={chairLayRate != null && chairLayRate > 0 ? 'text' : 'faint'}>
-                {chairLayRate != null && chairLayRate > 0 ? `${chairLayRate.toFixed(0)}%` : '—'}
-              </AppText>
-              <AppText size='small' color='faint'>0% (non pondeur)</AppText>
-            </View>
-            <View style={styles.layRateDivider} />
-            <View style={styles.layRateTile}>
-              <AppText size='small' color='muted'>Ponte PONDEUSE</AppText>
+              <AppText size='small' color='muted'>Ponte</AppText>
               <AppText
                 size='body'
                 weight='bold'
-                color={pondeuseLayRate != null && pondeuseLayRate >= 80 ? palette.green[600] : pondeuseLayRate != null ? palette.amber[600] : 'faint'}>
+                color={pondeuseLayRate != null && pondeuseLayRate >= 100 ? palette.red[500] : pondeuseLayRate != null && pondeuseLayRate >= 80 ? palette.green[600] : pondeuseLayRate != null ? palette.amber[600] : 'faint'}>
                 {pondeuseLayRate != null ? `${pondeuseLayRate.toFixed(0)}%` : '—'}
               </AppText>
-              <AppText size='small' color='faint'>
-                {pondeuseLayRate != null && pondeuseLayRate >= 80 ? 'Soutenue' : pondeuseLayRate != null ? 'En montée' : 'Pas de données'}
+              <AppText size='small' color={pondeuseLayRate != null && pondeuseLayRate >= 100 ? palette.red[500] : 'faint'}>
+                {pondeuseLayRate != null && pondeuseLayRate >= 100 ? 'Œufs ≥ effectif — à vérifier' : pondeuseLayRate != null && pondeuseLayRate >= 80 ? 'Soutenue' : pondeuseLayRate != null ? 'En montée' : 'Pas de données'}
               </AppText>
             </View>
           </View>
@@ -229,13 +226,65 @@ export function EggStockCard({
               );
             })}
           </View>
+
+          {/* ── Répartition par catégorie ── */}
+          {breakdown && (
+            <View style={styles.categorySection}>
+              <View style={styles.chartDivider} />
+              <View style={styles.chartHeader}>
+                <AppText size='small' weight='semibold' color='muted'>Répartition par catégorie</AppText>
+                <AppText size='small' color='faint'>Total {fmtCompact(breakdown.collected)}</AppText>
+              </View>
+              {breakdown.collected > 0 ? (
+                <>
+                  <View style={styles.eggBar}>
+                    {[
+                      { key: 'sellable', count: breakdown.sellable, color: palette.green[600] },
+                      { key: 'small', count: breakdown.small, color: palette.brand[500] },
+                      { key: 'doubleYolk', count: breakdown.doubleYolk, color: palette.amber[500] },
+                      { key: 'dirty', count: breakdown.dirty, color: color.ink[400] },
+                      { key: 'cracked', count: breakdown.cracked, color: palette.red[500] },
+                    ].filter((r) => r.count > 0).map((r) => (
+                      <View key={r.key} style={[styles.eggBarSeg, { backgroundColor: r.color, flex: r.count }]} />
+                    ))}
+                  </View>
+                  <View style={{ gap: 8 }}>
+                    {[
+                      { key: 'sellable', label: 'Commercialisables', count: breakdown.sellable, color: palette.green[600] },
+                      { key: 'small', label: 'Petits œufs', count: breakdown.small, color: palette.brand[500] },
+                      { key: 'doubleYolk', label: 'Double jaune', count: breakdown.doubleYolk, color: palette.amber[500] },
+                      { key: 'dirty', label: 'Œufs sales', count: breakdown.dirty, color: color.ink[400] },
+                      { key: 'cracked', label: 'Fêlés / abîmés', count: breakdown.cracked, color: palette.red[500] },
+                    ].map((r) => {
+                      const p = Math.round((r.count / breakdown.collected) * 100);
+                      return (
+                        <View key={r.key} style={{ gap: 3 }}>
+                          <View style={styles.eggRow}>
+                            <View style={[styles.eggRowDot, { backgroundColor: r.color }]} />
+                            <AppText size='small' color='text' style={{ flex: 1 }}>{r.label}</AppText>
+                            <AppText size='small' weight='bold' color='text'>{r.count.toLocaleString('fr-FR')}</AppText>
+                            <AppText size='caption' color='muted' style={styles.eggRowPct}>{p}%</AppText>
+                          </View>
+                          <View style={styles.eggRowBar}>
+                            <View style={[styles.eggRowBarFill, { backgroundColor: r.color, width: `${Math.max(1, p)}%` }]} />
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </>
+              ) : (
+                <AppText size='small' color='faint'>Aucune répartition déclarée pour les bandes actives.</AppText>
+              )}
+            </View>
+          )}
         </View>
       )}
     </Card>
   );
 }
 
-/** Build 7-day mock data from lay rate and live count. */
+/** Build 7-day estimated egg data from lay rate and live count. */
 export function buildEggDailyData(
   liveCount: number,
   layRatePct: number | null,
@@ -332,8 +381,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-end',
+    gap: 8,
   },
   bigBlock: {
+    flex: 1,
+    minWidth: 0,
     gap: 2,
   },
   valueRow: {
@@ -342,15 +394,12 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   miniItem: {
+    flexShrink: 1,
     alignItems: 'center',
     paddingHorizontal: 6,
   },
-  miniDivider: {
-    width: 1,
-    height: 20,
-    backgroundColor: palette.brand[100],
-  },
   miniMetricsPill: {
+    flexShrink: 1,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: palette.brand[50],
@@ -370,11 +419,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 8,
     gap: 2,
-  },
-  layRateDivider: {
-    width: 1,
-    backgroundColor: color.border,
-    marginVertical: 4,
   },
   /* ── Expanded section ── */
   expandedSection: {
@@ -428,4 +472,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 2,
   },
+  categorySection: {
+    marginTop: 10,
+    gap: 8,
+  },
+  eggBar: {
+    flexDirection: 'row',
+    height: 8,
+    borderRadius: 4,
+    overflow: 'hidden',
+    backgroundColor: palette.accent[50],
+  },
+  eggBarSeg: {},
+  eggRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  eggRowDot: { width: 10, height: 10, borderRadius: radii.pill },
+  eggRowPct: { width: 40, textAlign: 'right' },
+  eggRowBar: {
+    height: 4,
+    borderRadius: radii.pill,
+    backgroundColor: palette.surfaceAlt,
+    overflow: 'hidden',
+  },
+  eggRowBarFill: { height: '100%', borderRadius: radii.pill },
 });

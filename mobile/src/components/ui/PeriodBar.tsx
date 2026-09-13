@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { Animated, Easing, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Animated, Easing, Platform, Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import * as Haptics from 'expo-haptics';
-import { CalendarRange, Check, ChevronDown, ChevronLeft, ChevronRight, Clock } from 'lucide-react-native';
+import { CalendarRange, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Info, RotateCcw } from 'lucide-react-native';
 
 import { AppText } from '@/components/ui/AppText';
 import { Sheet } from '@/components/ui/Sheet';
@@ -14,6 +14,7 @@ export interface PeriodWindow {
   span: number | 'all';
   from?: string; // YYYY-MM-DD (undefined = non bornée)
   to?: string;   // YYYY-MM-DD (jour de fin / jour sélectionné)
+  time?: string; // HH:mm — selected time when filtered (exposed for screens that need it)
 }
 
 export function toDateStr(d: Date): string {
@@ -97,6 +98,8 @@ interface PeriodBarProps {
   onApplied?: (source: 'single' | 'range') => void;
   /** Notifié quand la feuille se ferme SANS appliquer de fenêtre. */
   onPickerClose?: () => void;
+  /** Surcharge de style sur la barre (ex. resserrer l'espace sous le header). */
+  style?: StyleProp<ViewStyle>;
 }
 
 export interface PeriodBarHandle {
@@ -104,7 +107,7 @@ export interface PeriodBarHandle {
   openPicker: () => void;
 }
 
-export function PeriodBar({ defaultSpan = 30, onChange, onApplied, onPickerClose, ref }: PeriodBarProps & { ref?: React.Ref<PeriodBarHandle> }) {
+export function PeriodBar({ defaultSpan = 30, onChange, onApplied, onPickerClose, style, ref }: PeriodBarProps & { ref?: React.Ref<PeriodBarHandle> }) {
   const [dataAt, setDataAt] = useState<Date | null>(null); // null = en direct
   const [rangeFrom, setRangeFrom] = useState<Date | null>(null); // null = fenêtre calculée depuis span
   const [spanDays, setSpanDays] = useState<number | 'all'>(defaultSpan);
@@ -128,14 +131,15 @@ export function PeriodBar({ defaultSpan = 30, onChange, onApplied, onPickerClose
   // ── Fenêtre exposée au parent ──
   const window = useMemo<PeriodWindow>(() => {
     const to = toDateStr(selectedAt);
+    const time = `${String(selectedAt.getHours()).padStart(2, '0')}:${String(selectedAt.getMinutes()).padStart(2, '0')}`;
     if (rangeFrom) {
       const days = Math.max(1, Math.round((selectedAt.getTime() - rangeFrom.getTime()) / 86_400_000) + 1);
-      return { isFiltered: true, span: days, from: toDateStr(rangeFrom), to };
+      return { isFiltered: true, span: days, from: toDateStr(rangeFrom), to, time };
     }
-    if (spanDays === 'all') return { isFiltered, span: spanDays, from: undefined, to };
+    if (spanDays === 'all') return { isFiltered, span: spanDays, from: undefined, to, time };
     const from = new Date(selectedAt);
     from.setDate(selectedAt.getDate() - (spanDays - 1));
-    return { isFiltered, span: spanDays, from: toDateStr(from), to };
+    return { isFiltered, span: spanDays, from: toDateStr(from), to, time };
   }, [isFiltered, selectedAt, spanDays, rangeFrom]);
 
   const emitted = useRef('');
@@ -185,7 +189,7 @@ export function PeriodBar({ defaultSpan = 30, onChange, onApplied, onPickerClose
 
   return (
     <>
-      <View style={styles.dateBar}>
+      <View style={[styles.dateBar, style]}>
         <Pressable
           onPress={() => shiftDay(-1)}
           accessibilityRole='button'
@@ -221,6 +225,29 @@ export function PeriodBar({ defaultSpan = 30, onChange, onApplied, onPickerClose
         </Pressable>
       </View>
 
+      {/* ── ORIENTATION : fenêtre filtrée + retour en direct ── */}
+      {isFiltered && (
+        <View style={styles.orientRow}>
+          <View style={[styles.orientChip, styles.orientChipFiltered]}>
+            <Info size={12} color={palette.amber[500]} />
+            <AppText size="caption" weight="semibold" color={palette.amber[600]} numberOfLines={1} style={styles.orientText}>
+              {rangeFrom
+                ? `Période du ${formatDateFull(rangeFrom)} au ${formatDateFull(selectedAt)}`
+                : `Jour du ${formatDateFull(selectedAt)}`}
+            </AppText>
+            <Pressable
+              onPress={() => { Haptics.selectionAsync().catch(() => {}); clearFilter(); }}
+              hitSlop={8}
+              style={({ pressed }) => [styles.orientReset, pressed && styles.orientResetPressed]}
+              accessibilityRole="button"
+              accessibilityLabel="Revenir à aujourd’hui, en direct">
+              <RotateCcw size={11} color={palette.brand[600]} />
+              <AppText size="caption" weight="bold" color="brand">En direct</AppText>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
       <Sheet visible={showPicker} title='Date & heure' onClose={() => { setShowPicker(false); onPickerClose?.(); }}>
         <PeriodSheet visible={showPicker} selected={selectedAt} onApply={applyFilter} onRange={applyRange} onNow={clearFilter} span={spanDays} onSelectSpan={(s) => { setRangeFrom(null); setSpanDays(s); }} rangeFrom={rangeFrom} />
       </Sheet>
@@ -234,6 +261,11 @@ export function PeriodBar({ defaultSpan = 30, onChange, onApplied, onPickerClose
 
 const dts = StyleSheet.create({
   wrap: { gap: 16 },
+  orientTip: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    padding: 10, borderRadius: radii.md,
+    backgroundColor: palette.accent[50], borderWidth: 1, borderColor: palette.accent[100],
+  },
   nowBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
     paddingVertical: 10, borderRadius: radii.pill,
@@ -396,9 +428,16 @@ function PeriodSheet({ selected, onApply, onRange, onNow, span, onSelectSpan, ra
 
   return (
     <View style={dts.wrap}>
+      <View style={dts.orientTip}>
+        <Info size={13} color={palette.accent[500]} />
+        <AppText size="caption" color="muted" style={{ flex: 1 }}>
+          Le système suit la date, l’heure et les minutes exactes de chaque saisie. Choisissez un jour précis (avec l’heure) ou une période ; « En direct » affiche les données à l’instant.
+        </AppText>
+      </View>
       <Pressable onPress={handleNow} style={dts.nowBtn}>
+        <PulsingLiveDot size={8} />
         <Clock size={14} color={palette.brand[600]} />
-        <AppText size='small' weight='bold' color='brand'>En direct — heure actuelle</AppText>
+        <AppText size='small' weight='bold' color='brand'>En direct — heure et minute actuelles</AppText>
       </Pressable>
 
       <View style={[dts.spanWrap, withRange && dts.hidden]}>
@@ -642,4 +681,21 @@ const styles = StyleSheet.create({
   datePillPressed: { transform: [{ scale: 0.98 }], opacity: 0.85 },
   datePillSep: { width: 1, height: 16, backgroundColor: palette.border, marginHorizontal: 2 },
   datePillText: { maxWidth: 175 },
+  orientRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 16, marginBottom: 4,
+  },
+  orientChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    borderRadius: radii.pill, paddingHorizontal: 12, paddingVertical: 5,
+    backgroundColor: palette.surfaceAlt, borderWidth: 1, borderColor: palette.border,
+  },
+  orientChipFiltered: { backgroundColor: palette.amber[50], borderColor: palette.amber[200] },
+  orientText: { flexShrink: 1, maxWidth: 240 },
+  orientReset: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: palette.surface, borderRadius: radii.pill, borderWidth: 1, borderColor: palette.brand[100],
+    paddingHorizontal: 8, paddingVertical: 3,
+  },
+  orientResetPressed: { opacity: 0.7, transform: [{ scale: 0.97 }] },
 });

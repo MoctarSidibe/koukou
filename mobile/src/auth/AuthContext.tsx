@@ -2,37 +2,34 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { useQueryClient } from '@tanstack/react-query';
 
 import { apiFetch, ApiError } from '@/api/client';
-import { CURRENT_USER, FARMS } from '@/api/mock';
 import { clearSession, loadSession, saveSession, type StoredSession } from '@/api/token';
 import { clearQueue } from '@/offline';
 import type { Farm, PublicUser } from '@/api/types';
 
-const DEMO_SESSION: StoredSession = { token: '', user: CURRENT_USER, farms: FARMS, activeFarmId: FARMS[0]?.id };
+const EMPTY_USER: PublicUser = { id: '', fullName: '', phone: '', role: 'PROPRIETAIRE' };
 
-export type AuthMode = 'demo' | 'live';
+export type AuthMode = 'live';
 
 interface AuthContextValue {
-mode: AuthMode;
-user: PublicUser;
-farms: Farm[];
-farmId: string;
-activeFarmId: string;
-busy: boolean;
-error: string | null;
-setActiveFarmId: (farmId: string) => void;
-signIn: (phone: string, code: string) => Promise<boolean>;
-signUp: (phone: string, fullName: string, code: string) => Promise<boolean>;
-signOut: () => void;
+  mode: AuthMode;
+  signedIn: boolean;
+  user: PublicUser;
+  farms: Farm[];
+  farmId: string;
+  activeFarmId: string;
+  busy: boolean;
+  error: string | null;
+  setActiveFarmId: (farmId: string) => void;
+  signIn: (phone: string, code: string) => Promise<boolean>;
+  signUp: (phone: string, fullName: string, code: string) => Promise<boolean>;
+  signOut: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
-  const [session, setSession] = useState<StoredSession | null>(() => {
-    const stored = loadSession();
-    return stored?.token ? stored : DEMO_SESSION;
-  });
+  const [session, setSession] = useState<StoredSession | null>(() => loadSession());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,7 +42,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .catch((e: unknown) => {
         if (e instanceof ApiError && e.status === 401) {
           clearSession();
-          setSession(DEMO_SESSION);
+          setSession(null);
         }
       });
   }, [session?.token]);
@@ -107,30 +104,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signOut = useCallback(() => {
     clearSession();
     clearQueue();
-    setSession(DEMO_SESSION);
+    setSession(null);
     setError(null);
     void queryClient.invalidateQueries();
   }, [queryClient]);
 
   const setActiveFarmId = useCallback(
     (farmId: string) => {
-      const newSession: StoredSession = {
-        ...session!,
-        activeFarmId: farmId,
-      };
+      if (!session) return;
+      const newSession: StoredSession = { ...session, activeFarmId: farmId };
       saveSession(newSession);
       setSession(newSession);
     },
-    [session, saveSession],
+    [session],
   );
 
   const value = useMemo<AuthContextValue>(() => {
-    const current = session ?? DEMO_SESSION;
-    const activeFarmId = current.activeFarmId ?? current.farms[0]?.id;
+    const signedIn = Boolean(session?.token);
+    const activeFarmId = session?.activeFarmId ?? session?.farms[0]?.id ?? '';
     return {
-      mode: current.token ? 'live' : 'demo',
-      user: current.user,
-      farms: current.farms,
+      mode: 'live',
+      signedIn,
+      user: session?.user ?? EMPTY_USER,
+      farms: session?.farms ?? [],
       farmId: activeFarmId,
       activeFarmId,
       busy,

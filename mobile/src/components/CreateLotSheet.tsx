@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Image, Modal, Platform, Pressable, StyleSheet, ScrollView, TextInput as RNTextInput, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Image, Modal, Platform, Pressable, StyleSheet, ScrollView, TextInput as RNTextInput, View, type ImageSourcePropType, type StyleProp, type ViewStyle } from 'react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, ArrowRight, Calendar, Check, ChevronDown, Clock, Eye, Pill, Wheat, Zap, ShieldCheck, Syringe, TrendingUp, Warehouse } from 'lucide-react-native';
@@ -10,6 +10,7 @@ import { AppText } from './ui/AppText';
 import { Button } from './ui/Button';
 import { color, palette, radii } from '@/constants/theme';
 import { SPECIES_IMAGES } from '@/constants/speciesImages';
+import { BREED_IMAGES } from '@/constants/breedImages';
 import { useAuth } from '@/auth/AuthContext';
 import { createBatch, createTreatment } from '@/api/mutations';
 import { invalidateFarmQueries } from '@/api/invalidate';
@@ -62,20 +63,38 @@ const BREED_INFO: Record<string, { origin: string; cycle: string; trait: string 
   'Hubbard': { origin: 'France', cycle: '12 semaines', trait: 'Résistant, adapté aux climats chauds, chair ferme' },
   'Arbor Acres': { origin: 'USA', cycle: '12 semaines', trait: 'Poids lourd rapide, très répandue en Afrique de l\'Ouest' },
   'Sasso T451': { origin: 'France', cycle: '10–12 semaines', trait: 'Croissance lente, rustique, idéale en climat chaud et élevage villageois' },
+  'Sasso X44': { origin: 'France', cycle: '10–12 semaines', trait: 'Croissance lente, plumage coloré, très répandue en Afrique' },
+  'Cobb 700': { origin: 'USA', cycle: '12 semaines', trait: 'Croissance rapide, poids lourd supérieur au Cobb 500' },
+  'Kuroiler': { origin: 'Kenya / Inde', cycle: '16–20 semaines', trait: 'Poule améliorée à double objet (chair + ponte), très rustique en plein air' },
+  'Kienyeji': { origin: 'Kenya', cycle: '16–24 semaines', trait: 'Poule locale africaine, robuste, élevage villageois extensif' },
+  'Poulet Goliath': { origin: 'Afrique centrale', cycle: '10–12 semaines', trait: 'Croisement rustique des marchés gabonais, croissance plus lente, chair ferme' },
+  'Poulet Local Gabonais': { origin: 'Gabon (5 écotypes)', cycle: '20–24 semaines', trait: 'Race locale gabonaise (Nyembwe), croissance très lente, chair ferme très prisée, maximallement rustique' },
+  'Poulet Local Gabonais (pondeuse)': { origin: 'Gabon (5 écotypes)', cycle: '60 semaines de ponte', trait: 'Ponte modérée (40–60 œufs/an), excellente couveuse, rusticité maximale' },
   // POULET — pondeuse
   'ISA Brown': { origin: 'France/NL', cycle: '72 semaines', trait: 'Pondeuse industrielle, pic à 93%, robuste' },
   'Lohmann Brown': { origin: 'Allemagne', cycle: '72 semaines', trait: 'Pondeuse colorée, excellemment adaptée aux tropiques' },
+  'Lohmann White': { origin: 'Allemagne', cycle: '72 semaines', trait: 'Pondeuse blanche, excellente résistance à la chaleur' },
   'Hy-Line Brown': { origin: 'USA', cycle: '72 semaines', trait: 'Bonne persistance de ponte, coquille solide' },
+  'Hy-Line White': { origin: 'USA', cycle: '72 semaines', trait: 'Pondeuse blanche, ponte élevée et coquille solide' },
   'Novogen Brown': { origin: 'France/NL', cycle: '72 semaines', trait: 'Pondeuse efficiente, œufs de qualité homogène' },
   'Bovans Brown': { origin: 'Pays-Bas', cycle: '72 semaines', trait: 'Pondeuse Hendrix polyvalente, pic jusqu\'à 95%' },
   'Shaver Brown': { origin: 'Canada', cycle: '72 semaines', trait: 'Pondeuse classique robuste, pic ~93%, bonne persistance' },
+  'White Leghorn': { origin: 'Italie / USA', cycle: '72 semaines', trait: 'Pondeuse blanche légendaire, ponte élevée toute l\'année' },
+  'Black Australorp': { origin: 'Australie', cycle: '72 semaines', trait: 'Pondeuse noire très productive (~250 œufs/an), double objet' },
+  'Hisex Brown': { origin: 'Pays-Bas / Belgique', cycle: '72 semaines', trait: 'Pondeuse brune importée au Gabon, pic ~93%, robuste en climat chaud' },
+  'Hisex White': { origin: 'Pays-Bas', cycle: '72 semaines', trait: 'Pondeuse blanche efficiente, petite taille, coquilles solides' },
+  'Dekalb White': { origin: 'USA', cycle: '72 semaines', trait: 'Pondeuse blanche très précoce, excellente persistance en zone chaude' },
+  'Dekalb Brown': { origin: 'USA', cycle: '72 semaines', trait: 'Pondeuse brune calme, gros œufs, bonne rusticité' },
   // PINTADE
   'Pintade Galor': { origin: 'France', cycle: '11–12 semaines', trait: 'Pintade de chair productive, poids homogène, chair goûteuse' },
   'Pintade Danube': { origin: 'Europe de l\'Est / France', cycle: '12–13 semaines', trait: 'Pintade lourde (2,3–2,8 kg), excellente rusticité' },
+  'Pintade Numidia': { origin: 'Afrique de l\'Ouest', cycle: '12–14 semaines', trait: 'Pintade locale casquée, excellente rusticité, élevage villageois' },
   'Pintade Pondeuse': { origin: 'Sélection française', cycle: '60 semaines de ponte', trait: 'Pondeuse d\'œufs de pintade, fertilité et coquilles solides' },
   // DINDE
   'Dinde Bronze': { origin: 'USA / Royaume-Uni', cycle: '20–24 semaines', trait: 'Dinde lourde traditionnelle, plumage brun, très charnue' },
   'Dinde Blanche': { origin: 'USA', cycle: '18–20 semaines', trait: 'Dinde standard blanche, croissance rapide, gros rendement' },
+  'Dinde Broad-Breasted White': { origin: 'USA', cycle: '18–20 semaines', trait: 'Dinde blanche standard d\'élevage, poitrine large, très productive' },
+  'Dinde Bourbon Red': { origin: 'USA', cycle: '20–24 semaines', trait: 'Dinde traditionnelle rousse, chair savoureuse, rustique' },
   'Dinde Pondeuse': { origin: 'Sélection européenne / USA', cycle: '60 semaines de ponte', trait: 'Reproductrices / ponte de dinde, pic vers 36–40 semaines' },
   // CAILLE
   'Caille Japonaise': { origin: 'Japon', cycle: '7–8 semaines', trait: 'Caille de chair, petite mais précoce, maturation rapide' },
@@ -165,7 +184,7 @@ interface CreateLotSheetProps {
 }
 
 export function CreateLotSheet({ visible, onClose }: CreateLotSheetProps) {
-  const { farmId, mode } = useAuth();
+  const { farmId } = useAuth();
   const qc = useQueryClient();
 
   // Required fields
@@ -221,7 +240,13 @@ export function CreateLotSheet({ visible, onClose }: CreateLotSheetProps) {
 
   // Queries
   const buildingsQuery = useQuery({ queryKey: ['buildings', farmId], queryFn: () => fetchBuildings(farmId) });
+  // La liste des souches peut évoluer côté serveur (seed, nouvelles souches) :
+  // on la rafraîchit à chaque ouverture de la feuille, même si le cache a
+  // moins de 30 s.
   const breedsQuery = useQuery({ queryKey: ['breeds'], queryFn: fetchBreeds });
+  useEffect(() => {
+    if (visible) void qc.invalidateQueries({ queryKey: ['breeds'] });
+  }, [qc, visible]);
   const standardsQuery = useQuery({
     queryKey: ['breed-standards', selectedBreedId],
     queryFn: () => fetchBreedStandards(selectedBreedId!),
@@ -261,7 +286,10 @@ export function CreateLotSheet({ visible, onClose }: CreateLotSheetProps) {
   }, [isRunning, currentAgeDays, feedPhaseOptions]);
 
   // ── Protocol queries (for running lot treatment checklist) ──
-  const protocolsQuery = useQuery({ queryKey: ['sanitary-protocols'], queryFn: fetchProtocols });
+  const protocolsQuery = useQuery({
+    queryKey: ['sanitary-protocols', species, type],
+    queryFn: () => fetchProtocols(species, type),
+  });
   const defaultProtocol = useMemo(() => {
     const protocols = protocolsQuery.data ?? [];
     return (
@@ -479,9 +507,6 @@ export function CreateLotSheet({ visible, onClose }: CreateLotSheetProps) {
 
   const createMutation = useMutation({
     mutationFn: async (input: BatchInput) => {
-      if (mode === 'demo') {
-        return { id: 'demo-lot' } as { id: string };
-      }
       const result = await createBatch(farmId, input);
       // For running lots, create treatment records for completed steps
       if (isRunning && completedStepIds.size > 0 && result?.id) {
@@ -632,7 +657,7 @@ export function CreateLotSheet({ visible, onClose }: CreateLotSheetProps) {
       <SectionTitle label='Informations du lot' />
 
 {/* ── Espèce ── */}
-      <Field label='Espèce *'>
+      <Field label='Espèce Gallinacé *'>
         <ScrollView
           ref={speciesScrollRef}
           horizontal
@@ -742,7 +767,19 @@ export function CreateLotSheet({ visible, onClose }: CreateLotSheetProps) {
               <View style={{ flex: 1 }}>
                 {selectedBreed ? (
                   <>
-                    <AppText size='body' weight='bold' color='text'>{selectedBreed.name}</AppText>
+                    <View style={styles.selectedBreedRow}>
+                      <Image
+                        source={BREED_IMAGES[selectedBreed.name] ?? SPECIES_IMAGES[species]}
+                        style={styles.selectedBreedThumb}
+                        resizeMode='contain'
+                      />
+                      <AppText size='body' weight='bold' color='text'>{selectedBreed.name}</AppText>
+                      {selectedBreed.refCode ? (
+                        <View style={styles.refCodeChip}>
+                          <AppText size='caption' weight='bold' color='brand'>{selectedBreed.refCode}</AppText>
+                        </View>
+                      ) : null}
+                    </View>
                     <AppText size='small' color='muted'>
                       {BREED_INFO[selectedBreed.name]?.origin ?? ''}{BREED_INFO[selectedBreed.name] ? ' · ' : ''}{BREED_INFO[selectedBreed.name]?.cycle ?? ''}
                     </AppText>
@@ -756,7 +793,7 @@ export function CreateLotSheet({ visible, onClose }: CreateLotSheetProps) {
             {selectedBreed && BREED_INFO[selectedBreed.name] && (
               <View style={styles.breedInfo}>
                 <AppText size='small' weight='bold' color='brand'>
-                  {selectedBreed.name} — Origine {BREED_INFO[selectedBreed.name].origin} · Cycle {BREED_INFO[selectedBreed.name].cycle}
+                  {selectedBreed.name}{selectedBreed.refCode ? ` · ${selectedBreed.refCode}` : ''} — Origine {BREED_INFO[selectedBreed.name].origin} · Cycle {BREED_INFO[selectedBreed.name].cycle}
                 </AppText>
                 <AppText size='small' color='muted'>{BREED_INFO[selectedBreed.name].trait}</AppText>
               </View>
@@ -944,7 +981,7 @@ export function CreateLotSheet({ visible, onClose }: CreateLotSheetProps) {
                 <View style={{ flex: 1 }}>
                   <AppText size='small' weight='bold' color='text'>Alimentation recommandée</AppText>
                   <AppText size='small' color='muted'>
-                    Phase {currentPhase.label} — surveillez la consommation journalière et ajustez la distribution selon l'appétit du lot.
+                    Phase {currentPhase.label} — surveillez la consommation journalière et ajustez la distribution selon l&apos;appétit du lot.
                   </AppText>
                 </View>
               </View>
@@ -978,7 +1015,7 @@ export function CreateLotSheet({ visible, onClose }: CreateLotSheetProps) {
               <View style={{ flex: 1 }}>
                 <AppText size='small' weight='bold' color='amber'>Soins non renseignés</AppText>
                 <AppText size='small' color='muted'>
-                  {dueSteps.length - completedStepIds.size} soin{dueSteps.length - completedStepIds.size > 1 ? 's' : ''} prévu{dueSteps.length - completedStepIds.size > 1 ? 's' : ''} par le protocole non cochés. Si ces soins n'ont pas été réalisés, planifiez-les dès que possible.
+                  {dueSteps.length - completedStepIds.size} soin{dueSteps.length - completedStepIds.size > 1 ? 's' : ''} prévu{dueSteps.length - completedStepIds.size > 1 ? 's' : ''} par le protocole non cochés. Si ces soins n&apos;ont pas été réalisés, planifiez-les dès que possible.
                 </AppText>
               </View>
             </View>
@@ -1019,7 +1056,12 @@ export function CreateLotSheet({ visible, onClose }: CreateLotSheetProps) {
         options={filteredBreeds.map((b) => ({
           id: b.id,
           label: b.name,
-          hint: BREED_INFO[b.name] ? `${BREED_INFO[b.name].origin} · ${BREED_INFO[b.name].cycle}` : undefined,
+          image: BREED_IMAGES[b.name] ?? SPECIES_IMAGES[species],
+          hint: b.refCode
+            ? `${b.refCode}${BREED_INFO[b.name] ? ` · ${BREED_INFO[b.name].origin} · ${BREED_INFO[b.name].cycle}` : ''}`
+            : BREED_INFO[b.name]
+              ? `${BREED_INFO[b.name].origin} · ${BREED_INFO[b.name].cycle}`
+              : undefined,
         }))}
         selectedId={selectedBreedId}
         onSelect={(id) => setSelectedBreedId(id)}
@@ -1281,7 +1323,7 @@ export function CreateLotSheet({ visible, onClose }: CreateLotSheetProps) {
             <ReviewRow label='Nom' value={batchName || '—'} />
             <ReviewRow label='Type' value={type === 'CHAIR' ? '🐔 Chair' : '🥚 Pondeuse'} />
             <ReviewRow label='Espèce' value={isAutre ? customSpecies.trim() || '—' : SPECIES_LABEL[species]} />
-            <ReviewRow label='Souche' value={isAutre ? customBreed.trim() || '—' : (selectedBreed?.name ?? '—')} />
+            <ReviewRow label='Souche' value={isAutre ? customBreed.trim() || '—' : (selectedBreed ? `${selectedBreed.name}${selectedBreed.refCode ? ` (${selectedBreed.refCode})` : ''}` : '—')} />
             <ReviewRow label='Bâtiment' value={selectedBuilding?.name ?? '—'} />
             <ReviewRow label={isRunning ? 'Date de mise en place' : "Date d'arrivée"} value={fmtDate(integrationDate)} />
             <ReviewRow label='Âge du lot' value={currentAgeDays > 0 ? formatAge(currentAgeDays) : '—'} />
@@ -1354,6 +1396,7 @@ interface PickerOption {
   id: string;
   label: string;
   hint?: string;
+  image?: ImageSourcePropType;
   disabled?: boolean;
 }
 
@@ -1382,6 +1425,7 @@ function PickerModal({ visible, onClose, title, options, selectedId, onSelect }:
                 <Pressable key={o.id} disabled={o.disabled}
                   onPress={() => { Haptics.selectionAsync().catch(() => {}); onSelect(o.id); onClose(); }}
                   style={[styles.pickerRow, o.disabled && styles.pickerRowDisabled, active && styles.pickerRowActive]}>
+                  {o.image ? <Image source={o.image} style={styles.pickerThumb} resizeMode='contain' /> : null}
                   <View style={{ flex: 1, gap: 2 }}>
                     <AppText size='body' weight={active ? 'bold' : 'medium'}
                       color={o.disabled ? 'faint' : active ? 'brand' : 'text'}>
@@ -1531,6 +1575,18 @@ const styles = StyleSheet.create({
     paddingVertical: 12, paddingHorizontal: 14, borderRadius: radii.md,
     backgroundColor: palette.surface, borderWidth: 1.5, borderColor: color.border,
   },
+  selectedBreedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 2,
+  },
+  refCodeChip: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radii.pill,
+    backgroundColor: palette.brand[100],
+  },
   breedInfo: {
     backgroundColor: palette.brand[50], borderRadius: radii.md, padding: 8, marginTop: 4,
     borderLeftWidth: 3, borderLeftColor: palette.brand[500],
@@ -1576,6 +1632,12 @@ const styles = StyleSheet.create({
   },
   pickerRowActive: { borderColor: palette.brand[200], backgroundColor: palette.brand[50] },
   pickerRowDisabled: { opacity: 0.5 },
+  pickerThumb: {
+    width: 44, height: 44, borderRadius: radii.md, backgroundColor: palette.brand[50],
+  },
+  selectedBreedThumb: {
+    width: 34, height: 34, borderRadius: radii.sm, backgroundColor: palette.brand[50],
+  },
   field: { gap: 6 },
   inputWrap: {
     borderWidth: 1.5, borderColor: color.border, borderRadius: radii.md, backgroundColor: palette.surface,

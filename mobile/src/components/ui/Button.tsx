@@ -1,5 +1,6 @@
 import React from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import type { StyleProp, ViewStyle } from 'react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { Image, type ImageProps } from 'expo-image';
 
@@ -15,11 +16,12 @@ interface ButtonProps {
   tone?: ButtonTone;
   icon?: LucideIcon;
   image?: ImageProps['source'];
-  size?: 'md' | 'lg';
+  size?: 'xs' | 'sm' | 'md' | 'lg';
   labelSize?: TextSize;
   block?: boolean;
   disabled?: boolean;
   loading?: boolean;
+  style?: StyleProp<ViewStyle>;
 }
 
 export function Button({
@@ -33,6 +35,7 @@ export function Button({
   block = true,
   disabled = false,
   loading = false,
+  style,
 }: ButtonProps) {
   const stylesByTone: Record<ButtonTone, { bg: string; fg: string; border?: string }> = {
     accent: { bg: color.accent[500], fg: color.surface },
@@ -54,24 +57,26 @@ export function Button({
         styles.button,
         block && styles.block,
         { backgroundColor: t.bg, borderColor: t.border ?? t.bg },
-        size === 'lg' ? styles.lg : styles.md,
+        size === 'lg' ? styles.lg : size === 'md' ? styles.md : size === 'sm' ? styles.sm : styles.xs,
+        tone !== 'ghost' && styles.shadow,
         pressed && active && styles.pressed,
         disabled && styles.disabled,
+        style,
       ]}
       accessibilityRole="button">
       {loading ? (
         <ActivityIndicator color={t.fg} />
       ) : (
-        <View style={styles.inner}>
+        <View style={[styles.inner, size === 'xs' && styles.xsInner, size === 'sm' && styles.smInner]}>
           {image ? (
             <Image
               source={image}
-              style={size === 'lg' ? styles.imageLg : styles.imageMd}
+              style={size === 'lg' ? styles.imageLg : size === 'md' ? styles.imageMd : styles.imageSm}
               contentFit="contain"
               accessibilityLabel=""
             />
           ) : null}
-          {Icon ? <Icon size={size === 'lg' ? 20 : 17} color={t.fg} strokeWidth={2.4} /> : null}
+          {Icon ? <Icon size={size === 'lg' ? 20 : size === 'md' ? 17 : size === 'sm' ? 14 : 12} color={t.fg} strokeWidth={2.4} /> : null}
           <AppText size={labelSize} weight="semibold" color={t.fg}>
             {label}
           </AppText>
@@ -87,21 +92,42 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  shadow: {
+    shadowColor: 'rgba(12, 35, 49, 0.35)',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.14,
+    shadowRadius: 4,
+    elevation: 3,
+  },
   block: {
     alignSelf: 'stretch',
   },
   lg: {
-    height: 54,
+    height: 50,
     paddingHorizontal: 20,
   },
   md: {
-    height: 44,
+    height: 42,
     paddingHorizontal: 16,
+  },
+  sm: {
+    height: 32,
+    paddingHorizontal: 12,
+  },
+  xs: {
+    height: 26,
+    paddingHorizontal: 8,
   },
   inner: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  smInner: {
+    gap: 6,
+  },
+  xsInner: {
+    gap: 4,
   },
   imageLg: {
     width: 26,
@@ -110,6 +136,10 @@ const styles = StyleSheet.create({
   imageMd: {
     width: 20,
     height: 20,
+  },
+  imageSm: {
+    width: 16,
+    height: 16,
   },
   pressed: {
     opacity: 0.9,

@@ -60,6 +60,17 @@ export interface ReferenceConstant {
   isEditable: boolean;
 }
 
+export interface EggBreakdown {
+  /** Œufs collectés au total (toutes classes confondues). */
+  collected: number;
+  /** Œufs commercialisables = collectés − (fêlés + petits + double jaune + sales). */
+  sellable: number;
+  cracked: number;
+  small: number;
+  doubleYolk: number;
+  dirty: number;
+}
+
 export interface BatchMetrics {
   ageDays: number;
   totalDeaths: number;
@@ -72,6 +83,7 @@ export interface BatchMetrics {
   gmqGramsPerDay: number | null;
   ipe: number | null;
   eggsCollectedTotal: number;
+  eggBreakdown: EggBreakdown;
   layRatePercent: number | null;
   status: AlertLevel;
   densityPerM2: number | null;
@@ -93,6 +105,8 @@ export interface BatchMetrics {
 export interface Breed {
   id: string;
   name: string;
+  /** Code de référence fournisseur/couvoir (ex : BV-300). */
+  refCode: string | null;
   type: BatchType;
   species: Species;
   isCustom: boolean;
@@ -120,6 +134,8 @@ export interface ProductionBatch {
   id: string;
   farmId: string;
   batchName: string | null;
+  /** Code de la souche (référentiel fournisseur/couvoir — ex : AA-500). */
+  breedCode: string | null;
   breedName: string | null;
   integrationDate: string;
   quantityAtStart: number;
@@ -131,8 +147,39 @@ export interface ProductionBatch {
   customSpecies?: string | null;
   /** Souche / race libre — quand species = AUTRE (ex : "Coureur indien") */
   customBreed?: string | null;
+  /** Identifiant de la souche (comparaisons aux standards de la courbe). */
+  breedId?: string | null;
   /** Auto-signal de disponibilité à la vente (persisté côté serveur). */
   readyForSaleAt?: string | null;
+}
+
+/** Saisie journalière existante (upsert par date côté serveur). */
+export interface DailyEntryRecord {
+  id: string;
+  batchId: string;
+  entryDate: string;
+  deaths: number;
+  /** Toujours en kg côté serveur (les sacs sont convertis). */
+  feedQuantity: number;
+  feedUnit: 'SAC' | 'KG' | null;
+  /** Poids d'un sac (kg) quand la saisie d'aliment était en sacs. */
+  bagSizeKg: number | null;
+  feedPhase: string | null;
+  customFeedPhaseName: string | null;
+  inputLotId: string | null;
+  /** Achat externe : consommation enregistrée sans décrémenter le stock suivi. */
+  skipStockDeduction: boolean;
+  waterL: number;
+  avgWeightKg: number | null;
+  eggsCollected: number;
+  eggsSellable: number;
+  eggsCracked: number;
+  eggsSmall: number;
+  eggsDoubleYolk: number;
+  eggsDirty: number;
+  source: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface BatchWithMetrics extends ProductionBatch {
@@ -148,6 +195,7 @@ export interface DashboardHealth {
 export interface BreedStatus {
   breedId: string;
   breedName: string;
+  breedCode: string | null;
   breedType: BatchType;
   week: number;
   targetAvgWeightKg: number | null;
@@ -195,6 +243,8 @@ export interface EggStockInfo {
   availableAlveoles: number;
   availableEggs: number;
   warnAlveoles: number;
+  collected: number;
+  soldAlveoles: number;
 }
 
 export interface FarmWeather {
@@ -532,6 +582,8 @@ export interface ProphylaxisEvent {
   batchId: string;
   buildingId: string | null;
   protocolStepId: string | null;
+  /** Protocole dont provient l'événement (résolu par le back via l'étape). */
+  protocolId: string | null;
   source: ScheduleSource;
   careType: CareType;
   name: string;
@@ -836,6 +888,26 @@ export interface OrderFull {
   updatedAt: string;
   /** Détail de la vente enveloppée (GET :orderId avec paramètre). */
   sale?: SaleFull;
+}
+
+export type TaskStatus = 'A_FAIRE' | 'EN_COURS' | 'FAIT' | 'ANNULEE';
+
+/** Tâche d'équipe (GET/POST/PATCH /farms/:farmId/tasks) — PROPRIETAIRE gère tout,
+ *  ELEVEUR ne voit et ne modifie que le statut de ses tâches assignées. */
+export interface FarmTask {
+  id: string;
+  farmId: string;
+  assigneeId: string | null;
+  batchId: string | null;
+  title: string;
+  notes: string | null;
+  /** Échéance au format YYYY-MM-DD (UTC côté serveur). */
+  dueDate: string;
+  status: TaskStatus;
+  completedAt: string | null;
+  createdById: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export type PromotionType = 'PCT' | 'FCFA';

@@ -68,8 +68,8 @@ export default function ActivitesScreen() {
       bottomPad={120}
       refreshing={dashboard.isFetching || caisse.isFetching}
       onRefresh={() => { void dashboard.refetch(); void caisse.refetch(); }}
-    >
-      <ScreenHeader title="Activités" subtitle="Toutes les opérations de la ferme" />
+      header={<ScreenHeader title="Activités" subtitle="Toutes les opérations de la ferme" />}>
+
 
       {dashboard.isLoading ? (
         <Spinner label="Chargement…" />
@@ -133,7 +133,7 @@ export default function ActivitesScreen() {
             </Card>
           ) : (
             <Card tone="default" style={{ padding: 14 }}>
-              <AppText size="body" color="muted">Aucune session de caisse aujourd'hui.</AppText>
+              <AppText size="body" color="muted">Aucune session de caisse aujourd&apos;hui.</AppText>
             </Card>
           )}
 

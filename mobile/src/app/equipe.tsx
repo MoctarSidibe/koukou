@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Keyboard, StyleSheet, TextInput, View } from 'react-native';
+import { Keyboard, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Building2, KeyRound, Phone, UserPlus, Users } from 'lucide-react-native';
+import { Building2, KeyRound, ListTodo, Phone, UserPlus, Users } from 'lucide-react-native';
 
 import { Screen, ScreenHeader } from '@/components/ui/Screen';
 import { AppText } from '@/components/ui/AppText';
@@ -50,9 +51,10 @@ function MemberRow({ member }: { member: FarmMember }) {
 }
 
 export default function EquipeScreen() {
-  const { farms, mode, user, farmId } = useAuth();
+  const { farms, user, farmId } = useAuth();
   const canManage = canManageFarm(user.role);
   const queryClient = useQueryClient();
+  const router = useRouter();
 
   const members = useQuery({
     queryKey: ['farm-members', farmId],
@@ -89,16 +91,12 @@ export default function EquipeScreen() {
     setBusy(true);
     setError(null);
     try {
-      if (mode === 'live') {
-        await createFarmMember(farmId, {
-          fullName: fullName.trim(),
-          phone: phone.trim(),
-          code: code.trim(),
-          buildingAssignment: building.trim() ? building.trim() : undefined,
-        });
-      } else {
-        await new Promise<void>((r) => setTimeout(r, 400));
-      }
+      await createFarmMember(farmId, {
+        fullName: fullName.trim(),
+        phone: phone.trim(),
+        code: code.trim(),
+        buildingAssignment: building.trim() ? building.trim() : undefined,
+      });
       reset();
       setSuccess(true);
       void queryClient.invalidateQueries({ queryKey: ['farm-members', farmId] });
@@ -110,8 +108,26 @@ export default function EquipeScreen() {
   };
 
   return (
-    <Screen>
-      <ScreenHeader title="Équipe" subtitle={farms[0]?.name ?? 'Ferme'} back right={<Users size={18} color={color.ink[300]} />} />
+    <Screen header={<ScreenHeader title="Équipe" subtitle={farms[0]?.name ?? 'Ferme'} back right={<Users size={18} color={color.ink[300]} />} />}>
+
+      <Pressable
+        onPress={() => router.push('/tasks')}
+        style={({ pressed }) => [styles.tasksLink, pressed && { opacity: 0.8 }]}
+        accessibilityRole="button"
+        accessibilityLabel="Voir les tâches de l’équipe">
+        <View style={styles.tasksLinkIcon}>
+          <ListTodo size={20} color={color.amber[600]} />
+        </View>
+        <View style={{ flex: 1, gap: 1 }}>
+          <AppText size="body" weight="semibold" color="text">
+            Tâches de l’équipe
+          </AppText>
+          <AppText size="caption" color="muted" numberOfLines={1}>
+            Planifier, assigner et suivre le travail quotidien
+          </AppText>
+        </View>
+        <ListTodo size={16} color={color.ink[300]} />
+      </Pressable>
 
       {canManage ? (
         <>
@@ -145,11 +161,6 @@ export default function EquipeScreen() {
               </AppText>
             ) : null}
             <Button label="Créer le compte éleveur" tone="brand" icon={UserPlus} onPress={() => void submit()} disabled={busy} loading={busy} />
-            {mode !== 'live' ? (
-              <AppText size="caption" color="faint" style={{ textAlign: 'center', marginTop: 4 }}>
-                Démo · opération simulée
-              </AppText>
-            ) : null}
           </Card>
 
           <SectionHeader
@@ -222,6 +233,25 @@ const styles = StyleSheet.create({
   card: {
     gap: 10,
     padding: 14,
+  },
+  tasksLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: palette.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: palette.border,
+    padding: 14,
+    marginBottom: 12,
+  },
+  tasksLinkIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: color.amber[50],
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   memberHead: {
     flexDirection: 'row',

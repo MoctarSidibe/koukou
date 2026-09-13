@@ -13,20 +13,28 @@ import type { Alert } from '@/api/types';
 interface AlertCardProps {
   alert: Alert;
   onAcknowledge?: (id: string) => void;
+  onCompleteCare?: (alert: Alert) => void;
   onOpenLot?: (batchId: string) => void;
   showWhy?: boolean;
 }
 
-export function AlertCard({ alert, onAcknowledge, onOpenLot, showWhy = true }: AlertCardProps) {
+export function AlertCard({ alert, onAcknowledge, onCompleteCare, onOpenLot, showWhy = true }: AlertCardProps) {
   const [open, setOpen] = useState(false);
   const [ack, setAck] = useState(alert.status === 'ACQUITTEE');
   const acknowledged = ack || alert.status === 'ACQUITTEE';
   const isRed = alert.level === 'ROUGE';
+  const isCare = alert.id.startsWith('care:');
 
   const acknowledge = () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     setAck(true);
     onAcknowledge?.(alert.id);
+  };
+
+  const completeCare = () => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    setAck(true);
+    onCompleteCare?.(alert);
   };
 
   return (
@@ -56,14 +64,25 @@ export function AlertCard({ alert, onAcknowledge, onOpenLot, showWhy = true }: A
 
         {!acknowledged && (
           <View style={styles.actionsRow}>
-            <Button
-              label="Reconnu"
-              tone={isRed ? 'danger' : 'success'}
-              size="md"
-              block={false}
-              icon={Check}
-              onPress={acknowledge}
-            />
+            {isCare && onCompleteCare ? (
+              <Button
+                label="Fait"
+                tone="success"
+                size="md"
+                block={false}
+                icon={Check}
+                onPress={completeCare}
+              />
+            ) : (
+              <Button
+                label="Reconnu"
+                tone={isRed ? 'danger' : 'success'}
+                size="md"
+                block={false}
+                icon={Check}
+                onPress={acknowledge}
+              />
+            )}
             {alert.batchId && onOpenLot ? (
               <Button
                 label="Voir le lot"

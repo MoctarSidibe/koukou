@@ -48,7 +48,7 @@ function HistoryItem({ s }: { s: SaleFull }) {
 }
 
 export default function ClientsScreen() {
-  const { mode, farms, farmId } = useAuth();
+  const { farms, farmId } = useAuth();
   const queryClient = useQueryClient();
 
   const customersQuery = useQuery({ queryKey: ['customers', farmId], queryFn: () => fetchCustomers(farmId) });
@@ -76,15 +76,11 @@ export default function ClientsScreen() {
     setError(null);
     setBusy(true);
     try {
-      if (mode === 'live') {
-        await createCustomer(farmId, {
-          fullName: name.trim(),
-          ...(phone.trim() ? { phone: phone.trim() } : {}),
-          ...(city.trim() ? { city: city.trim() } : {}),
-        });
-      } else {
-        await new Promise<void>((r) => setTimeout(r, 400));
-      }
+      await createCustomer(farmId, {
+        fullName: name.trim(),
+        ...(phone.trim() ? { phone: phone.trim() } : {}),
+        ...(city.trim() ? { city: city.trim() } : {}),
+      });
       setName('');
       setPhone('');
       setCity('');
@@ -101,8 +97,7 @@ export default function ClientsScreen() {
   const history = historyQuery.data ?? [];
 
   return (
-    <Screen>
-      <ScreenHeader title="Clients & crédit" subtitle={farms[0]?.name ?? 'Ferme'} back right={<UserRound size={18} color={color.ink[300]} />} />
+    <Screen header={<ScreenHeader title="Clients & crédit" subtitle={farms[0]?.name ?? 'Ferme'} back right={<UserRound size={18} color={color.ink[300]} />} />}>
 
       {customersQuery.isLoading ? (
         <Spinner label="Chargement des clients…" />

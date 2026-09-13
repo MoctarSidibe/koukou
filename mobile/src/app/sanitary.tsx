@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Alert, Image, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { Animated, Alert, Image, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
@@ -8,10 +8,12 @@ import {
   Calendar,
   CalendarX,
   Check,
+  CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronUp,
   ClipboardPlus,
+  Circle,
   Egg,
   Filter,
   HeartPulse,
@@ -30,7 +32,7 @@ import {
   TrendingUp,
   Wheat,
 } from 'lucide-react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 
 import { Screen, ScreenHeader } from '@/components/ui/Screen';
 import { AppText } from '@/components/ui/AppText';
@@ -38,6 +40,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Chip, levelTone } from '@/components/ui/Chip';
 import { FCRGauge } from '@/components/ui/FCRGauge';
+import { NumberInput } from '@/components/ui/NumberInput';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { Sheet } from '@/components/ui/Sheet';
 import { Spinner } from '@/components/ui/Spinner';
@@ -59,6 +62,8 @@ import {
   fetchTreatments,
 } from '@/api';
 import { invalidateFarmQueries } from '@/api/invalidate';
+import { speciesLabel } from '@/api/format';
+import { breedImageForLot } from '@/constants/breedImages';
 import {
   cancelProphylaxis,
   completeProphylaxis,
@@ -267,6 +272,30 @@ function scoreHex(score: number): string {
   if (score >= 80) return palette.green[600];
   if (score >= 60) return palette.amber[500];
   return palette.red[500];
+}
+
+// Les dates sanitaires sont stockées en UTC (YYYY-MM-DD) côté serveur.
+const fromUtc = (epochMs: number) => new Date(epochMs).toISOString().slice(0, 10);
+const daysBetween = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
+
+type CareStatus = {
+  lateCount: number;
+  doneCount: number;
+  pendingCount: number;
+  next: ProphylaxisEvent | null;
+  nextAtDay: number | null;
+  upToDate: boolean;
+};
+
+function careStatus(events: ProphylaxisEvent[] | undefined, integrationDate: string): CareStatus {
+  const active = (events ?? []).filter((p) => p.status !== 'ANNULE');
+  const today = fromUtc(Date.now());
+  const late = active.filter((p) => p.status === 'EN_RETARD');
+  const done = active.filter((p) => p.status === 'FAIT');
+  const pending = active.filter((p) => p.status === 'PLANIFIE' && p.scheduledDate >= today);
+  const next = [...late, ...pending].sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate))[0] ?? null;
+  const nextAtDay = next && integrationDate ? daysBetween(integrationDate.slice(0, 10), next.scheduledDate) + 1 : null;
+  return { lateCount: late.length, doneCount: done.length, pendingCount: pending.length, next, nextAtDay, upToDate: late.length === 0 };
 }
 
 function EventCard({
@@ -597,7 +626,7 @@ function FadeIn({ children }: { children: React.ReactNode }) {
 
 export default function SanitaryScreen() {
   const router = useRouter();
-  const { mode, farms, farmId, user } = useAuth();
+  const { farmId, user } = useAuth();
   const queryClient = useQueryClient();
   const isProprietaire = canManageFarm(user?.role);
 
@@ -607,6 +636,9 @@ export default function SanitaryScreen() {
   const [lotId, setLotId] = useState('');
   const lot = lots.find((b) => b.id === lotId) ?? lots[0];
   const batchId = lot?.id ?? '';
+
+  // Accès « planifier un soin » profond depuis une carte lot (?lot=..&plan=1).
+  const { lot: lotParam, plan: planParam } = useLocalSearchParams<{ lot?: string; plan?: string }>();
 
   const [tab, setTab] = useState<TabKey>('sante');
   const [window, setWindow] = useState<PeriodWindow>(() => periodWindow('all'));
@@ -704,6 +736,23 @@ export default function SanitaryScreen() {
     setEditingEvent(null);
   };
 
+  // Lien profond depuis une carte lot : présélectionne le lot ciblé puis ouvre
+  // le planificateur de soins pour ce lot.
+  const deepPlanOpened = useRef(false);
+  useEffect(() => {
+    if (!lotParam) return;
+    if (batchesQuery.isSuccess && lots.some((b) => b.id === lotParam)) {
+      setLotId(lotParam);
+    }
+  }, [lotParam, batchesQuery.isSuccess, lots]);
+
+  useEffect(() => {
+    if (planParam !== '1' || deepPlanOpened.current || batchId === '') return;
+    if (lotParam && lotId !== lotParam) return;
+    deepPlanOpened.current = true;
+    openCreateWizard();
+  }, [planParam, lotParam, batchId, lotId]);
+
   const deleteScheduleEvent = (e: ProphylaxisEvent) => {
     if (!batchId) return;
     Alert.alert(
@@ -742,6 +791,7 @@ export default function SanitaryScreen() {
       queryClient.invalidateQueries({ queryKey: ['health', farmId, batchId] }),
       queryClient.invalidateQueries({ queryKey: ['health-events', farmId, batchId] }),
       queryClient.invalidateQueries({ queryKey: ['sanitary', farmId, batchId] }),
+      queryClient.invalidateQueries({ queryKey: ['prophylaxis', farmId, batchId] }),
       queryClient.invalidateQueries({ queryKey: ['treatments', farmId, batchId] }),
     ]);
   };
@@ -766,18 +816,14 @@ export default function SanitaryScreen() {
       if (action !== 'generate' && !eventId) return;
       setBusy(eventId ?? 'generate');
       try {
-        if (mode === 'live') {
-          if (action === 'complete') {
-            await completeProphylaxis(farmId, batchId, eventId!, { completedAt: todayStr() });
-          } else if (action === 'reschedule') {
-            await rescheduleProphylaxis(farmId, batchId, eventId!, addUtcDays(event!.scheduledDate, 1));
-          } else if (action === 'cancel') {
-            await cancelProphylaxis(farmId, batchId, eventId!, 'Annulé depuis le mobile');
-          } else {
-            await generateProphylaxis(farmId, batchId);
-          }
+        if (action === 'complete') {
+          await completeProphylaxis(farmId, batchId, eventId!, { completedAt: todayStr() });
+        } else if (action === 'reschedule') {
+          await rescheduleProphylaxis(farmId, batchId, eventId!, addUtcDays(event!.scheduledDate, 1));
+        } else if (action === 'cancel') {
+          await cancelProphylaxis(farmId, batchId, eventId!, 'Annulé depuis le mobile');
         } else {
-          await new Promise<void>((r) => setTimeout(r, 400));
+          await generateProphylaxis(farmId, batchId);
         }
         await invalidate(batchId);
       } catch (e) {
@@ -839,21 +885,17 @@ export default function SanitaryScreen() {
 
     setBusy('event');
     try {
-      if (mode === 'live') {
-        await createHealthEvent(farmId, lotNow.id, {
-          kind,
-          occurredAt: date,
-          quantity: Math.floor(qty),
-          severity: payloadSeverity,
-          title,
-          ...(description ? { description } : {}),
-          ...(symptomsJoined ? { symptoms: symptomsJoined } : {}),
-          ...(eventNotes.trim() ? { notes: eventNotes.trim() } : {}),
-          ...diseaseFields,
-        });
-      } else {
-        await new Promise<void>((r) => setTimeout(r, 400));
-      }
+      await createHealthEvent(farmId, lotNow.id, {
+        kind,
+        occurredAt: date,
+        quantity: Math.floor(qty),
+        severity: payloadSeverity,
+        title,
+        ...(description ? { description } : {}),
+        ...(symptomsJoined ? { symptoms: symptomsJoined } : {}),
+        ...(eventNotes.trim() ? { notes: eventNotes.trim() } : {}),
+        ...diseaseFields,
+      });
       setFormOpen(false);
       setOccurredAt('');
       setQuantity('');
@@ -893,11 +935,7 @@ export default function SanitaryScreen() {
     setError(null);
     setBusy(`res-${e.id}`);
     try {
-      if (mode === 'live') {
-        await resolveHealthEvent(farmId, batchId, e.id);
-      } else {
-        await new Promise<void>((r) => setTimeout(r, 400));
-      }
+      await resolveHealthEvent(farmId, batchId, e.id);
       await invalidate(batchId);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erreur lors de la résolution.');
@@ -923,11 +961,7 @@ export default function SanitaryScreen() {
               setError(null);
               setBusy(`del-${e.id}`);
               try {
-                if (mode === 'live') {
-                  await deleteHealthEvent(farmId, batchId, e.id);
-                } else {
-                  await new Promise<void>((r) => setTimeout(r, 400));
-                }
+                await deleteHealthEvent(farmId, batchId, e.id);
                 await invalidate(batchId);
               } catch (err) {
                 setError(err instanceof Error ? err.message : 'Erreur lors de la suppression.');
@@ -945,49 +979,32 @@ export default function SanitaryScreen() {
     <Screen
       refreshing={batchesQuery.isFetching && !batchesQuery.isLoading}
       onRefresh={() => void onRefresh()}
+      header={
+        <>
+          {/* ── HEADER + DATE BAR (fixes, comme Accueil) ── */}
+          <View style={styles.customHeader}>
+            <Pressable onPress={() => router.back()} style={styles.backBtn} accessibilityRole="button">
+              <ChevronLeft size={22} color={color.ink[800]} />
+            </Pressable>
+            <Image source={require('@/assets/images/logo-nav.png')} style={styles.headerLogo} />
+            <View style={{ flex: 1 }}>
+              <AppText size="h2" weight="bold" color="text" numberOfLines={1}>
+                Sanitaire
+              </AppText>
+              <AppText size="small" color="muted" numberOfLines={1}>
+                Prophylaxie, maladies & traitements
+              </AppText>
+            </View>
+            <Activity size={18} color={color.ink[300]} />
+          </View>
+          <PeriodBar defaultSpan="all" onChange={handlePeriodChange} />
+        </>
+      }
     >
-      <View style={styles.customHeader}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn} accessibilityRole="button">
-          <ChevronLeft size={22} color={color.ink[800]} />
-        </Pressable>
-        <Image source={require('@/assets/images/logo-nav.png')} style={styles.headerLogo} />
-        <View style={{ flex: 1 }}>
-          <AppText size="h2" weight="bold" color="text" numberOfLines={1}>
-            Sanitaire
-          </AppText>
-          <AppText size="small" color="muted" numberOfLines={1}>
-            Prophylaxie, maladies & traitements
-          </AppText>
-        </View>
-        <Activity size={18} color={color.ink[300]} />
-      </View>
-
       {batchesQuery.isLoading ? (
         <Spinner label="Chargement du calendrier…" />
       ) : (
         <>
-          {lots.length > 0 && (
-            <>
-              <AppText size="label" color="muted" style={{ marginBottom: 6 }}>
-                LOT
-              </AppText>
-              <View style={styles.rowWrap}>
-                {lots.map((b) => (
-                  <Pressable key={b.id} onPress={() => setLotId(b.id)} accessibilityRole="button">
-                    <Chip
-                      label={`${b.batchName ?? b.id} · ${b.quantityAlive ?? 0}`}
-                      tone={b.status === 'EN_VENTE' ? 'green' : 'brand'}
-                      selected={lot?.id === b.id}
-                      style={styles.chip}
-                    />
-                  </Pressable>
-                ))}
-              </View>
-            </>
-          )}
-
-          <PeriodBar defaultSpan="all" onChange={handlePeriodChange} />
-
           <View style={styles.cardTabs}>
             {TAB_OPTIONS.map((t) => {
               const active = t.key === tab;
@@ -1014,6 +1031,67 @@ export default function SanitaryScreen() {
             })}
           </View>
 
+          {lots.length > 0 && (
+            <>
+              <AppText size="label" color="muted" style={{ marginBottom: 6 }}>
+                LOT
+              </AppText>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.lotCarousel}
+                style={{ flexGrow: 0 }}>
+                {lots.map((b) => {
+                  const spec = b.species ?? 'POULET';
+                  const active = lot?.id === b.id;
+                  return (
+                    <Pressable
+                      key={b.id}
+                      onPress={() => setLotId(b.id)}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active }}
+                      style={({ pressed }) => [
+                        styles.lotCarouselItem,
+                        active && styles.lotCarouselItemActive,
+                        pressed && styles.lotCarouselItemPressed,
+                      ]}>
+                      <View style={styles.lotCarouselImg}>
+                        {breedImageForLot(b.breedName, b.species) ? (
+                          <Image source={breedImageForLot(b.breedName, b.species)!} style={styles.lotCarouselImgImg} resizeMode="cover" />
+                        ) : (
+                          <View style={styles.lotCarouselImgFallback}>
+                            <AppText size="label" weight="bold" color="brand" numberOfLines={2} style={styles.lotCarouselImgText}>
+                              {speciesLabel(spec)}
+                            </AppText>
+                          </View>
+                        )}
+                      </View>
+                      <AppText
+                        size="label"
+                        weight="semibold"
+                        color="text"
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.7}
+                        style={styles.lotCarouselName}>
+                        {b.batchName ?? b.id}
+                      </AppText>
+                      <AppText
+                        size="label"
+                        color={active ? 'brand' : 'muted'}
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.7}
+                        style={styles.lotCarouselSouche}>
+                        {b.breedName ?? speciesLabel(spec)}
+                      </AppText>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </>
+          )}
+
           {error ? (
             <AppText size="small" color="danger" style={{ marginBottom: 8 }}>
               {error}
@@ -1028,7 +1106,7 @@ export default function SanitaryScreen() {
 
           return (<>
           {tab === 'sante' ? (
-            <SanteTab health={health.data as BatchHealth | undefined} loading={health.isLoading} lotName={lot?.batchName ?? ''} />
+            <SanteTab health={health.data as BatchHealth | undefined} loading={health.isLoading} lotName={lot?.batchName ?? ''} prophylaxis={calendar.data} integrationDate={lot?.integrationDate ?? ''} />
           ) : null}
 
           {tab === 'check' ? (
@@ -1085,7 +1163,6 @@ export default function SanitaryScreen() {
               onSave={() => void saveEvent()}
               onResolve={(e) => void resolveHealth(e)}
               onDelete={(e) => void removeHealth(e)}
-              mode={mode}
             />
           ) : null}
 
@@ -1226,49 +1303,6 @@ export default function SanitaryScreen() {
   );
 }
 
-function Stepper({
-  value,
-  onChange,
-  min = 0,
-  max = 999,
-  step = 1,
-  suffix,
-}: {
-  value: number;
-  onChange: (n: number) => void;
-  min?: number;
-  max?: number;
-  step?: number;
-  suffix?: string;
-}) {
-  return (
-    <View style={styles.stepperRow}>
-      <Pressable
-        onPress={() => onChange(Math.max(min, value - step))}
-        style={[styles.stepperBtn, value <= min && styles.stepperBtnDim]}
-        disabled={value <= min}
-        accessibilityRole="button">
-        <AppText size="body" weight="bold" color="text">
-          −
-        </AppText>
-      </Pressable>
-      <AppText size="body" weight="semibold" color="text" style={styles.stepperValue}>
-        {value}
-        {suffix ? ` ${suffix}` : ''}
-      </AppText>
-      <Pressable
-        onPress={() => onChange(Math.min(max, value + step))}
-        style={[styles.stepperBtn, value >= max && styles.stepperBtnDim]}
-        disabled={value >= max}
-        accessibilityRole="button">
-        <AppText size="body" weight="bold" color="text">
-          +
-        </AppText>
-      </Pressable>
-    </View>
-  );
-}
-
 function WizardHeader({ title, step, total }: { title: string; step?: number; total?: number }) {
   return (
     <View style={styles.formTitleRow}>
@@ -1380,9 +1414,29 @@ function CreateScheduleWizard({
   const medLots = (inputsQuery.data ?? []).filter(
     (i: InputLot) => i.entryType === 'MEDICAMENT',
   );
+
+  const selLotObjs = lots.filter((l) => selLots.includes(l.id));
+  const selSpecies = [...new Set(selLotObjs.map((l) => l.species))];
+  const selTypes = [...new Set(selLotObjs.map((l) => l.type))];
+  const selSpeciesLabel =
+    selSpecies.length === 1
+      ? selSpecies[0] === 'AUTRE'
+        ? (selLotObjs[0]?.customSpecies ?? speciesLabel(selSpecies[0]))
+        : speciesLabel(selSpecies[0])
+      : selSpecies.length > 1
+        ? `${selSpecies.length} espèces`
+        : '';
+  const singleSpecies = selSpecies.length === 1 ? selSpecies[0] : null;
+  const singleType = selTypes.length === 1 ? selTypes[0] : null;
+  const canUsePrograms = singleSpecies !== null && singleType !== null;
+  const activeMode: 'programme' | 'manuel' =
+    mode === 'programme' && canUsePrograms ? 'programme' : 'manuel';
+  const previewLot = selLotObjs[0] ?? currentLot;
+
   const programsQuery = useQuery({
-    queryKey: ['protocols'],
-    queryFn: () => fetchProtocols(),
+    queryKey: ['protocols', singleSpecies, singleType],
+    queryFn: () => fetchProtocols(singleSpecies ?? undefined, singleType ?? undefined),
+    enabled: canUsePrograms,
   });
   const programs = (programsQuery.data ?? []).filter((p) =>
     (p.code ?? '').startsWith('vacc-'),
@@ -1415,7 +1469,7 @@ function CreateScheduleWizard({
       setErr('Sélectionnez au moins un lot.');
       return;
     }
-    if (mode === 'programme') {
+    if (activeMode === 'programme') {
       if (!programId) {
         setErr('Sélectionnez le programme pré-chargé.');
         return;
@@ -1446,7 +1500,7 @@ function CreateScheduleWizard({
 
     setBusy(true);
     try {
-      if (mode === 'programme') {
+      if (activeMode === 'programme') {
         const res = await generateVaccineProgram(farmId, programId, selLots);
         for (const lid of selLots) {
           await invalidateFarmQueries(queryClient, { farmId, batchId: lid });
@@ -1502,6 +1556,10 @@ function CreateScheduleWizard({
         return;
       }
     }
+    if (step === 1 && activeMode === 'programme' && !programId) {
+      setErr('Sélectionnez le programme pré-chargé à appliquer.');
+      return;
+    }
     setErr(null);
     setStep((s) => s + 1);
   };
@@ -1510,7 +1568,7 @@ function CreateScheduleWizard({
     <Sheet
       visible={visible}
       title="Planifier un soin"
-      subtitle={mode === 'programme' ? 'Programme pré-chargé de vaccination' : 'Soin manuel'}
+      subtitle={activeMode === 'programme' ? 'Programme pré-chargé de vaccination' : 'Soin manuel'}
       icon={<Syringe size={18} color={palette.green[600]} />}
       onClose={onClose}>
       {step === 0 ? (
@@ -1561,12 +1619,12 @@ function CreateScheduleWizard({
                   {selectedMed ? (
                     <>
                       <FormLabel text="QUANTITÉ (DOSES) *" tone="green" />
-                      <Stepper
-                        value={Number(medQty) || 0}
-                        onChange={(n) => setMedQty(String(n))}
-                        min={1}
-                        max={Math.max(1, selectedMed.quantity)}
+                      <NumberInput
+                        value={medQty}
+                        onChangeText={(t) => setMedQty(t)}
                         suffix={medUnit}
+                        placeholder="1"
+                        editable={!busy}
                       />
                     </>
                   ) : null}
@@ -1578,18 +1636,56 @@ function CreateScheduleWizard({
           {lots.length === 0 ? (
             <AppText size="caption" color="warn">Aucun lot actif dans cette ferme.</AppText>
           ) : (
-            <View style={styles.rowWrap}>
-              {lots.map((b) => (
-                <Pressable key={b.id} onPress={() => toggleLot(b.id)} accessibilityRole="button">
-                  <Chip
-                    label={b.batchName ?? b.id}
-                    tone={selLots.includes(b.id) ? 'green' : 'neutral'}
-                    selected={selLots.includes(b.id)}
-                    style={styles.chip}
-                  />
-                </Pressable>
-              ))}
-            </View>
+            <>
+              <View style={{ gap: 8 }}>
+                {lots.map((b) => {
+                  const selected = selLots.includes(b.id);
+                  const speciesName = b.customSpecies ?? speciesLabel(b.species);
+                  return (
+                    <Pressable
+                      key={b.id}
+                      onPress={() => toggleLot(b.id)}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      style={({ pressed }) => [
+                        styles.wizLotCard,
+                        selected && { borderColor: palette.green[500], backgroundColor: palette.green[50] },
+                        pressed && { opacity: 0.8 },
+                      ]}
+                    >
+                      {breedImageForLot(b.breedName, b.species) ? (
+                        <Image source={breedImageForLot(b.breedName, b.species)!} style={styles.wizLotImg} resizeMode="cover" />
+                      ) : (
+                        <View style={[styles.wizLotImg, styles.wizLotImgFallback]}>
+                          <AppText size="small" weight="bold" color={b.type === 'CHAIR' ? palette.brand[700] : palette.green[700]} numberOfLines={1}>
+                            {speciesName.slice(0, 3).toUpperCase()}
+                          </AppText>
+                        </View>
+                      )}
+                      <View style={{ flex: 1, gap: 4 }}>
+                        <AppText size="body" weight="bold" color="text" numberOfLines={1}>{b.batchName ?? b.id}</AppText>
+                        <View style={styles.rowWrap}>
+                          <Chip label={b.type === 'CHAIR' ? 'Chair' : 'Pondeuse'} tone="neutral" style={styles.chip} />
+                          <Chip label={b.breedName ?? speciesName} tone="accent" style={styles.chip} />
+                        </View>
+                      </View>
+                      {selected ? (
+                        <CheckCircle2 size={20} color={palette.green[500]} />
+                      ) : (
+                        <Circle size={20} color={palette.ink[200]} />
+                      )}
+                    </Pressable>
+                  );
+                })}
+              </View>
+              {selLots.length > 0 && selSpeciesLabel ? (
+                <AppText size="caption" color={selSpecies.length > 1 ? 'warn' : 'muted'} style={{ marginTop: 6 }}>
+                  {selSpecies.length > 1
+                    ? 'Plusieurs espèces sélectionnées — les programmes pré-chargés sont spécifiques à l’espèce.'
+                    : `Espèce : ${selSpeciesLabel}${selTypes.length === 1 ? ` · ${selTypes[0] === 'CHAIR' ? 'Chair' : 'Pondeuse'}` : ''}`}
+                </AppText>
+              ) : null}
+            </>
           )}
         </>
       ) : null}
@@ -1598,20 +1694,52 @@ function CreateScheduleWizard({
         <>
           <WizardHeader title="Programme ou soin manuel ?" step={2} total={3} />
           <View style={styles.rowWrap}>
-            <Pressable onPress={() => setMode('programme')} accessibilityRole="button">
-              <Chip label="Programme pré-chargé" tone={mode === 'programme' ? 'brand' : 'neutral'} selected={mode === 'programme'} style={styles.chip} />
+            <Pressable
+              onPress={() => { if (canUsePrograms) setMode('programme'); }}
+              disabled={!canUsePrograms}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !canUsePrograms, selected: activeMode === 'programme' }}>
+              <Chip label="Programme pré-chargé" tone={activeMode === 'programme' ? 'brand' : 'neutral'} selected={activeMode === 'programme'} style={styles.chip} />
             </Pressable>
             <Pressable onPress={() => setMode('manuel')} accessibilityRole="button">
-              <Chip label="Manuel" tone={mode === 'manuel' ? 'green' : 'neutral'} selected={mode === 'manuel'} style={styles.chip} />
+              <Chip label="Manuel" tone={activeMode === 'manuel' ? 'green' : 'neutral'} selected={activeMode === 'manuel'} style={styles.chip} />
             </Pressable>
           </View>
-          {mode === 'programme' ? (
+          {activeMode === 'programme' ? (
+            <Card tone="brand" style={[{ marginTop: 10 }]}>
+              <View style={styles.head}>
+                <Info size={15} color={palette.brand[600]} />
+                <AppText size="label" weight="bold" color="brand" style={{ flex: 1 }}>
+                  C&apos;est quoi un programme pré-chargé ?
+                </AppText>
+              </View>
+              <AppText size="caption" color="muted">
+                C&apos;est une orientation vaccinale : il planifie automatiquement les rappels conseillés selon l&apos;espèce. Aucune obligation — vous pouvez aussi créer votre propre soin manuel.
+              </AppText>
+            </Card>
+          ) : null}
+          {selSpecies.length > 1 ? (
+            <Card tone="warn" style={[styles.wizBanner, { marginTop: 10 }]}>
+              <View style={styles.head}>
+                <Info size={15} color={palette.amber[700]} />
+                <AppText size="label" weight="bold" color="warn" style={{ flex: 1 }}>
+                  Espèces mélangées
+                </AppText>
+              </View>
+              <AppText size="caption" color="muted">
+                Les lots sélectionnés sont de plusieurs espèces. Les programmes pré-chargés étant spécifiques à l’espèce, utilisez le soin manuel ou ne retenez que des lots de la même espèce.
+              </AppText>
+            </Card>
+          ) : null}
+          {activeMode === 'programme' ? (
             <>
               <FormLabel text="PROGRAMME (VACCINATION GABON) *" tone="green" />
               {programsQuery.isLoading ? (
                 <Spinner label="Lecture des programmes…" />
               ) : programs.length === 0 ? (
-                <AppText size="caption" color="warn">Aucun programme pré-chargé pour ce type de volaille.</AppText>
+                <AppText size="caption" color="warn">
+                  Aucun programme pré-chargé pour {selSpeciesLabel ? `l’${selSpeciesLabel}` : 'ce type de volaille'}.
+                </AppText>
               ) : (
                 <View style={styles.rowWrap}>
                   {programs.map((p) => (
@@ -1629,7 +1757,7 @@ function CreateScheduleWizard({
               {programDetail.data ? (
                 <>
                   <FormLabel text="APERÇU DES ÉTAPES" tone="green" />
-                  <ProgramPreview program={programDetail.data} lot={currentLot} />
+                  <ProgramPreview program={programDetail.data} lot={previewLot} />
                 </>
               ) : null}
               <Card tone="warn" style={styles.wizBanner}>
@@ -1693,7 +1821,13 @@ function CreateScheduleWizard({
                 editable={!busy}
               />
               <FormLabel text="DÉLAI D’ATTENTE AVANT VENTE (JOURS)" tone="green" />
-              <Stepper value={withdrawal} onChange={setWithdrawal} min={0} max={30} suffix="j" />
+              <NumberInput
+                value={withdrawal > 0 ? String(withdrawal) : ''}
+                onChangeText={(t) => setWithdrawal(Math.min(parseInt(t, 10) || 0, 30))}
+                suffix="j"
+                placeholder="0"
+                editable={!busy}
+              />
               <FormLabel text="NOTES (OPTIONNEL)" tone="green" />
               <TextInput
                 value={notes}
@@ -1719,17 +1853,18 @@ function CreateScheduleWizard({
               </View>
               <View style={{ flex: 1, gap: 1 }}>
                 <AppText size="body" weight="semibold" color="text">
-                  {mode === 'programme'
+                  {activeMode === 'programme'
                     ? programDetail.data?.name ?? 'Programme'
                     : name.trim() || 'Soin manuel'}
                 </AppText>
                 <AppText size="caption" color="muted">
                   {CARE_TYPE_LABEL[type]}
-                  {mode === 'manuel' ? ` · le ${fmtFrDate(date || todayStr())}` : ''}
+                  {activeMode === 'manuel' ? ` · le ${fmtFrDate(date || todayStr())}` : ''}
                   {fromStock ? ` · sortie de stock ${Number(medQty) || 0} ${medUnit}` : ' · externe au stock'}
                   {route ? ` · ${route}` : ''}
                   {dosage.trim() ? ` · ${dosage.trim()}` : ''}
                   {withdrawal > 0 ? ` · délai d’attente ${withdrawal} j` : ''}
+                  {selSpeciesLabel && selSpecies.length === 1 ? ` · ${selSpeciesLabel}${selTypes.length === 1 ? ` ${selTypes[0] === 'CHAIR' ? 'Chair' : 'Pondeuse'}` : ''}` : ''}
                 </AppText>
               </View>
             </View>
@@ -1742,16 +1877,27 @@ function CreateScheduleWizard({
                 {selLots.map((id) => (
                   <AppText key={id} size="caption" color="muted">
                     • {lots.find((b) => b.id === id)?.batchName ?? id}
+                    {lots.find((b) => b.id === id)
+                      ? ` — ${lots.find((b) => b.id === id)!.species === 'AUTRE'
+                          ? (lots.find((b) => b.id === id)!.customSpecies ?? speciesLabel(lots.find((b) => b.id === id)!.species))
+                          : speciesLabel(lots.find((b) => b.id === id)!.species)}`
+                      : ''}
                   </AppText>
                 ))}
               </View>
             </View>
-            {mode === 'programme' ? (
+            {activeMode === 'programme' ? (
               <AppText size="caption" color="faint" style={{ paddingHorizontal: 4 }}>
                 Les étapes aux dates déjà passées ou déjà réalisées seront automatiquement sautées (non bloquant).
               </AppText>
             ) : null}
           </Card>
+          {activeMode === 'programme' && programDetail.data ? (
+            <>
+              <FormLabel text="ÉTAPES DU PROGRAMME" tone="green" />
+              <ProgramPreview program={programDetail.data} lot={previewLot} />
+            </>
+          ) : null}
         </>
       ) : null}
 
@@ -1766,18 +1912,30 @@ function CreateScheduleWizard({
           label={step === 0 ? 'Annuler' : 'Précédent'}
           tone="ghost"
           icon={ChevronUp}
+          block={false}
+          style={styles.actionsPrev}
           onPress={() => (step === 0 ? onClose() : setStep((s) => s - 1))}
-          disabled={busy !== null}
+          disabled={busy}
         />
         {step < 2 ? (
-          <Button label="Suivant" tone="brand" icon={ChevronDown} onPress={next} disabled={busy !== null} />
+          <Button
+            label="Suivant"
+            tone="brand"
+            icon={ChevronDown}
+            block={false}
+            style={styles.actionsNext}
+            onPress={next}
+            disabled={busy}
+          />
         ) : (
           <Button
-            label={mode === 'programme' ? 'Appliquer le programme' : 'Planifier le soin'}
+            label={activeMode === 'programme' ? 'Appliquer le programme' : 'Planifier le soin'}
             tone="success"
             icon={Check}
+            block={false}
+            style={styles.actionsNext}
             onPress={() => void submit()}
-            disabled={busy !== null}
+            disabled={busy}
             loading={busy}
           />
         )}
@@ -1902,7 +2060,13 @@ function EditScheduleSheet({
         editable={!busy}
       />
       <FormLabel text="DÉLAI D’ATTENTE AVANT VENTE (JOURS)" tone="green" />
-      <Stepper value={withdrawal} onChange={setWithdrawal} min={0} max={30} suffix="j" />
+      <NumberInput
+        value={withdrawal > 0 ? String(withdrawal) : ''}
+        onChangeText={(t) => setWithdrawal(Math.min(parseInt(t, 10) || 0, 30))}
+        suffix="j"
+        placeholder="0"
+        editable={!busy}
+      />
       <FormLabel text="NOTES (OPTIONNEL)" tone="green" />
       <TextInput
         value={notes}
@@ -1926,7 +2090,63 @@ function EditScheduleSheet({
   );
 }
 
-function SanteTab({ health, loading, lotName }: { health: BatchHealth | undefined; loading: boolean; lotName: string }) {
+function CareStatusCard({ events, integrationDate }: { events: ProphylaxisEvent[] | undefined; integrationDate: string }) {
+  const s = careStatus(events, integrationDate);
+  const total = (events ?? []).filter((p) => p.status !== 'ANNULE').length;
+  const fg = s.lateCount > 0 ? palette.red[500] : s.pendingCount > 0 ? palette.amber[600] : palette.green[600];
+  const bg = s.lateCount > 0 ? palette.red[50] : s.pendingCount > 0 ? palette.amber[50] : palette.green[50];
+
+  return (
+    <Card tone="default" style={styles.tipsCard}>
+      <View style={styles.head}>
+        <View style={[styles.badge, { backgroundColor: bg }]}>
+          <Syringe size={16} color={fg} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <AppText size="body" weight="semibold" color="text">Vaccins & médicaments</AppText>
+          <AppText size="caption" color="muted">Prophylaxie du lot · reflétée dans le Score santé</AppText>
+        </View>
+        {s.lateCount > 0 ? (
+          <View style={[styles.carePill, { backgroundColor: palette.red[50], borderColor: palette.red[200] }]}>
+            <AppText size="label" weight="bold" color="danger">{s.lateCount} en retard</AppText>
+          </View>
+        ) : (
+          <View style={[styles.carePill, { backgroundColor: palette.green[50], borderColor: palette.green[200] }]}>
+            <ShieldCheck size={12} color={palette.green[600]} />
+            <AppText size="label" weight="bold" color="success">À jour</AppText>
+          </View>
+        )}
+      </View>
+
+      {total === 0 ? (
+        <AppText size="small" color="muted" style={{ marginTop: 10 }}>
+          Aucun soin planifié pour ce lot. Utilisez « Planifier un soin » pour appliquer un programme pré-chargé ou créer un soin manuel.
+        </AppText>
+      ) : (
+        <>
+          <AppText size="small" weight="semibold" color="text" style={{ marginTop: 10 }}>
+            {s.next
+              ? `Prochain : ${CARE_TYPE_LABEL[s.next.careType] ?? 'Soin'} ${s.next.name}${s.nextAtDay != null ? ` · J${s.nextAtDay}` : ''} · ${fmtFrDate(s.next.scheduledDate)}`
+              : 'Programme terminé — toutes les étapes sont réalisées.'}
+          </AppText>
+          <AppText size="caption" color="muted" style={{ marginTop: 2 }}>
+            {s.doneCount}/{total} soin(s) réalisé(s){s.pendingCount > 0 ? ` · ${s.pendingCount} à venir` : ''}
+          </AppText>
+          <View style={styles.careTrack}>
+            <View
+              style={[
+                styles.careFill,
+                { width: `${total > 0 ? Math.round((s.doneCount / total) * 100) : 0}%`, backgroundColor: fg },
+              ]}
+            />
+          </View>
+        </>
+      )}
+    </Card>
+  );
+}
+
+function SanteTab({ health, loading, lotName, prophylaxis, integrationDate }: { health: BatchHealth | undefined; loading: boolean; lotName: string; prophylaxis: ProphylaxisEvent[] | undefined; integrationDate: string }) {
   if (loading) return <Spinner label="Calcul des indicateurs santé…" />;
 
   const empty = !health;
@@ -1998,6 +2218,9 @@ function SanteTab({ health, loading, lotName }: { health: BatchHealth | undefine
         )}
       </Card>
 
+      <SectionHeader title="Vaccins & médicaments" />
+      <CareStatusCard events={prophylaxis} integrationDate={integrationDate} />
+
       <SectionHeader title="Mortalité · 7 jours" />
       <Card tone="default" style={styles.chartCard}>
         <LineChart
@@ -2031,7 +2254,7 @@ function CheckTab({ health, loading, lotName }: { health: BatchHealth | undefine
           Analyse
         </AppText>
         {empty ? (
-          <AppText size="small" color="muted">Saisissez des données pour générer l'analyse.</AppText>
+          <AppText size="small" color="muted">Saisissez des données pour générer l&apos;analyse.</AppText>
         ) : (
           health!.check.insights.map((s, i) => (
             <AppText key={i} size="small" color="muted">• {s}</AppText>
@@ -2117,7 +2340,6 @@ function MaladiesTab({
   onSave,
   onResolve,
   onDelete,
-  mode,
 }: {
   events: HealthEvent[];
   loading: boolean;
@@ -2167,7 +2389,6 @@ function MaladiesTab({
   onSave: () => void;
   onResolve: (e: HealthEvent) => void;
   onDelete: (e: HealthEvent) => void;
-  mode: string;
 }) {
   const formLotId = eventLotId || defaultLotId;
   const filtered = eventFilter === 'ALL' ? events : events.filter((e) => e.kind === eventFilter);
@@ -2357,7 +2578,7 @@ function MaladiesTab({
             loading={busy === 'event'}
           />
           <AppText size="caption" color="faint" style={{ textAlign: 'center' }}>
-            {mode === 'live' ? 'Posté sur le serveur.' : 'Démo · opération simulée'}
+            Posté sur le serveur.
           </AppText>
         </Card>
       ) : null}
@@ -2497,6 +2718,59 @@ const styles = StyleSheet.create({
   chip: {
     marginBottom: 2,
   },
+  lotCarousel: {
+    gap: 8,
+    paddingRight: 2,
+    paddingBottom: 2,
+  },
+  lotCarouselItem: {
+    width: 92,
+    alignItems: 'center',
+    gap: 4,
+    padding: 8,
+    borderRadius: 12,
+    backgroundColor: palette.surface,
+    borderWidth: 2,
+    borderColor: palette.border,
+  },
+  lotCarouselItemActive: {
+    borderColor: palette.brand[600],
+    backgroundColor: palette.brand[50],
+  },
+  lotCarouselItemPressed: {
+    opacity: 0.7,
+  },
+  lotCarouselImg: {
+    width: 44,
+    height: 44,
+    borderRadius: 999,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: palette.surfaceAlt,
+  },
+  lotCarouselImgImg: {
+    width: '100%',
+    height: '100%',
+  },
+  lotCarouselImgFallback: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 6,
+  },
+  lotCarouselImgText: {
+    textAlign: 'center',
+  },
+  lotCarouselName: {
+    fontSize: 10,
+    lineHeight: 12,
+  },
+  lotCarouselSouche: {
+    fontSize: 9,
+    lineHeight: 11,
+  },
   emptyCard: {
     padding: 14,
     gap: 0,
@@ -2597,10 +2871,38 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  carePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  careTrack: {
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: palette.ink[100],
+    overflow: 'hidden',
+    marginTop: 8,
+  },
+  careFill: {
+    height: '100%',
+    borderRadius: 999,
+  },
   actions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: 10,
+    marginTop: 16,
+  },
+  actionsPrev: {
+    flex: 1,
+    borderWidth: 1.5,
+  },
+  actionsNext: {
+    flex: 1.5,
   },
   treatRow: {
     flexDirection: 'row',
@@ -2769,32 +3071,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     marginBottom: 6,
   },
+  wizLotCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 8,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: color.surface,
+  },
+  wizLotImg: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: color.brand[50],
+  },
+  wizLotImgFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
   wizBanner: {
     gap: 6,
     padding: 12,
     marginTop: 8,
-  },
-  stepperRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 14,
-  },
-  stepperBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: color.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stepperBtnDim: {
-    opacity: 0.35,
-  },
-  stepperValue: {
-    minWidth: 64,
-    textAlign: 'center',
   },
 });

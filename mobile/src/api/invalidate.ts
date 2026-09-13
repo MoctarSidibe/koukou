@@ -4,7 +4,7 @@ import type { QueryClient } from '@tanstack/react-query';
  * Invalide les queries serveur d'une ferme après une mutation qui a été
  * envoyée (saisie journalière, vente, soin, caisse…), pour rafraîchir les
  * écrans. Clés couvertes : advisory, batches, dashboard, batch, curve,
- * feed-stock, caisse, caisse-sessions, sanitary (protocoles/prophylaxie),
+ * feed-stock, caisse, caisse-sessions, sanitary, prophylaxis,
  * slaughter-orders, customers, promotions, rentabilite, farm-members,
  * batch-health, pondage.
  */
@@ -28,10 +28,12 @@ export function invalidateFarmQueries(
   void queryClient.invalidateQueries({ queryKey: ['orders', farmId] });
   void queryClient.invalidateQueries({ queryKey: ['rentabilite', farmId] });
   void queryClient.invalidateQueries({ queryKey: ['farm-members', farmId] });
+  void queryClient.invalidateQueries({ queryKey: ['tasks', farmId] });
   if (batchId) {
     void queryClient.invalidateQueries({ queryKey: ['batch', farmId, batchId] });
     void queryClient.invalidateQueries({ queryKey: ['curve', farmId, batchId] });
     void queryClient.invalidateQueries({ queryKey: ['sanitary', farmId, batchId] });
+    void queryClient.invalidateQueries({ queryKey: ['prophylaxis', farmId, batchId] });
     void queryClient.invalidateQueries({ queryKey: ['treatments', farmId, batchId] });
     void queryClient.invalidateQueries({ queryKey: ['health', farmId, batchId] });
     void queryClient.invalidateQueries({ queryKey: ['batch-health', farmId, batchId] });

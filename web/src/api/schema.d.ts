@@ -1623,6 +1623,11 @@ export interface components {
              * @enum {string}
              */
             feedType?: "DEMARRAGE" | "CROISSANCE" | "FINITION";
+            /**
+             * @description Achat externe : consommation enregistrée SANS décrémenter le stock suivi
+             * @example true
+             */
+            skipStockDeduction?: boolean;
             /** @description Lot d’intrant tracé (HACCP) lié */
             inputLotId?: string;
             /** @description Eau bue en litres (indicateur n°1) */

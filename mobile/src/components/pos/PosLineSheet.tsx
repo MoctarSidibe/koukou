@@ -6,9 +6,9 @@ import { AppText } from '../ui/AppText';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { Chip } from '../ui/Chip';
+import { NumberInput } from '../ui/NumberInput';
 import { Segmented } from '../ui/Segmented';
 import { Sheet } from '../ui/Sheet';
-import { Stepper } from '../ui/Stepper';
 import { SPECIES_ICONS, speciesLabel } from '@/api/format';
 import type { PosProduct } from '@/api/mutations';
 import { DEFAULT_AVG_WEIGHT_KG } from '@/api/mutations';
@@ -310,18 +310,14 @@ export function PosLineSheet({ visible, lots, pools, committed, initial, presetB
               {fmt(qty)} oiseaux · ≈ {fmt(Math.round(qty * DEFAULT_AVG_WEIGHT_KG * 100) / 100)} kg · décompte par oiseaux
             </AppText>
           ) : null}
-          <Stepper
-            value={qty}
-            onChange={(n) => {
-              setQty(n);
+          <NumberInput
+            value={qty > 0 ? String(qty) : ''}
+            onChangeText={(t) => {
+              setQty(Math.min(parseInt(t, 10) || 0, Math.max(maxQty, 1)));
               setError(null);
             }}
-            step={1}
-            quickSteps={isKg ? [1, 2, 5] : product === 'OEUF' ? [1, 5, 10] : [1, 5, 10, 25]}
-            min={0}
-            max={Math.max(maxQty, 1)}
             suffix={meta.unit}
-            big
+            placeholder="0"
           />
         </Card>
 

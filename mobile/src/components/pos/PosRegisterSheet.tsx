@@ -8,7 +8,6 @@ import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
 import { Sheet } from '../ui/Sheet';
 import type { InvoiceFields } from '@/api/mutations';
-import { todayStr } from '@/api/mutations';
 import type { Promotion } from '@/api/types';
 import type { SendResult } from '@/offline';
 import { color, palette, radii, spacing, fmt } from '@/constants/theme';
@@ -22,14 +21,9 @@ interface PosRegisterSheetProps {
   promotions: Promotion[];
   pdvName: string;
   pointOfSaleId?: string;
-  mode: 'live' | 'demo';
   onSell: (input: { invoice?: InvoiceFields; promoCode?: string; pointOfSaleId?: string }) => Promise<SendResult>;
   onSettled?: () => void;
   onClose: () => void;
-}
-
-function demoPosRef(): string {
-  return `VTE-${todayStr().replaceAll('-', '')}-${1000 + Math.floor(Math.random() * 9000)}`;
 }
 
 const QUICK_CASH = [5000, 10000, 20000, 50000];
@@ -40,7 +34,6 @@ export function PosRegisterSheet({
   promotions,
   pdvName,
   pointOfSaleId,
-  mode,
   onSell,
   onSettled,
   onClose,
@@ -91,14 +84,6 @@ export function PosRegisterSheet({
     setSelling(true);
     setError(null);
     try {
-      if (mode === 'demo') {
-        await new Promise((r) => setTimeout(r, 450));
-        security();
-        onSettled?.();
-        setSold({ ref: demoPosRef(), queued: false });
-        setTimeout(onClose, 1300);
-        return;
-      }
       const result = await onSell({
         invoice: invoice(),
         promoCode: promoCode.trim(),

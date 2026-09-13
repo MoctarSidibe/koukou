@@ -1,15 +1,11 @@
 import React, { useMemo, useState } from 'react';
-import { Alert, Image, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import { Alert, Image, Pressable, StyleSheet, View } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
 import { useLocalSearchParams } from 'expo-router';
 import {
   Activity,
   AlertTriangle,
-  Calendar,
-  CalendarDays,
   Check,
-  ChevronDown,
   Clock,
   DollarSign,
   Droplets,
@@ -18,13 +14,12 @@ import {
   HeartPulse,
   Info,
   Layers,
-  Percent,
+  PenLine,
   Pill,
-  Scale,
+  ShoppingCart,
   Stethoscope,
   Syringe,
   Target,
-  TrendingDown,
   TrendingUp,
   Warehouse,
   Weight,
@@ -39,14 +34,14 @@ import { MetricTile } from '@/components/ui/MetricTile';
 import { Segmented } from '@/components/ui/Segmented';
 import { Spinner } from '@/components/ui/Spinner';
 import { LineChart } from '@/components/ui/LineChart';
-import { FCRGauge } from '@/components/ui/FCRGauge';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { Button } from '@/components/ui/Button';
 import { AlertCard } from '@/components/AlertCard';
+import { PeriodBar, periodWindow, toDateStr, type PeriodWindow } from '@/components/ui/PeriodBar';
 import { useQuickCapture } from '@/components/capture/QuickCaptureProvider';
 import { useAuth } from '@/auth/AuthContext';
 import { color, palette, radii, fmt, fmtFcfa } from '@/constants/theme';
-import { SPECIES_IMAGES } from '@/constants/speciesImages';
+import { breedImageForLot } from '@/constants/breedImages';
 import {
   fetchAdvisory,
   fetchBatch,
@@ -58,20 +53,24 @@ import {
   fetchHealthEvents,
   fetchPondage,
   fetchProphylaxis,
+  fetchProtocols,
   fetchRentabiliteBatch,
+  fetchSanitaryProgram,
   fetchTreatments,
 } from '@/api';
 import { downloadPdf } from '@/api/pdf';
 import type {
+  Alert as LotAlert,
   BatchPnl,
-  BatchWithMetrics,
+  BatchType,
   BreedStandard,
   BreedStatus,
-  CurveWeek,
   FeedLotStock,
-  HealthEvent,
   PondageSummary,
   ProphylaxisEvent,
+  ProtocolStep,
+  SanitaryProtocol,
+  SanitaryProtocolWithSteps,
   TreatmentRecord,
 } from '@/api/types';
 import { SPECIES_LABELS } from '@/api/format';
@@ -85,27 +84,10 @@ const MAIN_TABS: { key: MainTab; label: string; icon: typeof Clock }[] = [
   { key: 'health', label: 'Sanitaire', icon: HeartPulse },
 ];
 
-// ── Date range presets ──
-type DatePreset = '7d' | '30d' | 'all' | 'custom';
-const DATE_PRESETS: { key: DatePreset; label: string }[] = [
-  { key: '7d', label: '7 jours' },
-  { key: '30d', label: '30 jours' },
-  { key: 'all', label: 'Tout' },
-  { key: 'custom', label: 'Choisir…' },
-];
-
-function daysAgo(n: number): Date {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
 // ── History filter ──
-type HistoryFilter = 'all' | 'entries' | 'treatments' | 'health';
+type HistoryFilter = 'all' | 'treatments' | 'health';
 const HISTORY_FILTERS: { key: HistoryFilter; label: string }[] = [
   { key: 'all', label: 'Tout' },
-  { key: 'entries', label: 'Saisies' },
   { key: 'treatments', label: 'Soins' },
   { key: 'health', label: 'Santé' },
 ];
@@ -125,6 +107,86 @@ const CARE_LABEL: Record<string, string> = {
 const HEALTH_KIND_LABEL: Record<string, string> = {
   MALADIE: 'Maladie', MORTALITE: 'Mortalité', REFORME: 'Abattage', SYMPTOME: 'Symptôme', VISITE_VETO: 'Visite veto', AUTRE: 'Autre',
 };
+const CARE_WINDOW_DAYS = 7;
+
+type CareAlertItem = { level: 'ROUGE' | 'JAUNE'; message: string; recommendation: string; date: string };
+
+function defaultProtocolFor(
+  protocols: SanitaryProtocol[] | undefined,
+  species: string,
+  type: BatchType,
+): SanitaryProtocol | undefined {
+  return (
+    protocols?.find((p) => p.species === species && p.type === type && p.isDefault) ??
+    protocols?.find((p) => p.species === species && p.type === type) ??
+    protocols?.find((p) => p.type === type)
+  );
+}
+
+// Dérive les alertes sanitaires du lot (soins en retard / à prévoir) à partir
+// de la prophylaxie ET du protocole — independamment de l'advisory backend.
+function deriveCareAlerts(
+  prophylaxis: ProphylaxisEvent[] | undefined,
+  program: SanitaryProtocolWithSteps | undefined,
+  treatments: TreatmentRecord[] | undefined,
+  ageDays: number,
+): CareAlertItem[] {
+  const items: CareAlertItem[] = [];
+  const today = new Date().toISOString().slice(0, 10);
+
+  // L'état « en retard » provient du serveur (EN_RETARD, bascule après le
+  // délai de grâce utilité du statut officiel) — pas d'une dérivation locale
+  // (0 j) qui divergerait de l'écran Sanitaire (1 j).
+  const late = (prophylaxis ?? []).filter((p) => p.status === 'EN_RETARD');
+  for (const p of late) {
+    items.push({
+      level: 'ROUGE',
+      message: `${CARE_LABEL[p.careType] ?? 'Soin'} en retard : ${p.name} (prévu le ${p.scheduledDate})`,
+      recommendation: 'Réaliser ce soin au plus tôt pour rester conforme au protocole.',
+      date: p.scheduledDate,
+    });
+  }
+
+  if (program) {
+    const events = prophylaxis ?? [];
+    // Une étape est « couverte » dès qu'un soin la mentionne (réalisé OU déjà
+    // planifié) : un calendrier existe, plus d'alerte « à réaliser ».
+    const coveredByStep = new Set(
+      events.filter((p) => p.protocolStepId).map((p) => p.protocolStepId as string),
+    );
+    const coveredNames = new Set(
+      [...events.map((p) => p.name), ...(treatments ?? []).map((t) => t.productName)]
+        .map((n) => n.trim().toLowerCase()),
+    );
+    const isCovered = (s: ProtocolStep) => coveredByStep.has(s.id) || coveredNames.has(s.name.trim().toLowerCase());
+
+    const steps = program.steps.filter((s) => s.active);
+    const due = steps
+      .filter((s) => !isCovered(s) && s.dayFrom <= ageDays)
+      .sort((a, b) => a.dayFrom - b.dayFrom);
+    const soon = steps
+      .filter((s) => !isCovered(s) && s.dayFrom > ageDays && s.dayFrom <= ageDays + CARE_WINDOW_DAYS)
+      .sort((a, b) => a.dayFrom - b.dayFrom);
+
+    for (const s of due) {
+      items.push({
+        level: 'ROUGE',
+        message: `${CARE_LABEL[s.careType] ?? 'Soin'} à réaliser (J${s.dayFrom}) : ${s.name}`,
+        recommendation: 'Planifier sans attendre : ce soin doit être réalisé pour rester conforme.',
+        date: today,
+      });
+    }
+    for (const s of soon) {
+      items.push({
+        level: 'JAUNE',
+        message: `${CARE_LABEL[s.careType] ?? 'Soin'} à prévoir (J${s.dayFrom}) : ${s.name}`,
+        recommendation: 'Prévoir un passage cette semaine avant la date du soin.',
+        date: today,
+      });
+    }
+  }
+  return items;
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 // MAIN COMPONENT
@@ -134,7 +196,7 @@ export default function LotDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const batchId = String(id ?? '');
   const { openDaily, openSale } = useQuickCapture();
-  const { mode, farmId } = useAuth();
+  const { farmId } = useAuth();
 
   // ── Queries ──
   const batchQ = useQuery({ queryKey: ['batch', farmId, batchId], queryFn: () => fetchBatch(farmId, batchId), enabled: !!batchId });
@@ -153,20 +215,59 @@ export default function LotDetailScreen() {
   // ── State ──
   const [mainTab, setMainTab] = useState<MainTab>('overview');
   const [curveTab, setCurveTab] = useState<'weight' | 'fcr' | 'water' | 'mortality' | 'eggs'>('weight');
-  const [datePreset, setDatePreset] = useState<DatePreset>('all');
-  const [customFrom, setCustomFrom] = useState<Date>(daysAgo(30));
-  const [customTo, setCustomTo] = useState<Date>(new Date());
-  const [showFromPicker, setShowFromPicker] = useState(false);
-  const [showToPicker, setShowToPicker] = useState(false);
+  const [period, setPeriod] = useState<PeriodWindow>(() => periodWindow('all'));
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('all');
+  const [healthFilter, setHealthFilter] = useState<'all' | 'event' | 'care'>('all');
   const [expanded, setExpanded] = useState<string | null>(null);
   const [pdfBusy, setPdfBusy] = useState(false);
 
   const b = batchQ.data;
   const m = b?.metrics;
   const isLayer = b?.type === 'PONDEUSE';
+  const eb = m?.eggBreakdown;
+  const eggTotal = eb?.collected ?? 0;
+  const eggCracked = eb?.cracked ?? 0;
+  const eggCasse = eggTotal > 0 ? Math.round((eggCracked / eggTotal) * 100) : 0;
+  const eggRows = [
+    { key: 'sellable', label: 'Commercialisables', count: eb?.sellable ?? 0, color: palette.green[600] },
+    { key: 'small', label: 'Petits œufs', count: eb?.small ?? 0, color: palette.brand[500] },
+    { key: 'doubleYolk', label: 'Double jaune', count: eb?.doubleYolk ?? 0, color: palette.amber[500] },
+    { key: 'dirty', label: 'Œufs sales', count: eb?.dirty ?? 0, color: color.ink[400] },
+    { key: 'cracked', label: 'Fêlés / abîmés', count: eb?.cracked ?? 0, color: palette.red[500] },
+  ];
+  const eggPct = (count: number) => (eggTotal > 0 ? Math.round((count / eggTotal) * 100) : 0);
 
   const pondageQ = useQuery({ queryKey: ['pondage', farmId, batchId], queryFn: () => fetchPondage(farmId, batchId), enabled: !!batchId && isLayer });
+
+  // ── Protocol (soins dus / à venir) ──
+  const protocolsQ = useQuery({
+    queryKey: ['sanitary-protocols', b?.species, b?.type],
+    queryFn: () => fetchProtocols(b?.species ?? 'POULET', b?.type ?? 'CHAIR'),
+    staleTime: 60_000,
+    enabled: !!b,
+  });
+  const defaultProtocol = useMemo(
+    () => defaultProtocolFor(protocolsQ.data, b?.species ?? 'POULET', b?.type ?? 'CHAIR'),
+    [protocolsQ.data, b?.species, b?.type],
+  );
+  // Le programme « à réaliser » est celui réellement appliqué au lot (protocolId
+  // des événements) ; on ne retombe sur le protocole par défaut qu'à défaut.
+  const appliedProgramId = useMemo(
+    () =>
+      (prophylaxisQ.data ?? []).map((p) => p.protocolId).find(Boolean) ??
+      defaultProtocol?.id,
+    [prophylaxisQ.data, defaultProtocol?.id],
+  );
+  const programQ = useQuery({
+    queryKey: ['sanitary-program', appliedProgramId],
+    queryFn: () => fetchSanitaryProgram(appliedProgramId!),
+    enabled: appliedProgramId != null,
+    staleTime: 60_000,
+  });
+  const careAlerts = useMemo(
+    () => deriveCareAlerts(prophylaxisQ.data, programQ.data, treatmentsQ.data, m?.ageDays ?? 0),
+    [prophylaxisQ.data, programQ.data, treatmentsQ.data, m?.ageDays],
+  );
 
   // ── Derived lot metrics ──
   const breedStatus: BreedStatus | null = useMemo(() => {
@@ -196,30 +297,22 @@ export default function LotDetailScreen() {
   }, [feedStockQ.data, batchId]);
 
   const pnl: BatchPnl | null = rentabQ.data ?? null;
+  const quantityAtStart = b?.quantityAtStart ?? 0;
+
+  // Prix d'achat par unité (poussins) — explique un Net négatif : ex. 1500/u.
+  const chickUnitPriceFcfa = useMemo(() => {
+    if (pnl?.enrichment.chickCostFcfa != null && quantityAtStart > 0) {
+      return Math.round(pnl.enrichment.chickCostFcfa / quantityAtStart);
+    }
+    return null;
+  }, [pnl, quantityAtStart]);
   const pondage: PondageSummary | null = pondageQ.data ?? null;
 
-  // ── Water consumption (from weekly curve data) ──
-  const waterSummary = useMemo(() => {
-    const weeks = curveQ.data?.weekly ?? [];
-    const totalWater = weeks.reduce((s, w) => s + (w.waterL || 0), 0);
-    const current = weeks[0];
-    const previous = weeks[1];
-    let deltaPct: number | null = null;
-    if (current && previous && previous.waterL > 0) {
-      deltaPct = ((current.waterL - previous.waterL) / previous.waterL) * 100;
-    }
-    return { totalWater, currentWeekL: current?.waterL ?? 0, deltaPct };
-  }, [curveQ.data]);
-
-  // ── Date filtering ──
-  const dateRange = useMemo(() => {
-    if (datePreset === '7d') return { from: daysAgo(7), to: new Date() };
-    if (datePreset === '30d') return { from: daysAgo(30), to: new Date() };
-    if (datePreset === 'custom') return { from: customFrom, to: customTo };
-    return { from: null, to: null }; // 'all'
-  }, [datePreset, customFrom, customTo]);
-
-  const fmtDateShort = (d: Date) => d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  // ── Date filtering (fenêtre partagée PeriodBar) ──
+  const dateRange = useMemo(() => ({
+    from: period.from ? new Date(`${period.from}T00:00:00`) : null,
+    to: period.to ? new Date(`${period.to}T23:59:59`) : null,
+  }), [period.from, period.to]);
 
   // ── Filtered curve data ──
   const filteredWeekly = useMemo(() => {
@@ -231,6 +324,19 @@ export default function LotDetailScreen() {
     });
   }, [curveQ.data, dateRange]);
 
+  // ── Water consumption (from filtered weekly curve data) ──
+  const waterSummary = useMemo(() => {
+    const weeks = filteredWeekly;
+    const totalWater = weeks.reduce((s, w) => s + (w.waterL || 0), 0);
+    const current = weeks[0];
+    const previous = weeks[1];
+    let deltaPct: number | null = null;
+    if (current && previous && previous.waterL > 0) {
+      deltaPct = ((current.waterL - previous.waterL) / previous.waterL) * 100;
+    }
+    return { totalWater, currentWeekL: current?.waterL ?? 0, deltaPct };
+  }, [filteredWeekly]);
+
   const labelDay = (ws: string) => ws.slice(5).replace('-', '/');
 
   const weightPoints = useMemo(() => filteredWeekly.filter((w) => w.avgWeightKg != null).map((w) => ({ x: labelDay(w.weekStart), y: w.avgWeightKg! })), [filteredWeekly]);
@@ -239,8 +345,15 @@ export default function LotDetailScreen() {
   const mortalityPoints = useMemo(() => filteredWeekly.filter((w) => w.deaths >= 0).map((w) => ({ x: labelDay(w.weekStart), y: w.deaths })), [filteredWeekly]);
   const eggsPoints = useMemo(() => {
     if (!isLayer) return [];
-    return filteredWeekly.map((w) => ({ x: labelDay(w.weekStart), y: w.waterL > 0 ? w.waterL : 0 })); // placeholder
-  }, [filteredWeekly, isLayer]);
+    const weekly = pondageQ.data?.weekly ?? [];
+    const scoped = dateRange.from
+      ? weekly.filter((w) => {
+          const d = new Date(w.weekStart);
+          return d >= dateRange.from! && d <= dateRange.to!;
+        })
+      : weekly;
+    return scoped.filter((w) => w.collected > 0).map((w) => ({ x: labelDay(w.weekStart), y: w.collected }));
+  }, [pondageQ.data, dateRange, isLayer]);
 
   // ── Latest avg weight (kg), for the overview tile / mini-chart ──
   const avgWeightKg = useMemo(() => {
@@ -251,10 +364,17 @@ export default function LotDetailScreen() {
   // ── Lay-rate points (pondeuse) for the overview mini-chart ──
   const layRatePoints = useMemo(() => {
     if (!isLayer) return [];
-    return (pondageQ.data?.weekly ?? [])
+    const weekly = pondageQ.data?.weekly ?? [];
+    const scoped = dateRange.from
+      ? weekly.filter((w) => {
+          const d = new Date(w.weekStart);
+          return d >= dateRange.from! && d <= dateRange.to!;
+        })
+      : weekly;
+    return scoped
       .filter((w) => w.layRatePercent != null)
       .map((w) => ({ x: w.weekStart.slice(5).replace('-', '/'), y: w.layRatePercent! }));
-  }, [pondageQ.data, isLayer]);
+  }, [pondageQ.data, dateRange, isLayer]);
 
   // ── History items (merged timeline) ──
   const historyItems = useMemo(() => {
@@ -312,18 +432,76 @@ export default function LotDetailScreen() {
   }, [treatmentsQ.data, prophylaxisQ.data, healthEventsQ.data]);
 
   const filteredHistory = useMemo(() => {
-    if (historyFilter === 'all') return historyItems;
-    if (historyFilter === 'treatments') return historyItems.filter((h) => h.kind === 'treatment' || h.kind === 'prophylaxis' || h.kind === 'prophylaxis_late');
-    if (historyFilter === 'health') return historyItems.filter((h) => h.kind === 'health');
-    return historyItems; // entries placeholder
-  }, [historyItems, historyFilter]);
+    const from = dateRange.from ? toDateStr(dateRange.from) : null;
+    const to = dateRange.to ? toDateStr(dateRange.to) : null;
+    const inRange = (d: string) => !from || !d || (d >= from && d <= to!);
+    const scoped = historyItems.filter((h) => inRange(h.date));
+    if (historyFilter === 'treatments') return scoped.filter((h) => h.kind === 'treatment' || h.kind === 'prophylaxis' || h.kind === 'prophylaxis_late');
+    if (historyFilter === 'health') return scoped.filter((h) => h.kind === 'health');
+    return scoped;
+  }, [historyItems, historyFilter, dateRange]);
+
+  // ── Suivi sanitaire (unifié : événements + prophylaxie, triés par date asc) ──
+  const healthTimeline = useMemo(() => {
+    const items: { key: string; date: string; category: 'event' | 'care'; icon: typeof Clock; title: string; chipLabel: string; chipTone: 'red' | 'amber' | 'green' | 'brand'; detail: string }[] = [];
+    for (const e of healthEventsQ.data ?? []) {
+      items.push({
+        key: `e-${e.id}`,
+        date: e.occurredAt?.slice(0, 10) ?? '',
+        category: 'event',
+        icon: Stethoscope,
+        title: e.title,
+        chipLabel: HEALTH_KIND_LABEL[e.kind] ?? e.kind,
+        chipTone: e.severity === 'ROUGE' ? 'red' : e.severity === 'JAUNE' ? 'amber' : 'green',
+        detail: [e.quantity ? `${e.quantity} oiseaux` : '', e.status === 'RESOLU' ? 'Résolu' : '', e.treatmentGiven ? `Traitement : ${e.treatmentGiven}` : ''].filter(Boolean).join(' · '),
+      });
+    }
+    for (const p of prophylaxisQ.data ?? []) {
+      if (p.status === 'ANNULE') continue;
+      items.push({
+        key: `p-${p.id}`,
+        date: p.status === 'FAIT' ? p.completedAt?.slice(0, 10) ?? p.scheduledDate : p.scheduledDate,
+        category: 'care',
+        icon: Pill,
+        title: p.name,
+        chipLabel: p.status === 'FAIT' ? 'Fait' : p.status === 'EN_RETARD' ? 'En retard' : 'Programmé',
+        chipTone: p.status === 'FAIT' ? 'green' : p.status === 'EN_RETARD' ? 'red' : 'brand',
+        detail: [CARE_LABEL[p.careType] ?? p.careType, p.dosage].filter(Boolean).join(' · '),
+      });
+    }
+    items.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    return items;
+  }, [healthEventsQ.data, prophylaxisQ.data]);
+
+  const filteredHealth = useMemo(() => {
+    if (healthFilter === 'all') return healthTimeline;
+    return healthTimeline.filter((t) => t.category === healthFilter);
+  }, [healthTimeline, healthFilter]);
 
   // ── Lot alerts ──
-  const lotAlerts = useMemo(() => (advisoryQ.data?.alerts ?? []).filter((a) => a.batchId === batchId), [advisoryQ.data, batchId]);
+  const lotAlerts = useMemo(() => {
+    const advisoryAlerts = (advisoryQ.data?.alerts ?? []).filter((a) => a.batchId === batchId);
+    const derived: LotAlert[] = careAlerts.map((c, i) => ({
+      id: `san-care-${i}-${c.date}`,
+      farmId,
+      batchId,
+      batchName: b?.batchName ?? null,
+      kind: 'PROPHYLAXIE',
+      level: c.level,
+      status: 'ACTIVE' as const,
+      message: c.message,
+      recommendation: c.recommendation,
+      why: [],
+      createdAt: c.date,
+    }));
+    const dedupe = (a: LotAlert) => `${a.kind}|${a.level}|${a.message}`;
+    const seen = new Set<string>();
+    return [...advisoryAlerts, ...derived]
+      .filter((a) => (seen.has(dedupe(a)) ? false : (seen.add(dedupe(a)), true)));
+  }, [advisoryQ.data, batchId, careAlerts, farmId, b?.batchName]);
 
   // ── PDF ──
   const downloadPasseport = async () => {
-    if (mode === 'demo') { Alert.alert('Disponible en mode connecté', 'Connectez-vous pour télécharger.'); return; }
     setPdfBusy(true);
     try {
       await downloadPdf(`/farms/${farmId}/batches/${batchId}/passeport`, `passeport-${batchId}.pdf`);
@@ -347,60 +525,91 @@ export default function LotDetailScreen() {
   // ═══════════════════════════════════════════════════════════════════════
 
   return (
-    <Screen bottomPad={140}>
-      {/* ── HEADER ── */}
-      <ScreenHeader
-        title={b.batchName ?? 'Lot'}
-        subtitle={`${b.breedName ?? ''} · ${b.species && b.species !== 'POULET' ? `${b.species === 'AUTRE' && b.customSpecies ? b.customSpecies : SPECIES_LABELS[b.species]} · ` : ''}${isLayer ? 'pondeuse' : 'chair'} · J${m?.ageDays ?? 0}`}
-        back
-        right={<Chip label={b.status === 'EN_VENTE' ? 'En vente' : 'Actif'} tone={b.status === 'EN_VENTE' ? 'green' : 'brand'} />}
-      />
+    <Screen
+      bottomPad={140}
+      header={
+        <>
+          {/* ── HEADER + FILTRE PÉRIODE (fixes, comme Accueil) ── */}
+          <ScreenHeader
+            title={b.batchName ?? 'Lot'}
+            back
+            right={<Chip label={b.status === 'EN_VENTE' ? 'En vente' : 'Actif'} tone={b.status === 'EN_VENTE' ? 'green' : 'brand'} />}
+          />
+          <PeriodBar defaultSpan="all" onChange={setPeriod} style={{ marginTop: 2 }} />
+        </>
+      }
+    >
 
       {/* ── HERO ── */}
       <Card tone="brand" style={styles.heroCard}>
         <View style={styles.heroSplit}>
-          {b?.species && SPECIES_IMAGES[b.species] ? (
+          {breedImageForLot(b.breedName, b.species) ? (
             <View style={styles.heroImageWrap}>
-              <Image source={SPECIES_IMAGES[b.species]} style={styles.heroImage} resizeMode="cover" />
+              <Image source={breedImageForLot(b.breedName, b.species)!} style={styles.heroImage} resizeMode="cover" />
               <View style={styles.heroAgeBadge}>
                 <AppText size="small" weight="bold" color="#FFFFFF">J{m?.ageDays ?? 0}</AppText>
               </View>
             </View>
           ) : null}
           <View style={styles.heroStats}>
-            <View style={styles.heroMainRow}>
-              <HeroStat value={fmt(m?.liveCount ?? 0)} label="vivants" />
-              <HeroStat value={`${(m?.mortalityPercent ?? 0).toLocaleString('fr-FR')} %`} label="mortalité" tone={(m?.mortalityPercent ?? 0) > 1.5 ? 'danger' : 'text'} />
+            <View style={styles.heroTitleRow}>
+              <View style={styles.heroSpeciesTag}>
+                <AppText size="label" weight="bold" color="brand" style={{ flexShrink: 1 }}>
+                  {b.species && b.species !== 'POULET' ? (b.species === 'AUTRE' && b.customSpecies ? b.customSpecies : SPECIES_LABELS[b.species]) : SPECIES_LABELS.POULET}
+                </AppText>
+                {(b.breedCode || b.breedName) ? <View style={styles.heroTitleSep} /> : null}
+                {b.breedCode ? (
+                  <AppText size="label" weight="bold" color="accent" style={{ flexShrink: 1 }}>{b.breedCode}</AppText>
+                ) : null}
+                {b.breedName ? <View style={styles.heroTitleSep} /> : null}
+                {b.breedName ? (
+                  <AppText size="label" weight="medium" color="muted" style={{ flexShrink: 1 }}>{b.breedName}</AppText>
+                ) : null}
+              </View>
+              <View style={[styles.heroTypeBadge, styles.heroTypeBadgeChair, isLayer && styles.heroTypeBadgeLayer]}>
+                <AppText size="caption" weight="bold" color={isLayer ? color.accent[700] : color.brand[800]}>
+                  {isLayer ? 'Pondeuse' : 'Chair'}
+                </AppText>
+              </View>
             </View>
-            <View style={styles.heroSubRow}>
+            <View style={styles.heroMainRow}>
+              <HeroStat value={fmt(m?.liveCount ?? 0)} label="vivants" small />
+              <View style={styles.heroStatSep} />
+              <HeroStat
+                value={`${(m?.mortalityPercent ?? 0).toLocaleString('fr-FR')} %`}
+                label="mortalité"
+                tone={(m?.mortalityPercent ?? 0) > 1.5 ? 'danger' : 'text'}
+                small
+              />
+              <View style={styles.heroStatSep} />
+              <HeroStat value={(m?.fcr ?? 0).toLocaleString('fr-FR')} label="IC" small />
+              <View style={styles.heroStatSep} />
               {isLayer ? (
-                <HeroStat value={`${m?.layRatePercent ?? 0} %`} label="ponte" small />
+                <HeroStat value={m?.layRatePercent != null ? `${m.layRatePercent.toLocaleString('fr-FR')} %` : '—'} label="Taux de ponte" tone={m?.layRatePercent != null && m.layRatePercent >= 100 ? 'danger' : 'text'} small />
               ) : (
-                <>
-                  <HeroStat value={`${(m?.fcr ?? 0).toLocaleString('fr-FR')}`} label="IC" small />
-                  <HeroStat value={m?.gmqGramsPerDay ? `${m.gmqGramsPerDay}` : '—'} label="GMQ g/j" small />
-                </>
+                <HeroStat value={m?.ipe != null ? m.ipe.toLocaleString('fr-FR') : '—'} label="IPE" small />
               )}
             </View>
           </View>
         </View>
-        <AppText size="caption" color="muted" style={styles.heroSub}>
-          Début : {b.integrationDate} · {fmt(b.quantityAtStart)} sujets
-        </AppText>
-        {healthQ.data && (
-          <View style={styles.healthStrip}>
+        <View style={styles.healthStrip}>
+          {healthQ.data && (
             <View style={styles.healthScorePill}>
               <HeartPulse size={13} color={healthQ.data.healthScore >= 80 ? palette.green[600] : healthQ.data.healthScore >= 60 ? palette.amber[500] : palette.red[500]} />
               <AppText size="small" weight="bold" color="text">Santé {healthQ.data.healthScore}/100</AppText>
             </View>
-            {healthQ.data.tips[0] ? (
-              <View style={styles.healthTipChip}>
-                {healthQ.data.tips[0].level === 'ROUGE' ? <AlertTriangle size={13} color={palette.red[500]} /> : healthQ.data.tips[0].level === 'JAUNE' ? <Info size={13} color={palette.amber[500]} /> : <Check size={13} color={palette.green[500]} />}
-                <AppText size="small" color="muted" numberOfLines={2} style={{ flex: 1 }}>{healthQ.data.tips[0].text}</AppText>
-              </View>
-            ) : null}
+          )}
+          <View style={styles.heroActions}>
+            <Button label="Saisir" size="xs" labelSize="caption" tone="brand" icon={PenLine} block={false} onPress={() => openDaily(batchId)} />
+            <Button label="Encaisser" size="xs" labelSize="caption" tone="accent" icon={ShoppingCart} block={false} onPress={() => openSale(batchId)} />
           </View>
-        )}
+        </View>
+        <AppText size="caption" color="muted">
+          Début : {b.integrationDate} · {fmt(b.quantityAtStart)} sujets
+        </AppText>
+        <View style={styles.heroPassportRow}>
+          <Button label="Passeport sanitaire (PDF)" size="sm" tone="brand" icon={FileText} block onPress={() => void downloadPasseport()} disabled={pdfBusy} loading={pdfBusy} />
+        </View>
       </Card>
 
       {/* ── CYCLE PROGRESS ── */}
@@ -428,23 +637,104 @@ export default function LotDetailScreen() {
         })}
       </View>
 
+      
+
       {/* ══════════════════ TAB: OVERVIEW ══════════════════ */}
       {mainTab === 'overview' && (
-        <>
+        <View style={styles.overviewStack}>
           {/* Metric tiles */}
           <View style={styles.metricGrid}>
-            <MetricTile label="IC" value={(m?.fcr ?? 0).toLocaleString('fr-FR')} icon={Scale} tone={(m?.fcr ?? 0) <= 2.0 ? 'green' : (m?.fcr ?? 0) <= 2.5 ? 'amber' : 'red'} threeCol />
-            {!isLayer && <MetricTile label="GMQ" value={m?.gmqGramsPerDay ? `${m.gmqGramsPerDay} g` : '—'} icon={TrendingUp} tone="brand" threeCol />}
+            <MetricTile label="GMQ" value={m?.gmqGramsPerDay ? `${m.gmqGramsPerDay} g` : '—'} icon={TrendingUp} tone="brand" threeCol />
             <MetricTile label="IPE" value={(m?.ipe ?? 0).toLocaleString('fr-FR')} icon={Activity} tone="accent" threeCol />
             <MetricTile label="Viabilité" value={`${(m?.viabilityPercent ?? 100).toLocaleString('fr-FR')} %`} icon={HeartPulse} tone={(m?.viabilityPercent ?? 100) >= 95 ? 'green' : 'amber'} threeCol />
-            {!isLayer && <MetricTile label="Poids moyen" value={avgWeightKg != null ? `${avgWeightKg.toFixed(1)} kg` : '—'} icon={Weight} tone="brand" threeCol />}
-            {isLayer && <MetricTile label="Ponte" value={`${m?.layRatePercent ?? 0} %`} icon={Percent} tone="accent" threeCol />}
-            {isLayer && <MetricTile label="Œufs" value={m?.eggsCollectedTotal ? fmt(m.eggsCollectedTotal) : '—'} icon={Egg} tone="accent" threeCol />}
-            {isLayer && <MetricTile label="Plateaux" value={healthQ.data?.trays != null ? fmt(healthQ.data.trays) : '—'} icon={Egg} tone="accent" threeCol />}
+            <MetricTile label="Poids moyen" value={avgWeightKg != null ? `${avgWeightKg.toFixed(1)} kg` : '—'} icon={Weight} tone="brand" threeCol labelLines={2} />
             <MetricTile label="Aliment" value={m?.totalFeedKg ? `${m.totalFeedKg.toLocaleString('fr-FR')} kg` : '—'} icon={Wheat} tone="default" threeCol />
-            <MetricTile label="Eau" value={healthQ.data?.waterLPerBird ? `${healthQ.data.waterLPerBird} L/oj` : '—'} icon={Droplets} tone="brand" threeCol />
             <MetricTile label="Densité" value={m?.densityPerM2 ? `${m.densityPerM2.toFixed(1)}/m²` : '—'} icon={Layers} tone="default" threeCol />
           </View>
+
+          {/* ── ŒUFS — répartition détaillée ── */}
+          <Card style={styles.eggCard}>
+            <View style={styles.healthHeader}>
+              <Egg size={16} color={palette.accent[500]} />
+              <AppText size="body" weight="bold" color="brand">Œufs</AppText>
+              {eggTotal > 0 && (
+                <AppText size="small" color="muted" style={{ marginLeft: 'auto' }}>
+                  ≈ {Math.floor((eb?.sellable ?? 0) / 30).toLocaleString('fr-FR')} alvéoles
+                </AppText>
+              )}
+            </View>
+
+            {eggTotal > 0 ? (
+              <>
+                <View style={styles.waterStatRow}>
+                <View style={styles.waterStat}>
+                  <AppText size="small" color="muted">Récolte brute</AppText>
+                  <AppText size="body" weight="bold" color="text" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{fmt(eggTotal)}</AppText>
+                </View>
+                {isLayer && (
+                  <View style={styles.waterStat}>
+                    <AppText size="small" color="muted">Taux ponte</AppText>
+                    <AppText size="body" weight="bold" color="accent" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{m?.layRatePercent != null ? `${m.layRatePercent.toLocaleString('fr-FR')} %` : '—'}</AppText>
+                  </View>
+                )}
+                <View style={styles.waterStat}>
+                  <AppText size="small" color="muted">Casse</AppText>
+                  <AppText size="body" weight="bold" color={eggCasse >= 10 ? 'danger' : eggCasse > 0 ? 'amber' : 'success'}>{eggCasse} %</AppText>
+                </View>
+                <View style={styles.waterStat}>
+                  <AppText size="small" color="muted">Fêlés</AppText>
+                  <AppText size="body" weight="bold" color="text">{fmt(eggCracked)}</AppText>
+                </View>
+              </View>
+
+              {isLayer && pondage && (
+                <View style={styles.waterStatRow}>
+                  <View style={styles.waterStat}>
+                    <AppText size="small" color="muted">Œufs/poule</AppText>
+                    <AppText size="body" weight="bold" color="text">{pondage.eggsPerHen ?? '—'}</AppText>
+                  </View>
+                  <View style={styles.waterStat}>
+                    <AppText size="small" color="muted">Tx commercialisable</AppText>
+                    <AppText size="body" weight="bold" color="text">{pondage.sellableRatioPercent != null ? `${pondage.sellableRatioPercent.toFixed(1)} %` : '—'}</AppText>
+                  </View>
+                </View>
+              )}
+
+              <View style={styles.eggSegBar}>
+                {eggRows.map((r) =>
+                  r.count > 0 ? <View key={r.key} style={[styles.eggSegFill, { backgroundColor: r.color, flex: r.count }]} /> : null,
+                )}
+              </View>
+
+              <View style={{ gap: 8 }}>
+                {eggRows.map((r) => (
+                  <View key={r.key} style={{ gap: 3 }}>
+                    <View style={styles.eggRow}>
+                      <View style={[styles.eggRowDot, { backgroundColor: r.color }]} />
+                      <AppText size="small" color="text" style={{ flex: 1 }}>{r.label}</AppText>
+                      <AppText size="small" weight="bold" color="text">{r.count.toLocaleString('fr-FR')}</AppText>
+                      <AppText size="caption" color="muted" style={styles.eggRowPct}>{eggPct(r.count)}%</AppText>
+                    </View>
+                    <View style={styles.eggMiniBar}>
+                      <View
+                        style={[
+                          styles.eggMiniFill,
+                          { backgroundColor: r.color, width: `${r.count > 0 ? Math.max(1, (r.count / eggTotal) * 100) : 0}%` },
+                        ]}
+                      />
+                    </View>
+                  </View>
+                ))}
+              </View>
+              </>
+            ) : (
+              <View style={styles.eggEmpty}>
+                <Egg size={18} color={palette.ink[300]} />
+                <AppText size="small" weight="semibold" color="muted">Pas encore de récolte d{'\u2019'}œufs</AppText>
+                <AppText size="caption" color="faint">Les œufs apparaîtront après la première saisie quotidienne.</AppText>
+              </View>
+            )}
+          </Card>
 
           {/* Mini trend preview — weight (chair) / lay rate (pondeuse) */}
           {(weightPoints.length >= 2 || layRatePoints.length >= 2) && (
@@ -486,28 +776,17 @@ export default function LotDetailScreen() {
             </Card>
           )}
 
-          {/* FCR Gauge (chair only) — compact */}
-          {!isLayer && (
-            <Card style={styles.fcrCard}>
-              <FCRGauge value={m?.fcr ?? null} size={92} />
-              <View style={styles.fcrLabel}>
-                <AppText size="small" color="muted">IC global</AppText>
-                <AppText size="h3" weight="bold" color="text">{(m?.fcr ?? 0).toLocaleString('fr-FR')}</AppText>
-              </View>
-            </Card>
-          )}
-
           {/* Health tips */}
           {healthQ.data && (
-            <Card style={{ gap: 8 }}>
+            <Card style={{ gap: 6 }}>
               <View style={styles.healthHeader}>
                 <HeartPulse size={16} color={palette.brand[600]} />
                 <AppText size="body" weight="bold" color="brand">Conseils & alertes</AppText>
               </View>
               {healthQ.data.tips.slice(0, 3).map((tip, i) => (
-                <View key={i} style={styles.tipRow}>
-                  {tip.level === 'ROUGE' ? <AlertTriangle size={14} color={palette.red[500]} /> : tip.level === 'JAUNE' ? <Info size={14} color={palette.amber[500]} /> : <Check size={14} color={palette.green[500]} />}
-                  <AppText size="small" color="muted" style={{ flex: 1 }}>{tip.text}</AppText>
+                <View key={i} style={styles.slimTipRow}>
+                  {tip.level === 'ROUGE' ? <AlertTriangle size={13} color={palette.red[500]} /> : tip.level === 'JAUNE' ? <Info size={13} color={palette.amber[500]} /> : <Check size={13} color={palette.green[500]} />}
+                  <AppText size="small" color="muted" style={{ flex: 1, lineHeight: 16 }}>{tip.text}</AppText>
                 </View>
               ))}
             </Card>
@@ -560,10 +839,8 @@ export default function LotDetailScreen() {
                   <AppText size="h3" weight="bold" color={pnl.netFcfa >= 0 ? 'success' : 'danger'}>{fmtFcfa(pnl.netFcfa)}</AppText>
                 </View>
                 <View style={styles.pnlNet}>
-                  <AppText size="small" color="muted">Marge</AppText>
-                  <AppText size="body" weight="bold" color={pnl.marginPct != null && pnl.marginPct < 0 ? 'danger' : 'text'}>
-                    {pnl.marginPct != null ? `${pnl.marginPct.toFixed(1)} %` : '—'}
-                  </AppText>
+                  <AppText size="small" color="muted">Prix/u (achat)</AppText>
+                  <AppText size="body" weight="bold" color="text" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>{chickUnitPriceFcfa != null ? `${fmt(chickUnitPriceFcfa)} /u` : '—'}</AppText>
                 </View>
               </View>
               <View style={styles.pnlGrid}>
@@ -583,41 +860,11 @@ export default function LotDetailScreen() {
                   <AppText size="small" color="muted">Kg vendus</AppText>
                   <AppText size="body" weight="bold" color="text">{pnl.kgSold > 0 ? `${pnl.kgSold.toLocaleString('fr-FR')} kg` : '—'}</AppText>
                 </View>
-              </View>
-            </Card>
-          )}
-
-          {/* Pondage — egg quality (PONDEUSE only) */}
-          {pondage && isLayer && (
-            <Card style={{ gap: 8 }}>
-              <View style={styles.healthHeader}>
-                <Egg size={16} color={palette.accent[500]} />
-                <AppText size="body" weight="bold" color="brand">Pondage</AppText>
-              </View>
-              <View style={styles.healthGrid}>
                 <View style={styles.healthStat}>
-                  <AppText size="small" color="muted">Collectés</AppText>
-                  <AppText size="body" weight="bold" color="text">{fmt(pondage.totals.collected)}</AppText>
-                </View>
-                <View style={styles.healthStat}>
-                  <AppText size="small" color="muted">Commercialisables</AppText>
-                  <AppText size="body" weight="bold" color="success">{fmt(pondage.totals.sellable)}</AppText>
-                </View>
-                <View style={styles.healthStat}>
-                  <AppText size="small" color="muted">Fêlés</AppText>
-                  <AppText size="body" weight="bold" color="amber">{fmt(pondage.totals.cracked)}</AppText>
-                </View>
-                <View style={styles.healthStat}>
-                  <AppText size="small" color="muted">Petits</AppText>
-                  <AppText size="body" weight="bold" color="muted">{fmt(pondage.totals.small)}</AppText>
-                </View>
-                <View style={styles.healthStat}>
-                  <AppText size="small" color="muted">Tx commercialisable</AppText>
-                  <AppText size="body" weight="bold" color="text">{pondage.sellableRatioPercent != null ? `${pondage.sellableRatioPercent.toFixed(1)} %` : '—'}</AppText>
-                </View>
-                <View style={styles.healthStat}>
-                  <AppText size="small" color="muted">Œufs/poule</AppText>
-                  <AppText size="body" weight="bold" color="text">{pondage.eggsPerHen != null ? pondage.eggsPerHen : '—'}</AppText>
+                  <AppText size="small" color="muted">Marge</AppText>
+                  <AppText size="body" weight="bold" color={pnl.marginPct != null && pnl.marginPct < 0 ? 'danger' : 'text'}>
+                    {pnl.marginPct != null ? `${pnl.marginPct.toFixed(1)} %` : '—'}
+                  </AppText>
                 </View>
               </View>
             </Card>
@@ -640,35 +887,13 @@ export default function LotDetailScreen() {
               ))}
             </Card>
           )}
-        </>
+        </View>
       )}
 
       {/* ══════════════════ TAB: CURVES ══════════════════ */}
       {mainTab === 'curves' && (
         <>
-          {/* Date range picker */}
-          <View style={styles.dateRow}>
-            <CalendarDays size={14} color={color.ink[400]} />
-            <View style={styles.presetRow}>
-              {DATE_PRESETS.map((p) => (
-                <Pressable key={p.key} onPress={() => setDatePreset(p.key)} style={[styles.presetBtn, datePreset === p.key && styles.presetBtnActive]}>
-                  <AppText size="small" weight={datePreset === p.key ? 'bold' : 'medium'} color={datePreset === p.key ? 'brand' : 'muted'}>{p.label}</AppText>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-          {datePreset === 'custom' && (
-            <View style={styles.customDateRow}>
-              <Pressable onPress={() => setShowFromPicker(true)} style={styles.dateBtn}>
-                <AppText size="small" color="text">Du : {fmtDateShort(customFrom)}</AppText>
-              </Pressable>
-              <Pressable onPress={() => setShowToPicker(true)} style={styles.dateBtn}>
-                <AppText size="small" color="text">Au : {fmtDateShort(customTo)}</AppText>
-              </Pressable>
-              {showFromPicker && <DateTimePicker value={customFrom} mode="date" display={Platform.OS === 'ios' ? 'spinner' : 'default'} onChange={(_e, d) => { if (Platform.OS === 'android') setShowFromPicker(false); if (d) setCustomFrom(d); }} maximumDate={new Date()} locale="fr-FR" />}
-              {showToPicker && <DateTimePicker value={customTo} mode="date" display={Platform.OS === 'ios' ? 'spinner' : 'default'} onChange={(_e, d) => { if (Platform.OS === 'android') setShowToPicker(false); if (d) setCustomTo(d); }} maximumDate={new Date()} locale="fr-FR" />}
-            </View>
-          )}
+          {/* Curve selector */}
 
           {/* Curve selector */}
           <Card style={{ gap: 10 }}>
@@ -698,7 +923,7 @@ export default function LotDetailScreen() {
                 : l.key === 'gmq' ? (m?.gmqGramsPerDay ? `${m.gmqGramsPerDay} g/j` : '—')
                 : l.key === 'ipe' ? (m?.ipe ?? 0).toLocaleString('fr-FR')
                 : l.key === 'viab' ? `${(m?.viabilityPercent ?? 100).toLocaleString('fr-FR')} %`
-                : `${m?.layRatePercent ?? 0} %`;
+                : m?.layRatePercent != null ? `${m.layRatePercent} %` : '—';
               const open = expanded === l.key;
               return (
                 <View key={l.key} style={[styles.legendRow, i < arr.length - 1 && styles.legendBorder]}>
@@ -707,7 +932,7 @@ export default function LotDetailScreen() {
                       <AppText size="body" weight="medium" color="text">{l.label}</AppText>
                       {open && <AppText size="small" color="muted" style={{ marginTop: 4 }}>{l.explain}</AppText>}
                     </View>
-                    <AppText size="body" weight="bold" color="brand">{value}</AppText>
+                    <AppText size="body" weight="bold" color={l.key === 'ponte' && m?.layRatePercent != null && m.layRatePercent >= 100 ? 'danger' : 'brand'}>{value}</AppText>
                     <Info size={16} color={color.ink[400]} />
                   </Pressable>
                 </View>
@@ -720,25 +945,13 @@ export default function LotDetailScreen() {
       {/* ══════════════════ TAB: HISTORY ══════════════════ */}
       {mainTab === 'history' && (
         <>
-          {/* Date range picker (same as curves) */}
-          <View style={styles.dateRow}>
-            <CalendarDays size={14} color={color.ink[400]} />
-            <View style={styles.presetRow}>
-              {DATE_PRESETS.map((p) => (
-                <Pressable key={p.key} onPress={() => setDatePreset(p.key)} style={[styles.presetBtn, datePreset === p.key && styles.presetBtnActive]}>
-                  <AppText size="small" weight={datePreset === p.key ? 'bold' : 'medium'} color={datePreset === p.key ? 'brand' : 'muted'}>{p.label}</AppText>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-
           {/* History filter */}
           <View style={styles.filterRow}>
             {HISTORY_FILTERS.map((f) => {
               const active = historyFilter === f.key;
               return (
-                <Pressable key={f.key} onPress={() => setHistoryFilter(f.key)} style={[styles.filterBtn, active && styles.filterBtnActive]}>
-                  <AppText size="small" weight={active ? 'bold' : 'medium'} color={active ? 'brand' : 'muted'}>{f.label}</AppText>
+                <Pressable key={f.key} onPress={() => setHistoryFilter(f.key)} style={({ pressed }) => [styles.filterBtn, active && styles.filterBtnActive, pressed && styles.filterBtnPressed]}>
+                  <AppText size="small" weight={active ? 'bold' : 'medium'} color={active ? 'surface' : 'muted'}>{f.label}</AppText>
                 </Pressable>
               );
             })}
@@ -776,6 +989,23 @@ export default function LotDetailScreen() {
       {/* ══════════════════ TAB: HEALTH ══════════════════ */}
       {mainTab === 'health' && (
         <>
+          {/* Alerte sanitaire (soins en retard / à prévoir) */}
+          {careAlerts.length > 0 && (
+            <Card tone={careAlerts.some((c) => c.level === 'ROUGE') ? 'alert' : 'warn'} style={{ gap: 8 }}>
+              <View style={styles.eventHeader}>
+                <Stethoscope size={14} color={careAlerts.some((c) => c.level === 'ROUGE') ? palette.red[500] : palette.amber[500]} />
+                <AppText size="body" weight="semibold" color="text" style={{ flex: 1 }}>Alerte sanitaire</AppText>
+                <Chip
+                  label={careAlerts.some((c) => c.level === 'ROUGE') ? 'Soin à réaliser' : 'Soin à prévoir'}
+                  tone={careAlerts.some((c) => c.level === 'ROUGE') ? 'red' : 'amber'}
+                />
+              </View>
+              {careAlerts.slice(0, 3).map((c, i) => (
+                <AppText key={i} size="bodyM" color="ink" style={{ flex: 1 }}>{c.message}</AppText>
+              ))}
+            </Card>
+          )}
+
           {/* Health score card */}
           {healthQ.data && (
             <Card style={{ gap: 8 }}>
@@ -814,45 +1044,43 @@ export default function LotDetailScreen() {
             </Card>
           )}
 
-          {/* Health events */}
-          <SectionHeader title="Événements sanitaires" subtitle={`${healthEventsQ.data?.length ?? 0} événement(s)`} />
-          {(healthEventsQ.data ?? []).length === 0 ? (
+          {/* Suivi sanitaire — événements + prophylaxie unifiés (triés par date) */}
+          <SectionHeader title="Suivi sanitaire" subtitle={`${filteredHealth.length} élément(s)`} />
+          <View style={styles.filterRow}>
+            {([
+              { key: 'all', label: 'Tout' },
+              { key: 'event', label: 'Événements' },
+              { key: 'care', label: 'Prophylaxie' },
+            ] as const).map((f) => {
+              const active = healthFilter === f.key;
+              return (
+                <Pressable key={f.key} onPress={() => setHealthFilter(f.key)} style={({ pressed }) => [styles.filterBtn, active && styles.filterBtnActive, pressed && styles.filterBtnPressed]}>
+                  <AppText size="small" weight={active ? 'bold' : 'medium'} color={active ? 'surface' : 'muted'}>{f.label}</AppText>
+                </Pressable>
+              );
+            })}
+          </View>
+          {filteredHealth.length === 0 ? (
             <Card style={{ alignItems: 'center', padding: 16 }}>
-              <AppText size="body" color="muted">Aucun événement sanitaire enregistré.</AppText>
+              <AppText size="body" color="muted">Aucun élément sanitaire enregistré.</AppText>
             </Card>
           ) : (
-            (healthEventsQ.data ?? []).slice(0, 10).map((e) => (
-              <Card key={e.id} tone={e.status === 'RESOLU' ? 'plain' : 'alert'} style={{ gap: 4 }}>
-                <View style={styles.eventHeader}>
-                  <Stethoscope size={14} color={e.severity === 'ROUGE' ? palette.red[500] : e.severity === 'JAUNE' ? palette.amber[500] : palette.green[500]} />
-                  <AppText size="body" weight="semibold" color="text" style={{ flex: 1 }}>{e.title}</AppText>
-                  <Chip label={HEALTH_KIND_LABEL[e.kind] ?? e.kind} tone={e.severity === 'ROUGE' ? 'red' : e.severity === 'JAUNE' ? 'amber' : 'green'} />
-                </View>
-                <AppText size="small" color="muted">
-                  {e.occurredAt?.slice(0, 10)}{e.quantity ? ` · ${e.quantity} oiseaux` : ''}{e.status === 'RESOLU' ? ' · Résolu' : ''}
-                </AppText>
-                {e.treatmentGiven && <AppText size="small" color="brand">Traitement : {e.treatmentGiven}</AppText>}
-              </Card>
-            ))
+            filteredHealth.slice(0, 15).map((t) => {
+              const Icon = t.icon;
+              return (
+                <Card key={t.key} tone={t.chipTone === 'red' ? 'alert' : t.chipTone === 'amber' ? 'warn' : t.chipTone === 'green' ? 'green' : 'default'} style={{ gap: 4 }}>
+                  <View style={styles.eventHeader}>
+                    <Icon size={14} color={t.chipTone === 'red' ? palette.red[500] : t.chipTone === 'amber' ? palette.amber[500] : t.chipTone === 'green' ? palette.green[500] : palette.brand[600]} />
+                    <AppText size="body" weight="semibold" color="text" style={{ flex: 1 }}>{t.title}</AppText>
+                    <Chip label={t.chipLabel} tone={t.chipTone} />
+                  </View>
+                  <AppText size="small" color="muted">
+                    {t.date}{t.detail ? ` · ${t.detail}` : ''}
+                  </AppText>
+                </Card>
+              );
+            })
           )}
-
-          {/* Upcoming prophylaxis */}
-          <SectionHeader title="Calendrier prophylaxie" subtitle={`${prophylaxisQ.data?.length ?? 0} événement(s)`} />
-          {(prophylaxisQ.data ?? []).filter((p) => p.status !== 'ANNULE').slice(0, 8).map((p) => (
-            <Card key={p.id} tone={p.status === 'FAIT' ? 'green' : p.status === 'EN_RETARD' ? 'warn' : 'default'} style={{ gap: 4 }}>
-              <View style={styles.eventHeader}>
-                <Pill size={14} color={p.status === 'FAIT' ? palette.green[500] : p.status === 'EN_RETARD' ? palette.red[500] : palette.brand[600]} />
-                <AppText size="body" weight="semibold" color="text" style={{ flex: 1 }}>{p.name}</AppText>
-                <Chip
-                  label={p.status === 'FAIT' ? 'Fait' : p.status === 'EN_RETARD' ? 'En retard' : 'Programmé'}
-                  tone={p.status === 'FAIT' ? 'green' : p.status === 'EN_RETARD' ? 'red' : 'brand'}
-                />
-              </View>
-              <AppText size="small" color="muted">
-                {CARE_LABEL[p.careType] ?? p.careType}{p.dosage ? ` · ${p.dosage}` : ''} · {p.scheduledDate}
-              </AppText>
-            </Card>
-          ))}
         </>
       )}
 
@@ -865,20 +1093,6 @@ export default function LotDetailScreen() {
           </View>
         </>
       )}
-
-      {/* ── CTA ── */}
-      <View style={styles.ctaRow}>
-        <View style={{ flex: 1 }}>
-          <Button label="Saisir le jour" tone="brand" onPress={() => openDaily(batchId)} />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Button label="Encaisser" tone="accent" onPress={() => openSale(batchId)} />
-        </View>
-      </View>
-
-      <View style={styles.pdfRow}>
-        <Button label="Passeport sanitaire (PDF)" tone="ghost" icon={FileText} onPress={() => void downloadPasseport()} disabled={pdfBusy} loading={pdfBusy} />
-      </View>
     </Screen>
   );
 }
@@ -902,21 +1116,27 @@ function HeroStat({ value, label, tone = 'text', small = false }: { value: strin
 
 const styles = StyleSheet.create({
   // Hero
-  heroCard: { gap: 6 },
+  heroCard: { gap: 10 },
   heroSplit: { flexDirection: 'row', alignItems: 'stretch', gap: 12 },
-  heroImageWrap: { width: 92, borderRadius: radii.lg, overflow: 'hidden' },
-  heroImage: { width: 92, height: 92, borderRadius: radii.lg },
-  heroAgeBadge: { position: 'absolute', left: 6, bottom: 6, backgroundColor: 'rgba(12,35,49,0.72)', borderRadius: radii.pill, paddingHorizontal: 8, paddingVertical: 2 },
+  heroImageWrap: { width: 76, borderRadius: radii.lg, overflow: 'hidden' },
+  heroImage: { width: 76, height: 76, borderRadius: radii.lg },
+  heroAgeBadge: { position: 'absolute', left: 5, bottom: 5, backgroundColor: 'rgba(12,35,49,0.72)', borderRadius: radii.pill, paddingHorizontal: 7, paddingVertical: 2 },
   heroStats: { flex: 1, gap: 8, justifyContent: 'center' },
-  heroMainRow: { flexDirection: 'row', gap: 12 },
-  heroSubRow: { flexDirection: 'row', gap: 12 },
-  heroStat: { flex: 1, gap: 1 },
-  heroValue: { fontSize: 21, lineHeight: 24 },
-  heroValueSmall: { fontSize: 17, lineHeight: 20 },
-  heroSub: { marginTop: 4 },
-  healthStrip: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: palette.brand[100] },
+  heroTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  heroSpeciesTag: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 6, rowGap: 2, flex: 1 },
+  heroTypeBadge: { borderRadius: radii.pill, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1 },
+  heroTypeBadgeChair: { backgroundColor: palette.brand[100], borderColor: palette.brand[200] },
+  heroTypeBadgeLayer: { backgroundColor: color.accent[50], borderColor: color.accent[100] },
+  heroTitleSep: { width: 4, height: 4, borderRadius: 2, backgroundColor: 'rgba(12,35,49,0.18)' },
+  heroMainRow: { flexDirection: 'row', alignItems: 'stretch' },
+  heroStatSep: { width: StyleSheet.hairlineWidth, alignSelf: 'stretch', backgroundColor: 'rgba(12,35,49,0.12)', marginVertical: 2 },
+  heroStat: { flex: 1, gap: 1, alignItems: 'center' },
+  heroValue: { fontSize: 20, lineHeight: 24 },
+  heroValueSmall: { fontSize: 16, lineHeight: 20 },
+  healthStrip: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(12,35,49,0.08)' },
   healthScorePill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingVertical: 4, borderRadius: radii.pill, backgroundColor: palette.surface },
-  healthTipChip: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  heroActions: { flexDirection: 'row', gap: 8, marginLeft: 'auto', flexShrink: 1, flexWrap: 'wrap', justifyContent: 'flex-end' },
+  heroPassportRow: { marginTop: 4, alignItems: 'flex-start' },
 
   // Cycle progress
   cycleCard: { gap: 6 },
@@ -931,10 +1151,6 @@ const styles = StyleSheet.create({
   waterStatRow: { flexDirection: 'row', gap: 12 },
   waterStat: { flex: 1, gap: 2 },
 
-  // FCR compact
-  fcrCard: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 14 },
-  fcrLabel: { gap: 2 },
-
   // P&L
   pnlTopline: { flexDirection: 'row', alignItems: 'flex-end', gap: 20 },
   pnlNet: { flex: 1, gap: 2 },
@@ -947,19 +1163,13 @@ const styles = StyleSheet.create({
 
   // Metrics grid
   metricGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 },
-
-  // Date picker
-  dateRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-  presetRow: { flex: 1, flexDirection: 'row', gap: 4 },
-  presetBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: radii.md, backgroundColor: palette.surfaceAlt },
-  presetBtnActive: { backgroundColor: palette.brand[50], borderWidth: 1, borderColor: palette.brand[200] },
-  customDateRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
-  dateBtn: { flex: 1, paddingVertical: 8, paddingHorizontal: 12, borderRadius: radii.md, backgroundColor: palette.surface, borderWidth: 1, borderColor: color.border },
+  overviewStack: { gap: 12 },
 
   // History filter
-  filterRow: { flexDirection: 'row', gap: 6, marginBottom: 8 },
-  filterBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: radii.pill, backgroundColor: palette.surfaceAlt },
-  filterBtnActive: { backgroundColor: palette.brand[600] },
+  filterRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
+  filterBtn: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: radii.pill, backgroundColor: palette.surfaceAlt, borderWidth: 1, borderColor: palette.border },
+  filterBtnActive: { backgroundColor: palette.brand[600], borderColor: palette.brand[600] },
+  filterBtnPressed: { opacity: 0.75, transform: [{ scale: 0.97 }] },
 
   // Timeline
   timeline: { gap: 0 },
@@ -974,8 +1184,20 @@ const styles = StyleSheet.create({
   healthGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   healthStat: { flexBasis: '45%', gap: 2 },
 
+  // Œufs
+  eggCard: { gap: 10 },
+  eggEmpty: { alignItems: 'center', gap: 4, paddingVertical: 12 },
+  eggSegBar: { flexDirection: 'row', height: 8, borderRadius: 4, overflow: 'hidden', backgroundColor: palette.accent[50] },
+  eggSegFill: { height: '100%' },
+  eggRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  eggRowDot: { width: 10, height: 10, borderRadius: 5 },
+  eggRowPct: { width: 40, textAlign: 'right' },
+  eggMiniBar: { height: 4, borderRadius: 999, overflow: 'hidden', backgroundColor: palette.border },
+  eggMiniFill: { height: 4, borderRadius: 999 },
+
   // Tips
   tipRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  slimTipRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 7 },
 
   // Events
   eventHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -985,8 +1207,4 @@ const styles = StyleSheet.create({
   legendRow: { paddingHorizontal: 14 },
   legendBorder: { borderBottomWidth: 1, borderBottomColor: color.border },
   legendMain: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 13 },
-
-  // CTA
-  ctaRow: { flexDirection: 'row', gap: 10, marginTop: 20 },
-  pdfRow: { marginTop: 10 },
 });

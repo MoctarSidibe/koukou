@@ -1,6 +1,6 @@
 import React from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { ChevronLeft } from 'lucide-react-native';
 
@@ -18,7 +18,12 @@ interface ScreenProps {
 }
 
 export function Screen({ children, bottomPad = 96, scroll = true, style, header, refreshing, onRefresh }: ScreenProps) {
-  const content = <View style={[styles.content, { paddingBottom: bottomPad }, style]}>{children}</View>;
+  const insets = useSafeAreaInsets();
+  // Edge-to-edge (SDK 54) : le contenu défile derrière la barre système Android
+  // (3 boutons). Pour une mise en page FIXE (scroll=false), le padding `bottomPad`
+  // doit englober l'insert système, sinon le contenu passe sous la barre.
+  const contentPad = scroll ? bottomPad : bottomPad + insets.bottom;
+  const content = <View style={[styles.content, { paddingBottom: contentPad }, style]}>{children}</View>;
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       {header ? (

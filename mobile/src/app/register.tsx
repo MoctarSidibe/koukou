@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
 import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
@@ -12,6 +12,7 @@ import { PulsarDot } from '@/components/ui/PulsarDot';
 import { useAuth } from '@/auth/AuthContext';
 import { isGabonPhoneValid } from '@/constants/phone';
 import { color, palette } from '@/constants/theme';
+import { useKeyboardInset } from '@/hooks/useKeyboardInset';
 
 type Step = 1 | 2;
 
@@ -27,6 +28,7 @@ export default function RegisterScreen() {
   const phoneRef = useRef<TextInput>(null);
   const codeRef = useRef<TextInput>(null);
   const codeConfirmRef = useRef<TextInput>(null);
+  const keyboardInset = useKeyboardInset();
 
   const canContinue = fullName.trim().length >= 3 && !busy;
   const canSubmit =
@@ -58,9 +60,8 @@ export default function RegisterScreen() {
     return (
       <View style={styles.root}>
         <StatusBar style="dark" />
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.flex}>
           <ScrollView
-            contentContainerStyle={styles.scroll}
+            contentContainerStyle={[styles.scroll, { paddingBottom: keyboardInset + 24 }]}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
             automaticallyAdjustKeyboardInsets={false}
@@ -120,7 +121,6 @@ export default function RegisterScreen() {
               {signInLink}
             </View>
           </ScrollView>
-        </KeyboardAvoidingView>
       </View>
     );
   }
@@ -128,14 +128,13 @@ export default function RegisterScreen() {
   return (
     <View style={styles.root}>
       <StatusBar style="dark" />
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.flex}>
-        <ScrollView
-          contentContainerStyle={styles.scroll}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-          automaticallyAdjustKeyboardInsets={false}
-          showsVerticalScrollIndicator={false}
-        >
+      <ScrollView
+        contentContainerStyle={[styles.scroll, { paddingBottom: keyboardInset + 24 }]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        automaticallyAdjustKeyboardInsets={false}
+        showsVerticalScrollIndicator={false}
+      >
           <View style={styles.hero}>
             <Image
               source={require('@/assets/images/logo.png')}
@@ -234,7 +233,6 @@ export default function RegisterScreen() {
             {signInLink}
           </View>
         </ScrollView>
-      </KeyboardAvoidingView>
     </View>
   );
 }
@@ -244,7 +242,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: palette.surface,
   },
-  flex: { flex: 1 },
   scroll: {
     flexGrow: 1,
     justifyContent: 'center',

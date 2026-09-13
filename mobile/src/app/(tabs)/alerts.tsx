@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 
 import { Screen, ScreenHeader } from '@/components/ui/Screen';
@@ -12,12 +12,14 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { AlertCard } from '@/components/AlertCard';
 import { useAuth } from '@/auth/AuthContext';
 import { fetchAdvisory } from '@/api';
-import { acknowledgeAlert } from '@/api/mutations';
+import { acknowledgeAlert, completeProphylaxis } from '@/api/mutations';
+import { invalidateFarmQueries } from '@/api/invalidate';
 import type { Alert } from '@/api/types';
 
 export default function AlertsScreen() {
   const router = useRouter();
-  const { mode, farmId } = useAuth();
+  const queryClient = useQueryClient();
+  const { farmId } = useAuth();
   const advisory = useQuery({ queryKey: ['advisory', farmId], queryFn: () => fetchAdvisory(farmId) });
   const [filter, setFilter] = useState<'TOUTES' | 'ROUGE' | 'JAUNE'>('TOUTES');
 
@@ -33,15 +35,32 @@ export default function AlertsScreen() {
 
   const acknowledge = (id: string) => {
     const alert = alerts.find((a) => a.id === id);
-    if (mode !== 'live' || !alert?.alertId) return;
-    acknowledgeAlert(farmId, alert.alertId)
+    if (!alert) return;
+    acknowledgeAlert(farmId, alert.alertId ?? alert.id)
       .catch(() => {})
-      .finally(() => void advisory.refetch());
+      .finally(() => {
+        void advisory.refetch();
+        invalidateFarmQueries(queryClient, { farmId });
+      });
+  };
+
+  const completeCare = (alert: Alert) => {
+    if (!alert.batchId) return;
+    completeProphylaxis(farmId, alert.batchId, alert.id.replace(/^care:/, ''))
+      .catch(() => {})
+      .finally(() => {
+        void advisory.refetch();
+        invalidateFarmQueries(queryClient, { farmId, batchId: alert.batchId! });
+      });
   };
 
   return (
-    <Screen bottomPad={120} refreshing={advisory.isFetching} onRefresh={() => void advisory.refetch()}>
-      <ScreenHeader title="Alertes" subtitle="Vigilance immédiate, triée par impact" />
+    <Screen
+      bottomPad={120}
+      refreshing={advisory.isFetching}
+      onRefresh={() => void advisory.refetch()}
+      header={<ScreenHeader title="Alertes" subtitle="Vigilance immédiate, triée par impact" />}>
+
 
       <Card tone="brand" style={{ gap: 4, marginBottom: 12 }}>
         <AppText size="bodyM" weight="medium" color="ink">
@@ -71,6 +90,7 @@ export default function AlertsScreen() {
                 key={a.id}
                 alert={a}
                 onAcknowledge={acknowledge}
+                onCompleteCare={completeCare}
                 onOpenLot={(batchId) => router.push(`/lot/${batchId}`)}
               />
             ))}
@@ -81,7 +101,7 @@ export default function AlertsScreen() {
                 INFORMATIONS
               </AppText>
               {rest.map((a) => (
-                <AlertCard key={a.id} alert={a} onAcknowledge={acknowledge} onOpenLot={(batchId) => router.push(`/lot/${batchId}`)} showWhy={false} />
+                <AlertCard key={a.id} alert={a} onAcknowledge={acknowledge} onCompleteCare={completeCare} onOpenLot={(batchId) => router.push(`/lot/${batchId}`)} showWhy={false} />
               ))}
             </>
           )}

@@ -1,20 +1,52 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { Platform } from 'react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import * as NavigationBar from 'expo-navigation-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { QuickCaptureProvider } from '@/components/capture/QuickCaptureProvider';
 import { CreateCenterProvider } from '@/components/create/CreateCenter';
 import { OfflineAutoSync } from '@/components/OfflineAutoSync';
-import { AuthProvider } from '@/auth/AuthContext';
+import { AuthProvider, useAuth } from '@/auth/AuthContext';
 import { palette } from '@/constants/theme';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
 });
 
+function RootNavigator() {
+  const { signedIn } = useAuth();
+
+  return (
+    <Stack
+      screenOptions={{
+        headerShown: false,
+        contentStyle: { backgroundColor: palette.paper },
+      }}>
+      <Stack.Protected guard={signedIn}>
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="lot/[id]" />
+      </Stack.Protected>
+      <Stack.Screen name="login" />
+      <Stack.Screen name="register" />
+    </Stack>
+  );
+}
+
 export default function RootLayout() {
+  useEffect(() => {
+    if (Platform.OS === "android") {
+      // Edge-to-edge (SDK 54) : la barre système Android est transparente et le
+      // contenu dessine derrière. `setStyle('dark')` demande des icônes sombres
+      // (barre claire) — Android 15+ peut y substituer un contraste forcé ; on
+      // force la synchro via `setButtonStyleAsync` pour tenir sur tous appareils.
+      NavigationBar.setStyle("dark");
+      NavigationBar.setButtonStyleAsync("dark").catch(() => {});
+    }
+  }, []);
+
   return (
     <SafeAreaProvider>
       <QueryClientProvider client={queryClient}>
@@ -23,16 +55,7 @@ export default function RootLayout() {
             <CreateCenterProvider>
               <OfflineAutoSync />
               <StatusBar style="dark" />
-              <Stack
-                screenOptions={{
-                  headerShown: false,
-                  contentStyle: { backgroundColor: palette.paper },
-                }}>
-                <Stack.Screen name="login" />
-                <Stack.Screen name="register" />
-                <Stack.Screen name="(tabs)" />
-                <Stack.Screen name="lot/[id]" />
-              </Stack>
+              <RootNavigator />
             </CreateCenterProvider>
           </QuickCaptureProvider>
         </AuthProvider>

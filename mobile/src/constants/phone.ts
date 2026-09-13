@@ -12,3 +12,7 @@ export function normalizeGabonPhone(raw: string): string {
 export function isGabonPhoneValid(n: string): boolean {
   return /^0\d{8}$/.test(n);
 }
+
+export function isGabonPhonePartial(n: string): boolean {
+  return n.length > 0 && /^0\d{0,8}$/.test(n);
+}

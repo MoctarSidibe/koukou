@@ -36,6 +36,9 @@ vi.mock('expo-constants', () => ({
 vi.mock('react-native', () => ({
   Platform: { OS: 'android' },
 }));
+vi.mock('./index', () => ({
+  isLive: () => true,
+}));
 
 const baseline: DailyEntryValues = {
   deaths: 0,
@@ -45,8 +48,12 @@ const baseline: DailyEntryValues = {
   weightG: 0,
   eggs: 0,
   eggsCracked: 0,
+  eggsSmall: 0,
+  eggsDoubleYolk: 0,
+  eggsDirty: 0,
   feedPhase: null,
   inputLotId: null,
+  skipStockDeduction: false,
 };
 
 beforeEach(() => {
@@ -61,9 +68,15 @@ describe('buildDailyEntryPayload', () => {
     expect(p.entryDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  it('mode sacs : feedBags + feedUnit SAC', () => {
-    const p = buildDailyEntryPayload({ ...baseline, feedSacs: 5 }, { isLayer: false, feedMode: 'sacs' });
+  it('mode sacs : feedBags + feedUnit SAC (poids du sac transmis)', () => {
+    const p = buildDailyEntryPayload({ ...baseline, feedSacs: 5, bagSizeKg: 25 }, { isLayer: false, feedMode: 'sacs' });
+    expect(p).toMatchObject({ feedUnit: 'SAC', feedBags: 5, bagSizeKg: 25 });
+  });
+
+  it('mode sacs : sans poids de sac, aucun bagSizeKg envoyé', () => {
+    const p = buildDailyEntryPayload({ ...baseline, feedSacs: 5, bagSizeKg: undefined }, { isLayer: false, feedMode: 'sacs' });
     expect(p).toMatchObject({ feedUnit: 'SAC', feedBags: 5 });
+    expect(p.bagSizeKg).toBeUndefined();
   });
 
   it('ne garde pas les deux modes simultanément', () => {
@@ -84,11 +97,34 @@ describe('buildDailyEntryPayload', () => {
     expect(p.eggsCracked).toBe(12);
   });
 
-  it('non pondeuse : aucune clé œufs', () => {
+  it('répartition pro : vendables = collectés − fêlés − petits − double jaune − sales', () => {
+    const p = buildDailyEntryPayload(
+      { ...baseline, eggs: 400, eggsCracked: 12, eggsSmall: 4, eggsDoubleYolk: 3, eggsDirty: 2 },
+      { isLayer: true, feedMode: 'kg' },
+    );
+    expect(p.eggsCollected).toBe(400);
+    expect(p.eggsSellable).toBe(379);
+    expect(p.eggsCracked).toBe(12);
+    expect(p.eggsSmall).toBe(4);
+    expect(p.eggsDoubleYolk).toBe(3);
+    expect(p.eggsDirty).toBe(2);
+  });
+
+  it('répartition : ne se limite jamais en-dessous de zéro et ignore les catégories à zéro', () => {
+    const p = buildDailyEntryPayload(
+      { ...baseline, eggs: 10, eggsCracked: 10, eggsSmall: 0, eggsDoubleYolk: 5, eggsDirty: 5 },
+      { isLayer: true, feedMode: 'kg' },
+    );
+    expect(p.eggsSellable).toBe(0);
+    expect(p.eggsSmall).toBeUndefined();
+    expect(p.eggsDoubleYolk).toBe(5);
+  });
+
+  it('toute bande peut déclarer des œufs — chair comme pondeuse', () => {
     const p = buildDailyEntryPayload({ ...baseline, eggs: 400, eggsCracked: 12 }, { isLayer: false, feedMode: 'kg' });
-    expect(p.eggsCollected).toBeUndefined();
-    expect(p.eggsSellable).toBeUndefined();
-    expect(p.eggsCracked).toBeUndefined();
+    expect(p.eggsCollected).toBe(400);
+    expect(p.eggsSellable).toBe(388);
+    expect(p.eggsCracked).toBe(12);
   });
 
   it('aucune saisie : seule la date', () => {
@@ -104,12 +140,21 @@ describe('buildDailyEntryPayload', () => {
     expect(p).toMatchObject({ feedUnit: 'KG', feedQuantity: 50, feedPhase: 'PONTE_PHASE_1', inputLotId: 'in-04' });
   });
 
-  it('saisie aliment : ferme entière = sans déduction par lot', () => {
+  it('saisie aliment : pas de réduction par lot (aucun lot fourni)', () => {
     const p = buildDailyEntryPayload(
       { ...baseline, feedSacs: 3, feedPhase: 'CROISSANCE', inputLotId: null },
       { isLayer: false, feedMode: 'sacs' },
     );
     expect(p).toMatchObject({ feedUnit: 'SAC', feedBags: 3, feedPhase: 'CROISSANCE' });
+    expect(p.inputLotId).toBeUndefined();
+  });
+
+  it('achat externe : skipStockDeduction=true et jamais d’inputLotId', () => {
+    const p = buildDailyEntryPayload(
+      { ...baseline, feedSacs: 3, feedPhase: 'CROISSANCE', inputLotId: 'in-04', skipStockDeduction: true },
+      { isLayer: false, feedMode: 'sacs' },
+    );
+    expect(p.skipStockDeduction).toBe(true);
     expect(p.inputLotId).toBeUndefined();
   });
 
