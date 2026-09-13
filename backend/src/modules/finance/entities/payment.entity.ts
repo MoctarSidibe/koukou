@@ -8,6 +8,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import type { Relation } from 'typeorm';
 import {
   PaymentMethod,
   PaymentStatus,
@@ -17,6 +18,9 @@ import { User } from '../../users/entities/user.entity.js';
 import { Sale } from './sale.entity.js';
 
 @Entity('payments')
+@Index('UQ_payments_farm_sale_idem', ['farmId', 'saleId', 'idempotencyKey'], {
+  unique: true,
+})
 export class Payment {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -31,7 +35,7 @@ export class Payment {
 
   @ManyToOne(() => Sale, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'sale_id' })
-  sale: Sale;
+  sale: Relation<Sale>;
 
   @Column({ name: 'sale_id', type: 'uuid' })
   @Index()
@@ -50,9 +54,6 @@ export class Payment {
   paymentDate: string;
 
   @Column({ name: 'idempotency_key', type: 'varchar', nullable: true })
-  @Index('UQ_payments_farm_sale_idem', ['farmId', 'saleId', 'idempotencyKey'], {
-    unique: true,
-  })
   idempotencyKey: string | null;
 
   @Column({ name: 'cash_session_id', type: 'uuid', nullable: true })

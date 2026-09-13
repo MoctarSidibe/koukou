@@ -10,6 +10,7 @@ import { FeedStockModule } from '../feed-stock/feed-stock.module.js';
 import { ProductionBatch } from '../batches/entities/production-batch.entity.js';
 import { InputLot } from '../inputs/entities/input-lot.entity.js';
 import { SlaughterOrder } from '../slaughter/entities/slaughter-order.entity.js';
+import { Order } from '../orders/entities/order.entity.js';
 import { Farm } from '../farms/entities/farm.entity.js';
 import { Customer } from './entities/customer.entity.js';
 import { Sale } from './entities/sale.entity.js';
@@ -55,6 +56,7 @@ import { PromotionsController } from './promotions.controller.js';
       ProductionBatch,
       InputLot,
       SlaughterOrder,
+      Order,
       Farm,
     ]),
     FarmsModule,

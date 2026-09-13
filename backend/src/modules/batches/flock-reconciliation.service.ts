@@ -31,9 +31,13 @@ export class FlockReconciliationService {
     private readonly healthEventRepo: Repository<HealthEvent>,
   ) {}
 
-  async netSoldBirds(batchId: string, em?: EntityManager): Promise<number> {
+  async netSoldBirds(
+    batchId: string,
+    em?: EntityManager,
+    asOf?: string,
+  ): Promise<number> {
     const repo = em ? em.getRepository(SaleItem) : this.saleItemRepo;
-    const row = await repo
+    let qb = repo
       .createQueryBuilder('item')
       .innerJoin(
         Sale,
@@ -49,7 +53,11 @@ export class FlockReconciliationService {
           SaleItemProductType.ABATTU_PIECE,
           SaleItemProductType.ABATTU_KG,
         ],
-      })
+      });
+    if (asOf) {
+      qb = qb.andWhere('sale.sale_date <= :asOf', { asOf });
+    }
+    const row = await qb
       .andWhere('item.source_slaughter_order_id IS NULL')
       // Une vente enveloppe d'un bon de commande NON livré/annulé ne sort pas
       // du cheptel : les oiseaux sont réservés (assertBirdsAvailable), jamais
@@ -67,14 +75,19 @@ export class FlockReconciliationService {
   async netSlaughteredBirds(
     batchId: string,
     em?: EntityManager,
+    asOf?: string,
   ): Promise<number> {
     const repo = em ? em.getRepository(SlaughterOrder) : this.slaughterRepo;
-    const row = await repo
+    let qb = repo
       .createQueryBuilder('order')
       .where('order.batch_id = :batchId', { batchId })
       .andWhere('order.status = :processed', {
         processed: SlaughterStatus.PROCESSED,
-      })
+      });
+    if (asOf) {
+      qb = qb.andWhere('order.planned_date <= :asOf', { asOf });
+    }
+    const row = await qb
       .select('COALESCE(SUM(order.bird_count), 0)', 'total')
       .getRawOne();
     return Math.max(0, Number(row?.total ?? 0));
@@ -91,14 +104,19 @@ export class FlockReconciliationService {
   async netSanitaryRemovedBirds(
     batchId: string,
     em?: EntityManager,
+    asOf?: string,
   ): Promise<number> {
     const repo = em ? em.getRepository(HealthEvent) : this.healthEventRepo;
-    const row = await repo
+    let qb = repo
       .createQueryBuilder('event')
       .where('event.batch_id = :batchId', { batchId })
       .andWhere('event.kind IN (:...kinds)', {
         kinds: [HealthEventKind.REFORME, HealthEventKind.MORTALITE],
-      })
+      });
+    if (asOf) {
+      qb = qb.andWhere('event.occurred_at <= :asOf', { asOf });
+    }
+    const row = await qb
       .select('COALESCE(SUM(event.quantity), 0)', 'total')
       .getRawOne();
     return Math.max(0, Number(row?.total ?? 0));

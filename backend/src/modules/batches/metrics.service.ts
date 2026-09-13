@@ -1,18 +1,24 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { AlertLevel } from '../../common/enums/alert-level.enum.js';
+import { In, Repository } from 'typeorm';
+import {
+  AlertKind,
+  AlertLevel,
+  AlertStatus,
+} from '../../common/enums/alert-level.enum.js';
 import {
   BatchStatus,
   BatchType,
 } from '../../common/enums/batch-type.enum.js';
 import { ReferenceKey } from '../../common/enums/reference-key.enum.js';
 import { day1WeightKg } from '../../common/utils/species-day1-weight.js';
+import { Alert } from '../alerts/entities/alert.entity.js';
 import { BreedStandard } from '../breeds/entities/breed-standard.entity.js';
 import { DailyEntry } from '../daily-entries/entities/daily-entry.entity.js';
 import { Farm } from '../farms/entities/farm.entity.js';
 import { ReferenceConstantsService } from '../reference-constants/reference-constants.service.js';
 import { ProductionBatch } from './entities/production-batch.entity.js';
+import { FlockReconciliationService } from './flock-reconciliation.service.js';
 import {
   BatchMetrics,
   ReadyReason,
@@ -50,6 +56,8 @@ export interface ReadinessInput {
   minVenteAgeDays: number;
   fcrDeviationMaxPct: number;
   reformeLayRateFallPct: number;
+  /** Suspension sanitaire active (DELAI_ATTENTE / soin PROPHYLAXIE en retard). */
+  sanitaryBlocked: boolean;
 }
 
 export interface ReadinessResult {
@@ -65,7 +73,7 @@ export interface ReadinessResult {
  */
 export function evaluateReadiness(input: ReadinessInput): ReadinessResult {
   if (input.isClosed) return { readyForSale: false, readyReason: 'N_A' };
-  if (input.status === AlertLevel.ROUGE)
+  if (input.status === AlertLevel.ROUGE || input.sanitaryBlocked)
     return { readyForSale: false, readyReason: 'SANITARY' };
 
   if (input.type === BatchType.PONDEUSE) {
@@ -90,6 +98,7 @@ export function evaluateReadiness(input: ReadinessInput): ReadinessResult {
 export interface BreedStatus {
   breedId: string;
   breedName: string;
+  breedCode: string | null;
   breedType: BatchType;
   week: number;
   targetAvgWeightKg: number | null;
@@ -112,12 +121,21 @@ export class MetricsService {
     private readonly farmRepo: Repository<Farm>,
     @InjectRepository(BreedStandard)
     private readonly standardRepo: Repository<BreedStandard>,
+    @InjectRepository(Alert)
+    private readonly alertRepo: Repository<Alert>,
     private readonly constants: ReferenceConstantsService,
+    private readonly flockReconciliation: FlockReconciliationService,
   ) {}
 
-  async compute(batch: ProductionBatch): Promise<BatchMetrics> {
+  async compute(
+    batch: ProductionBatch,
+    opts?: { asOf?: string },
+  ): Promise<BatchMetrics> {
+    const asOf = opts?.asOf;
+    const refDate = asOf ?? todayIso();
+    const historical = asOf != null && asOf < todayIso();
     const [
-      entries,
+      entriesRaw,
       standardModule,
       densityWarn,
       densityCritical,
@@ -125,6 +143,8 @@ export class MetricsService {
       fcrDeviationMaxPct,
       reformeLayRateFallPct,
       standard,
+      alertsCount,
+      activeSanitaryAlerts,
     ] = await Promise.all([
       this.entriesRepo.find({
         where: { batchId: batch.id },
@@ -136,13 +156,57 @@ export class MetricsService {
       this.constants.get(ReferenceKey.VENTE_AGE_MIN_DAYS, 35),
       this.constants.get(ReferenceKey.VENTE_FCR_DEV_MAX_PCT, 10),
       this.constants.get(ReferenceKey.REFORME_LAY_RATE_FALL_PCT, 15),
-      this.findStandard(batch),
+      this.findStandard(batch, refDate),
+      this.alertRepo.count({
+        where: { batchId: batch.id, status: AlertStatus.ACTIVE },
+      }),
+      this.alertRepo.find({
+        where: {
+          batchId: batch.id,
+          status: AlertStatus.ACTIVE,
+          kind: In([
+            AlertKind.DELAI_ATTENTE,
+            AlertKind.PROPHYLAXIE,
+          ]),
+        },
+      }),
     ]);
 
-    const ageDays = this.computeAgeDays(batch.integrationDate);
+    const entries = historical
+      ? entriesRaw.filter((e) => e.entryDate <= asOf)
+      : entriesRaw;
+    const ageDays = this.ageDaysOn(batch.integrationDate, refDate);
     const totalDeaths = entries.reduce((s, e) => s + e.deaths, 0);
     // quantityAlive est la source de vérité (décréments POS/abattage + reconcilées).
-    const liveCount = Math.max(0, batch.quantityAlive);
+    // En mode « as-of » (date passée) : le cheptel est reconstitué avec la même
+    // réconciliation que recomputeLiveCount, bornée à la date demandée — cohérent
+    // avec la source actuelle, sans table d'historique (les événements santé
+    // supprimés sortent de l'équation, comme en temps réel).
+    let liveCount = Math.max(0, batch.quantityAlive);
+    if (historical && asOf) {
+      const [soldBirds, slaughteredBirds, sanitaryRemovedBirds] =
+        await Promise.all([
+          this.flockReconciliation.netSoldBirds(batch.id, undefined, asOf),
+          this.flockReconciliation.netSlaughteredBirds(
+            batch.id,
+            undefined,
+            asOf,
+          ),
+          this.flockReconciliation.netSanitaryRemovedBirds(
+            batch.id,
+            undefined,
+            asOf,
+          ),
+        ]);
+      liveCount = Math.max(
+        0,
+        batch.quantityAtStart -
+          totalDeaths -
+          soldBirds -
+          slaughteredBirds -
+          sanitaryRemovedBirds,
+      );
+    }
     const mortalityPercent =
       batch.quantityAtStart > 0
         ? (totalDeaths / batch.quantityAtStart) * 100
@@ -179,19 +243,45 @@ export class MetricsService {
         : null;
 
     const eggsCollectedTotal = entries.reduce((s, e) => s + e.eggsCollected, 0);
+    const eggBreakdown = {
+      collected: eggsCollectedTotal,
+      sellable: 0,
+      cracked: entries.reduce((s, e) => s + e.eggsCracked, 0),
+      small: entries.reduce((s, e) => s + e.eggsSmall, 0),
+      doubleYolk: entries.reduce((s, e) => s + e.eggsDoubleYolk, 0),
+      dirty: entries.reduce((s, e) => s + e.eggsDirty, 0),
+    };
+    eggBreakdown.sellable = Math.max(
+      0,
+      eggBreakdown.collected -
+        eggBreakdown.cracked -
+        eggBreakdown.small -
+        eggBreakdown.doubleYolk -
+        eggBreakdown.dirty,
+    );
     // Taux de ponte = fenêtre glissante de 7 jours (aligné sur la cible
     // hebdomadaire du référentiel) : un cumul de toute la vie de la bande ne
     // peut pas être comparé à une cible de semaine d'âge (ex. 300 % vs 86 %).
-    const windowStart = addDaysIso(todayIso(), -7);
+    // Réservé aux PONDEUSE : un lot CHAIR (viande) n'a pas de « taux de ponte »
+    // — l'affichage d'un ratio œufs/effectif y a prêté à confusion (ex. canard
+    // 150 œufs = 150 vivants → 100 %). Les œufs des lots CHAIR restent suivis
+    // via eggBreakdown / stock d'œufs. Plafonné à 100 % : une poule ne pond
+    // jamais plus d'un œuf/jour — un résultat supérieur trahit une saisie
+    // d'œufs supérieure à l'effectif.
+    const windowStart = addDaysIso(refDate, -7);
     const windowEntries = entries.filter((e) => e.entryDate >= windowStart);
     const recordedDays = new Set(
       windowEntries.filter((e) => e.eggsCollected > 0).map((e) => e.entryDate),
     ).size;
-    const layRatePercent =
-      batch.type === 'PONDEUSE' && liveCount > 0 && recordedDays > 0
+    const rawLayRate =
+      liveCount > 0 && recordedDays > 0
         ? (windowEntries.reduce((s, e) => s + e.eggsCollected, 0) /
             (liveCount * recordedDays)) *
           100
+        : null;
+    const layRatePercent =
+      batch.type === BatchType.PONDEUSE && rawLayRate != null
+        ? Math.min(100, rawLayRate)
         : null;
 
     const densityPerM2 =
@@ -228,10 +318,12 @@ export class MetricsService {
       minVenteAgeDays,
       fcrDeviationMaxPct,
       reformeLayRateFallPct,
+      sanitaryBlocked: activeSanitaryAlerts.length > 0,
     });
 
     return {
       ageDays,
+      alerts: alertsCount,
       totalDeaths,
       mortalityPercent,
       viabilityPercent,
@@ -244,6 +336,7 @@ export class MetricsService {
       gmqGramsPerDay,
       ipe,
       eggsCollectedTotal,
+      eggBreakdown,
       layRatePercent,
       status,
       densityPerM2,
@@ -257,6 +350,7 @@ export class MetricsService {
   /** Semaine d'âge courante du lot → dernière entrée du référentiel de la souche. */
   private async findStandard(
     batch: ProductionBatch,
+    refDate: string,
   ): Promise<BreedStandard | null> {
     if (!batch.breed) return null;
     const standards = await this.standardRepo.find({
@@ -265,7 +359,7 @@ export class MetricsService {
     });
     if (standards.length === 0) return null;
 
-    const ageDays = this.computeAgeDays(batch.integrationDate);
+    const ageDays = this.ageDaysOn(batch.integrationDate, refDate);
     const ageWeek = Math.floor(ageDays / 7) + 1;
     const applicable = standards.filter((s) => s.week <= ageWeek);
     return applicable.length > 0 ? applicable[applicable.length - 1]! : standards[0];
@@ -278,11 +372,11 @@ export class MetricsService {
    * la souche n'a pas de référentiel (souche personnalisée).
    */
   async breedStatus(batch: ProductionBatch): Promise<BreedStatus | null> {
-    const standard = await this.findStandard(batch);
+    const standard = await this.findStandard(batch, todayIso());
     if (!standard) return null;
 
     const metrics = await this.compute(batch);
-    const ageDays = this.computeAgeDays(batch.integrationDate);
+    const ageDays = this.ageDaysOn(batch.integrationDate, todayIso());
     const actualAvgWeightKg =
       metrics.gmqGramsPerDay != null
         ? round2(day1WeightKg(batch.species) + (metrics.gmqGramsPerDay * ageDays) / 1000)
@@ -291,6 +385,7 @@ export class MetricsService {
     return {
       breedId: batch.breed!.id,
       breedName: batch.breed!.name,
+      breedCode: batch.breed!.refCode ?? null,
       breedType: batch.breed!.type,
       week: standard.week,
       targetAvgWeightKg: standard.targetAvgWeightKg,
@@ -311,10 +406,10 @@ export class MetricsService {
     };
   }
 
-  private computeAgeDays(integrationDate: string): number {
+  private ageDaysOn(integrationDate: string, onDate: string): number {
     const start = new Date(integrationDate + 'T00:00:00');
-    const now = new Date();
-    const diff = now.getTime() - start.getTime();
+    const ref = new Date(onDate + 'T00:00:00');
+    const diff = ref.getTime() - start.getTime();
     return Math.max(0, Math.floor(diff / 86400000));
   }
 

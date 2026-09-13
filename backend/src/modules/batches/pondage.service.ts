@@ -138,9 +138,15 @@ export class PondageService {
     let deathsBefore = 0;
     return weeks.map((w) => {
       const hens = Math.max(0, batch.quantityAtStart - deathsBefore);
-      const layRatePercent =
+      // Taux journalier moyen de la semaine, plafonné à 100 % (une poule ne
+      // pond jamais plus d'un œuf/jour ; au-delà = saisie d'œufs incohérente).
+      const rawLayRate =
         hens > 0 && w.dates.size > 0
           ? (w.collected / (hens * w.dates.size)) * 100
+          : null;
+      const layRatePercent =
+        batch.type === BatchType.PONDEUSE && rawLayRate != null
+          ? round2(Math.min(100, rawLayRate))
           : null;
       deathsBefore += w.deaths;
       return {

@@ -6,7 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, Not, Repository } from 'typeorm';
 import { AuthUser } from '../../common/decorators/current-user.decorator.js';
-import { BatchStatus, BatchType } from '../../common/enums/batch-type.enum.js';
+import { BatchStatus } from '../../common/enums/batch-type.enum.js';
 import { OrderCanal } from '../../common/enums/order-canal.enum.js';
 import { OrderStatus } from '../../common/enums/order-status.enum.js';
 import {
@@ -878,16 +878,22 @@ export class OrdersService {
     alveoles: number,
     excludeSaleId?: string,
   ): Promise<void> {
-    const pondBatches = await em.getRepository(ProductionBatch).find({
-      where: { farmId, type: BatchType.PONDEUSE },
+    const farmBatches = await em.getRepository(ProductionBatch).find({
+      where: { farmId },
     });
     let produced = 0;
-    if (pondBatches.length > 0) {
+    if (farmBatches.length > 0) {
       const entries = await em.getRepository(DailyEntry).find({
-        where: { batchId: In(pondBatches.map((b) => b.id)) },
+        where: { batchId: In(farmBatches.map((b) => b.id)) },
       });
       produced = entries.reduce(
-        (s, e) => s + (e.eggsCollected - e.eggsCracked - e.eggsSmall),
+        (s, e) =>
+          s +
+          (e.eggsCollected -
+            e.eggsCracked -
+            e.eggsSmall -
+            e.eggsDoubleYolk -
+            e.eggsDirty),
         0,
       );
     }

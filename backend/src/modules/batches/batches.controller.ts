@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
 import type { AuthUser } from '../../common/decorators/current-user.decorator.js';
@@ -36,8 +36,12 @@ export class BatchesController {
   @Roles(UserRole.PROPRIETAIRE, UserRole.ELEVEUR)
   @ApiOperation({ summary: 'Lister les lots avec métriques' })
   @ApiParam({ name: 'farmId' })
-  findAll(@CurrentUser() user: AuthUser, @Param('farmId') farmId: string) {
-    return this.batchesService.findAll(user, farmId);
+  findAll(
+    @CurrentUser() user: AuthUser,
+    @Param('farmId') farmId: string,
+    @Query('asOf') asOf?: string,
+  ) {
+    return this.batchesService.findAll(user, farmId, asOf);
   }
 
   @Get(':batchId')
@@ -47,8 +51,9 @@ export class BatchesController {
     @CurrentUser() user: AuthUser,
     @Param('farmId') farmId: string,
     @Param('batchId') batchId: string,
+    @Query('asOf') asOf?: string,
   ) {
-    return this.batchesService.findOne(user, farmId, batchId);
+    return this.batchesService.findOne(user, farmId, batchId, asOf);
   }
 
   @Get(':batchId/pondage')

@@ -28,7 +28,7 @@ import { FeedStockService } from '../feed-stock/feed-stock.service.js';
 import { InputLot } from '../inputs/entities/input-lot.entity.js';
 import { InputKind } from '../../common/enums/input-kind.enum.js';
 import { ProductionBatch } from '../batches/entities/production-batch.entity.js';
-import { BatchStatus, BatchType } from '../../common/enums/batch-type.enum.js';
+import { BatchStatus } from '../../common/enums/batch-type.enum.js';
 import { SlaughterOrder } from '../slaughter/entities/slaughter-order.entity.js';
 import { SlaughterStatus } from '../../common/enums/slaughter-status.enum.js';
 import { SlaughterType } from '../../common/enums/slaughter-type.enum.js';
@@ -682,16 +682,22 @@ export class SalesService {
     farmId: string,
     alveoles: number,
   ): Promise<void> {
-    const pondBatches = await em.getRepository(ProductionBatch).find({
-      where: { farmId, type: BatchType.PONDEUSE },
+    const farmBatches = await em.getRepository(ProductionBatch).find({
+      where: { farmId },
     });
     let produced = 0;
-    if (pondBatches.length > 0) {
+    if (farmBatches.length > 0) {
       const entries = await em.getRepository(DailyEntry).find({
-        where: { batchId: In(pondBatches.map((b) => b.id)) },
+        where: { batchId: In(farmBatches.map((b) => b.id)) },
       });
       produced = entries.reduce(
-        (s, e) => s + (e.eggsCollected - e.eggsCracked - e.eggsSmall),
+        (s, e) =>
+          s +
+          (e.eggsCollected -
+            e.eggsCracked -
+            e.eggsSmall -
+            e.eggsDoubleYolk -
+            e.eggsDirty),
         0,
       );
     }

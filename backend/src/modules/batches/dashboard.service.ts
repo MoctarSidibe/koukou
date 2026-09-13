@@ -124,6 +124,8 @@ export interface EggStockInfo {
   availableAlveoles: number;
   availableEggs: number;
   warnAlveoles: number;
+  collected: number;
+  soldAlveoles: number;
 }
 
 export interface DashboardData {
@@ -179,6 +181,14 @@ const GRADE_TABLE: Array<{ min: number; grade: HealthGrade }> = [
   { min: 50, grade: 'MOYEN' },
   { min: 0, grade: 'CRITIQUE' },
 ];
+
+/** Risques de gestion — jamais comptés dans le score de santé sanitaire de la carte « Santé » (Accueil). */
+const NON_SANITAIRE_KINDS = new Set<AlertKind>([
+  AlertKind.ALIMENT,
+  AlertKind.PEREMPTION,
+  AlertKind.STOCK_OEUF,
+  AlertKind.VENTE,
+]);
 
 @Injectable()
 export class DashboardService implements OnModuleInit, OnModuleDestroy {
@@ -417,23 +427,29 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
   // ---------- Stock d'œufs & alerte seuil ----------
 
   /**
-   * Stock d'œufs disponible = œufs collectés (toutes bandes pondeuses) −
-   * alvéoles vendues (vente OEUFS, unité ALVEOLES). Évaluée de façon paresseuse
-   * (lecture dashboard) et re-évaluée après chaque saisie de ponte / vente.
+   * Stock d'œufs disponible = œufs collectés (toutes bandes, quel que soit le
+   * type — un lot CHAIR peut aussi déclarer des œufs) − œufs non
+   * commercialisables − alvéoles vendues (vente OEUFS, unité ALVEOLES).
+   * Évaluée de façon paresseuse (lecture dashboard) et re-évaluée après chaque
+   * saisie de ponte / vente.
    */
   async evaluateEggStockAlerts(farmId: string): Promise<EggStockInfo> {
-    const pondBatches = await this.batchRepo.find({
-      where: { farmId, type: BatchType.PONDEUSE },
-    });
+    const farmBatches = await this.batchRepo.find({ where: { farmId } });
     let collected = 0;
-    if (pondBatches.length > 0) {
+    if (farmBatches.length > 0) {
       const entries = await this.entryRepo.find({
-        where: { batchId: In(pondBatches.map((b) => b.id)) },
+        where: { batchId: In(farmBatches.map((b) => b.id)) },
       });
       // Stock disponible = œufs collectés − œufs non commercialisables
-      // (fêlés, petits) : seuls ces œufs peuvent être vendus en alvéoles.
+      // (fêlés, petits, doubles, sales) : seuls ces œufs peuvent être vendus.
       collected = entries.reduce(
-        (s, e) => s + (e.eggsCollected - e.eggsCracked - e.eggsSmall),
+        (s, e) =>
+          s +
+          (e.eggsCollected -
+            e.eggsCracked -
+            e.eggsSmall -
+            e.eggsDoubleYolk -
+            e.eggsDirty),
         0,
       );
     }
@@ -477,7 +493,13 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     } else {
       await this.alertsService.clearKind(farmId, null, AlertKind.STOCK_OEUF);
     }
-    return { availableAlveoles, availableEggs, warnAlveoles };
+    return {
+      availableAlveoles,
+      availableEggs,
+      warnAlveoles,
+      collected,
+      soldAlveoles,
+    };
   }
 
   // ---------- Vigilance quotidienne : lot sans saisie du jour ----------
@@ -554,9 +576,14 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     alerts: Alert[],
     missingEntries: string[],
   ): DashboardHealth {
-    const rouge = alerts.filter((a) => a.level === AlertLevel.ROUGE).length;
+    // Seules les alertes sanitaires dégradent le score « Santé » ; les risques
+    // de gestion (provende, péremption, stock d'œufs, ventes) n'en font pas partie.
+    const sanitaires = alerts.filter(
+      (a) => !NON_SANITAIRE_KINDS.has(a.kind) && a.status === AlertStatus.ACTIVE,
+    );
+    const rouge = sanitaires.filter((a) => a.level === AlertLevel.ROUGE).length;
     // SAISIE_MANQUEE est comptée via `missingEntries` pour ne pas compter deux fois.
-    const jaune = alerts.filter(
+    const jaune = sanitaires.filter(
       (a) =>
         a.level === AlertLevel.JAUNE && a.kind !== AlertKind.SAISIE_MANQUEE,
     ).length;
@@ -710,7 +737,7 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
       const days = new Set(eggRows.map((e) => e.entryDate)).size;
       const eggs = sum(eggRows, (e) => e.eggsCollected);
       if (hens <= 0 || days <= 0) return null;
-      return round2((eggs / (hens * days)) * 100);
+      return round2(Math.min(100, (eggs / (hens * days)) * 100));
     };
     const layRateThisWeekPct = layRates(thisWeek);
     const layRatePrevWeekPct = layRates(prevWeek);

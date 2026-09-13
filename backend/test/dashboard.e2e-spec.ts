@@ -343,4 +343,68 @@ describe('Tableau de bord & courbes de croissance (e2e)', () => {
       .set('Authorization', `Bearer ${otherToken}`)
       .expect(403);
   });
+
+  it('santé : le score reflète les seules alertes sanitaires (une péremption provende ne dégrade pas la carte Santé)', async () => {
+    // Ferme isolée, sans lot en cours ni saisies → aucun risque sanitaire actif.
+    const phone = `+24166${Date.now()}`;
+    await request(server)
+      .post('/auth/register')
+      .send({ phone, fullName: 'Proprio Sante E2E', code: 'secret123' })
+      .expect(201);
+    const login = await request(server)
+      .post('/auth/login')
+      .send({ phone, code: 'secret123' })
+      .expect(201);
+    const t = login.body.accessToken;
+
+    const farm = await request(server)
+      .post('/farms')
+      .set('Authorization', `Bearer ${t}`)
+      .send({
+        name: `Ferme Sante ${Date.now()}`,
+        administrativeCity: 'Libreville',
+        capacityPerBuilding: 3000,
+      })
+      .expect(201);
+    const fId = farm.body.id;
+
+    // Provende déjà périmée → alerte PEREMPTION ROUGE (risque de gestion, non sanitaire).
+    await request(server)
+      .post(`/farms/${fId}/inputs`)
+      .set('Authorization', `Bearer ${t}`)
+      .send({
+        kind: 'ALIMENT',
+        foodType: 'DEMARRAGE',
+        productName: 'Provende Périmée',
+        supplier: 'CEAG',
+        supplierLotNumber: `L-PR${Date.now()}`,
+        quantity: 20,
+        unit: 'SAC',
+        expirationDate: dateStr(addDays(new Date(), -1)),
+      })
+      .expect(201);
+
+    const res = await request(server)
+      .get(`/farms/${fId}/dashboard`)
+      .set('Authorization', `Bearer ${t}`)
+      .expect(200);
+
+    // L'alerte non sanitaire est bien levée et comptée dans le décompte d'affichage…
+    expect(res.body.alerts.rouge).toBeGreaterThanOrEqual(1);
+    const peremption = await request(server)
+      .get(`/farms/${fId}/alerts`)
+      .set('Authorization', `Bearer ${t}`)
+      .expect(200);
+    expect(
+      peremption.body.find(
+        (a: { kind: string }) => a.kind === 'PEREMPTION' && a.status === 'ACTIVE',
+      ),
+    ).toBeTruthy();
+
+    // …mais elle ne dégrade PAS le score de santé sanitaire.
+    expect(res.body.health.breakdown.rouge).toBe(0);
+    expect(res.body.health.breakdown.jaune).toBe(0);
+    expect(res.body.health.score).toBe(100);
+    expect(res.body.health.grade).toBe('EXCELLENT');
+  });
 });

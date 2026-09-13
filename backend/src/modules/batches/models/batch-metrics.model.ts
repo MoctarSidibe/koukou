@@ -7,6 +7,17 @@ export type ReadyReason =
   | 'SANITARY'
   | 'N_A';
 
+export interface EggBreakdown {
+  /** Œufs collectés au total (toutes classes confondues). */
+  collected: number;
+  /** Œufs commercialisables = collectés − (fêlés + petits + double jaune + sales). */
+  sellable: number;
+  cracked: number;
+  small: number;
+  doubleYolk: number;
+  dirty: number;
+}
+
 export interface BatchMetrics {
   ageDays: number;
   totalDeaths: number;
@@ -21,6 +32,8 @@ export interface BatchMetrics {
   gmqGramsPerDay: number | null;
   ipe: number | null;
   eggsCollectedTotal: number;
+  /** Répartition des œufs par classe (vie de la bande). */
+  eggBreakdown: EggBreakdown;
   layRatePercent: number | null;
   status: AlertLevel;
   densityPerM2: number | null;
@@ -29,4 +42,6 @@ export interface BatchMetrics {
   /** Lot commercialisable : auto-signal (âge + performance). Déclenche précommande/vente. */
   readyForSale: boolean;
   readyReason: ReadyReason;
+  /** Nombre d'alertes ACTIVES concernant ce lot (badge sur la carte lot). */
+  alerts: number;
 }

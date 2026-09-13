@@ -159,19 +159,24 @@ export class BatchesService {
     return this.findOne(user, farmId, batchId);
   }
 
-  async findAll(user: AuthUser, farmId: string): Promise<BatchWithMetrics[]> {
+  async findAll(
+    user: AuthUser,
+    farmId: string,
+    asOf?: string,
+  ): Promise<BatchWithMetrics[]> {
     await this.farmsService.assertAccessible(user, farmId);
     const batches = await this.batchRepo.find({
       where: { farmId },
       order: { createdAt: 'DESC' },
     });
-    return Promise.all(batches.map((b) => this.withMetrics(b)));
+    return Promise.all(batches.map((b) => this.withMetrics(b, asOf)));
   }
 
   async findOne(
     user: AuthUser,
     farmId: string,
     batchId: string,
+    asOf?: string,
   ): Promise<BatchWithMetrics> {
     await this.farmsService.assertAccessible(user, farmId);
     const batch = await this.batchRepo.findOne({
@@ -179,7 +184,7 @@ export class BatchesService {
     });
     if (!batch)
       throw new NotFoundException('Lot introuvable dans cette ferme.');
-    return this.withMetrics(batch);
+    return this.withMetrics(batch, asOf);
   }
 
   async changeType(
@@ -277,8 +282,14 @@ export class BatchesService {
     await this.advisoryEngine.runForBatch(batch, metrics);
   }
 
-  private async withMetrics(batch: ProductionBatch): Promise<BatchWithMetrics> {
-    const metrics = await this.metricsService.compute(batch);
+  private async withMetrics(
+    batch: ProductionBatch,
+    asOf?: string,
+  ): Promise<BatchWithMetrics> {
+    const metrics = await this.metricsService.compute(
+      batch,
+      asOf ? { asOf } : undefined,
+    );
     return { ...batch, metrics };
   }
 }
