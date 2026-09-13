@@ -68,6 +68,7 @@ function addDaysIso(date: string, days: number): string {
 const RE_EXPRESSED = new Set<AlertKind>([
   AlertKind.SAISIE_MANQUEE,
   AlertKind.ALIMENT,
+  AlertKind.PROPHYLAXIE,
 ]);
 
 @Injectable()

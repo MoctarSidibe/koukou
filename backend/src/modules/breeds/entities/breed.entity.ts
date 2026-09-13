@@ -17,6 +17,10 @@ export class Breed {
   @Column({ unique: true })
   name: string;
 
+  /** Code de référence fournisseur/couvoir (ex : BV-300). */
+  @Column({ name: 'ref_code', type: 'varchar', length: 32, nullable: true })
+  refCode: string | null;
+
   @Column({ type: 'enum', enum: BatchType })
   @Index()
   type: BatchType;

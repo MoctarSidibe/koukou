@@ -78,8 +78,8 @@ export class HealthService {
     const waterNormL =
       (await this.constants.get(ReferenceKey.WATER_PER_BIRD_L_DAY, 0.2)) ?? 0.2;
 
-    const trays = m.eggsCollectedTotal
-      ? Math.floor(m.eggsCollectedTotal / EGGS_PER_TRAY)
+    const trays = m.eggBreakdown.sellable > 0
+      ? Math.floor(m.eggBreakdown.sellable / EGGS_PER_TRAY)
       : 0;
     const feedPerBirdGrams =
       m.liveCount > 0 ? (m.totalFeedKg * 1000) / m.liveCount : 0;

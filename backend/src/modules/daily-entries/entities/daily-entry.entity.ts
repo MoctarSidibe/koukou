@@ -43,6 +43,9 @@ export class DailyEntry {
   @Column({ name: 'feed_unit', type: 'enum', enum: FeedUnit, nullable: true })
   feedUnit: FeedUnit | null;
 
+  @Column({ name: 'bag_size_kg', type: 'float', nullable: true })
+  bagSizeKg: number | null;
+
   @Column({ name: 'feed_type', type: 'enum', enum: FoodType, nullable: true })
   feedType: FoodType | null;
 
@@ -54,6 +57,13 @@ export class DailyEntry {
 
   @Column({ name: 'input_lot_id', type: 'uuid', nullable: true })
   inputLotId: string | null;
+
+  /**
+   * Achat externe : la consommation d'aliment est enregistrée mais ne décrémente
+   * PAS le stock suivi (pas d'auto-affectation FEFO, pas d'alerte « rupture »).
+   */
+  @Column({ name: 'skip_stock_deduction', type: 'boolean', default: false })
+  skipStockDeduction: boolean;
 
   @ManyToOne(() => InputLot, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'input_lot_id' })
@@ -76,6 +86,12 @@ export class DailyEntry {
 
   @Column({ name: 'eggs_small', type: 'int', default: 0 })
   eggsSmall: number;
+
+  @Column({ name: 'eggs_double_yolk', type: 'int', default: 0 })
+  eggsDoubleYolk: number;
+
+  @Column({ name: 'eggs_dirty', type: 'int', default: 0 })
+  eggsDirty: number;
 
   @ManyToOne(() => User, { nullable: true })
   @JoinColumn({ name: 'created_by' })

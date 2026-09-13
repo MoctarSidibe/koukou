@@ -18,6 +18,11 @@ class CreateBreedDto {
   @IsOptional()
   @IsEnum(Species, { message: 'L’espèce doit être une valeur valide.' })
   species?: Species;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty({ message: 'Le code de référence doit être non vide.' })
+  refCode?: string;
 }
 
 @ApiTags('Souches (Breed)')
@@ -48,6 +53,6 @@ export class BreedsController {
   @ApiOperation({ summary: 'Ajouter une souche personnalisée' })
   @Roles(UserRole.PROPRIETAIRE)
   create(@Body() dto: CreateBreedDto) {
-    return this.breedsService.createCustom(dto.name, dto.type, dto.species);
+    return this.breedsService.createCustom(dto.name, dto.type, dto.species, dto.refCode);
   }
 }

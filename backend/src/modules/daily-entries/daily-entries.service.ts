@@ -63,6 +63,12 @@ export class DailyEntriesService {
       }
     }
 
+    if (dto.skipStockDeduction === true && dto.inputLotId != null) {
+      throw new BadRequestException(
+        'skipStockDeduction et inputLotId sont mutuellement exclus : un achat externe ne peut pas être rattaché à un lot de stock interne.',
+      );
+    }
+
     return this.dataSource
       .transaction(async (em) => {
         const entryRepo = em.getRepository(DailyEntry);
@@ -87,6 +93,14 @@ export class DailyEntriesService {
           data.feedQuantity = newFeedKg;
         }
         if (dto.feedUnit !== undefined) data.feedUnit = dto.feedUnit ?? null;
+        // Poids du sac retenu pour la conversion SAC → kg (valeur propre à la
+        // saisie, sinon le défaut du lot, sinon 50 kg).
+        const effFeedUnit = dto.feedUnit ?? existing?.feedUnit ?? null;
+        if (dto.bagSizeKg !== undefined && effFeedUnit === FeedUnit.SAC) {
+          data.bagSizeKg = dto.bagSizeKg ?? null;
+        } else if (effFeedUnit === FeedUnit.KG) {
+          data.bagSizeKg = null;
+        }
         if (dto.feedType !== undefined) data.feedType = dto.feedType ?? null;
         if (dto.feedPhase !== undefined) data.feedPhase = dto.feedPhase ?? null;
         if (dto.customFeedPhaseName !== undefined)
@@ -99,8 +113,15 @@ export class DailyEntriesService {
         //    disponible du lot → 400 + alerte ALIMENT « stock insuffisant ».
         // 3) Si AUCUN lot consommable de la phase n'existe → la saisie est conservée
         //    (aucune perte de donnée) mais une alerte ALIMENT « rupture » est levée.
+        // 4) skipStockDeduction (achat externe) : la consommation est enregistrée
+        //    SANS lien à un lot de stock, sans décrément et sans alerte « rupture ».
+        const skipDeduction =
+          dto.skipStockDeduction ?? existing?.skipStockDeduction ?? false;
+        data.skipStockDeduction = skipDeduction;
         const deltaFeedKg = newFeedKg - prevFeedKg;
-        if (deltaFeedKg > 0) {
+        if (skipDeduction) {
+          data.inputLotId = null;
+        } else if (deltaFeedKg > 0) {
           const entryPhase = entryPhaseKeyOf({
             feedPhase: dto.feedPhase,
             feedType: dto.feedType,
@@ -135,6 +156,9 @@ export class DailyEntriesService {
           data.eggsSellable = dto.eggsSellable;
         if (dto.eggsCracked !== undefined) data.eggsCracked = dto.eggsCracked;
         if (dto.eggsSmall !== undefined) data.eggsSmall = dto.eggsSmall;
+        if (dto.eggsDoubleYolk !== undefined)
+          data.eggsDoubleYolk = dto.eggsDoubleYolk;
+        if (dto.eggsDirty !== undefined) data.eggsDirty = dto.eggsDirty;
         if (dto.source !== undefined) data.source = dto.source;
 
         const entry = existing
@@ -167,7 +191,7 @@ export class DailyEntriesService {
     if (dto.feedUnit === FeedUnit.KG) {
       return qty;
     }
-    const sacKg = batch.feedUnitSacKg ?? 50;
+    const sacKg = dto.bagSizeKg ?? batch.feedUnitSacKg ?? 50;
     const bags = dto.feedBags ?? qty;
     return bags * sacKg;
   }

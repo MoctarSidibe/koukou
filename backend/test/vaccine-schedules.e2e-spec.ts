@@ -23,6 +23,7 @@ describe('Sanitaire — Programmes de vaccination & échéances (e2e)', () => {
   let batchFreshId: string;
   let batchOldId: string;
   let batchLayerId: string;
+  let batchPintadeId: string;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -75,7 +76,12 @@ describe('Sanitaire — Programmes de vaccination & échéances (e2e)', () => {
       .expect(201);
     eleveurToken = eleveurLogin.body.accessToken;
 
-    const makeBatch = async (name: string, type: 'CHAIR' | 'PONDEUSE', date: string) => {
+    const makeBatch = async (
+      name: string,
+      type: 'CHAIR' | 'PONDEUSE',
+      date: string,
+      species?: string,
+    ) => {
       const res = await request(server)
         .post(`/farms/${farmId}/batches`)
         .set('Authorization', `Bearer ${token}`)
@@ -84,6 +90,7 @@ describe('Sanitaire — Programmes de vaccination & échéances (e2e)', () => {
           integrationDate: date,
           quantityAtStart: 300,
           type,
+          ...(species ? { species } : {}),
           couvoirSupplier: 'Canabec',
           chickLotNumber: `CL-${Date.now()}-${name}`,
           hatchDate: date,
@@ -102,6 +109,12 @@ describe('Sanitaire — Programmes de vaccination & échéances (e2e)', () => {
       'Lot pondeuse vaccin',
       'PONDEUSE',
       today(),
+    );
+    batchPintadeId = await makeBatch(
+      'Lot pintade vaccin',
+      'CHAIR',
+      today(),
+      'PINTADE',
     );
   });
 
@@ -178,6 +191,51 @@ describe('Sanitaire — Programmes de vaccination & échéances (e2e)', () => {
       .send({ protocolId: program.id, lotIds: [batchLayerId] })
       .expect(201);
     expect(res.body.planned).toBe(11);
+  });
+
+  it('programme POULET sur un lot PINTADE → 400 (espèce liée au programme)', async () => {
+    const program = await findProgram('CHAIR', 'vacc-poulet-chair-gabon');
+    const res = await request(server)
+      .post(`/farms/${farmId}/vaccine-schedules/programs/generate`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ protocolId: program.id, lotIds: [batchPintadeId] })
+      .expect(400);
+    expect(res.body.message).toContain('Pintade');
+    expect(res.body.message).toContain('Lot pintade vaccin');
+    expect(res.body.message).toMatch(/Poulet Chair/);
+  });
+
+  it('programme mixte (POULET + PINTADE) → 400, aucun lot planifié', async () => {
+    const program = await findProgram('CHAIR', 'vacc-poulet-chair-gabon');
+    const countProgramEvents = async () => {
+      const r = await request(server)
+        .get(`/farms/${farmId}/batches/${batchFreshId}/prophylaxis`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      return r.body.filter((e: { source: string }) => e.source === 'PROGRAM')
+        .length;
+    };
+    const beforeCount = await countProgramEvents();
+    const res = await request(server)
+      .post(`/farms/${farmId}/vaccine-schedules/programs/generate`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ protocolId: program.id, lotIds: [batchFreshId, batchPintadeId] })
+      .expect(400);
+    expect(res.body.message).toContain('Pintade');
+
+    const afterCount = await countProgramEvents();
+    expect(afterCount).toBe(beforeCount);
+  });
+
+  it('programme PINTADE pré-chargé disponible et applicable sur un lot PINTADE', async () => {
+    const program = await findProgram('CHAIR', 'vacc-pintade-chair-gabon');
+    const res = await request(server)
+      .post(`/farms/${farmId}/vaccine-schedules/programs/generate`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ protocolId: program.id, lotIds: [batchPintadeId] })
+      .expect(201);
+    expect(res.body.planned).toBeGreaterThan(0);
+    expect(res.body.events.every((e: { batchId: string }) => e.batchId === batchPintadeId)).toBe(true);
   });
 
   it('soin manuel vaccin multi-lots → un événement par lot (source MANUEL)', async () => {

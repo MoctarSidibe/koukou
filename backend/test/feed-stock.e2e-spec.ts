@@ -333,6 +333,57 @@ describe('Module 3 — Stocks & Inventaire provende (e2e)', () => {
     expect(lotA.availableKg).toBe(0);
   });
 
+  it('achat externe (skipStockDeduction=true) : consommation enregistrée SANS décrémenter le stock', async () => {
+    const byType = async () => {
+      const r = await request(server)
+        .get(`/farms/${farmId}/feed-stock`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      return r.body.byType.find((t: any) => t.foodType === 'DEMARRAGE');
+    };
+
+    const before = await byType();
+    const batchExt = await createBatch(daysAgo(1));
+    const res = await request(server)
+      .post(`/farms/${farmId}/batches/${batchExt}/daily-entries`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        entryDate: daysAgo(1),
+        feedQuantity: 40,
+        feedUnit: 'KG',
+        feedType: 'DEMARRAGE',
+        skipStockDeduction: true,
+      })
+      .expect(201);
+    expect(res.body.skipStockDeduction).toBe(true);
+    expect(res.body.inputLotId).toBeNull();
+
+    const after = await byType();
+    expect(after.availableKg).toBe(before.availableKg);
+
+    const mov = await request(server)
+      .get(`/farms/${farmId}/feed-stock/movements`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    expect(mov.body.some((m: any) => m.batchId === batchExt)).toBe(false);
+  });
+
+  it('skipStockDeduction avec inputLotId → 400 (mutuellement exclusifs)', async () => {
+    const batchX = await createBatch(daysAgo(1));
+    await request(server)
+      .post(`/farms/${farmId}/batches/${batchX}/daily-entries`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        entryDate: daysAgo(1),
+        feedQuantity: 40,
+        feedUnit: 'KG',
+        feedType: 'DEMARRAGE',
+        skipStockDeduction: true,
+        inputLotId: lotAId,
+      })
+      .expect(400);
+  });
+
   it('perte déclarée sur un lot d’une autre ferme → 400', async () => {
     await request(server)
       .post(`/farms/${farmId}/feed-stock/losses`)

@@ -155,6 +155,42 @@ describe('Assistant — next-actions (e2e)', () => {
     expect(saisie.dueDate).toBeTruthy();
   });
 
+  it('next-actions : soin planifié dans la fenêtre remonte en SOIN, sans doublon ALERTE', async () => {
+    // Soin unique planifié demain → dans la fenêtre de prévenance (calendar_lead_days).
+    const careName = `Vaccin E2E ${Date.now()}`;
+    await request(server)
+      .post(`/farms/${farmId}/vaccine-schedules/manual`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({
+        lotIds: [batchId],
+        careType: 'VACCIN',
+        name: careName,
+        scheduledDate: daysFromNow(1),
+      })
+      .expect(201);
+
+    const res = await request(server)
+      .get(`/farms/${farmId}/advisory/next-actions`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .expect(200);
+    const actions = res.body.actions;
+
+    // La forme actionnable (granulaire) est bien là, une seule fois.
+    const soins = actions.filter(
+      (a: any) => a.category === 'SOIN' && a.title.includes(careName),
+    );
+    expect(soins).toHaveLength(1);
+    expect(soins[0].level).toBe('JAUNE');
+    expect(soins[0].batchId).toBe(batchId);
+    expect(soins[0].id.startsWith('care:')).toBe(true);
+
+    // PROPHYLAXIE est re-présenté sous forme SOIN → pas de carte générique en doublon.
+    const generic = actions.find(
+      (a: any) => a.category === 'ALERTE' && a.title.includes(careName),
+    );
+    expect(generic).toBeUndefined();
+  });
+
   it('next-actions : provende proche de péremption remonte en ALERTE ROUGE', async () => {
     const res = await request(server)
       .get(`/farms/${farmId}/advisory/next-actions`)
@@ -167,6 +203,58 @@ describe('Assistant — next-actions (e2e)', () => {
     expect(action).toBeTruthy();
     expect(action.level).toBe('ROUGE');
     expect(action.title).toContain('Provende Démarrage');
+  });
+
+  it('cycle de vie : soin planifié → SOIN dans next-actions → FAIT → plus de SOIN ni alerte PROPHYLAXIE', async () => {
+    // 1) Planifier un soin unique demain (dans la fenêtre de prévenance).
+    const careName = `Vaccin E2E Cycle ${Date.now()}`;
+    await request(server)
+      .post(`/farms/${farmId}/vaccine-schedules/manual`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({
+        lotIds: [batchId],
+        careType: 'VACCIN',
+        name: careName,
+        scheduledDate: daysFromNow(1),
+      })
+      .expect(201);
+
+    // 2) Il remonte une seule fois sous forme SOIN actionnable (care:<eventId>).
+    const before = await request(server)
+      .get(`/farms/${farmId}/advisory/next-actions`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .expect(200);
+    const soin = before.body.actions.find(
+      (a: any) => a.category === 'SOIN' && a.title.includes(careName),
+    );
+    expect(soin).toBeTruthy();
+    expect(soin.id).toMatch(/^care:/);
+    const eventId = soin.id.slice('care:'.length);
+
+    // 3) Marquer « Fait » → FAIT + clearedAt renseigné.
+    const completed = await request(server)
+      .post(`/farms/${farmId}/batches/${batchId}/prophylaxis/${eventId}/complete`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({ completedAt: daysFromNow(0) })
+      .expect(201);
+    expect(completed.body.status).toBe('FAIT');
+    expect(completed.body.completedAt).toBeTruthy();
+
+    // 4) Disparu de next-actions : ni SOIN granulaire, ni alerte générique.
+    const after = await request(server)
+      .get(`/farms/${farmId}/advisory/next-actions`)
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .expect(200);
+    const actions = after.body.actions as any[];
+    expect(
+      actions.find((a: any) => a.title.includes(careName)),
+    ).toBeUndefined();
+    expect(
+      actions.find(
+        (a: any) =>
+          a.category === 'ALERTE' && a.title.includes('Soin à venir'),
+      ),
+    ).toBeUndefined();
   });
 
   it('refuse l’accès à un utilisateur hors ferme (403)', async () => {

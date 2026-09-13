@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsInt,
@@ -54,6 +55,15 @@ export class CreateDailyEntryDto {
   @IsEnum(FoodType)
   feedType?: FoodType;
 
+  @ApiPropertyOptional({
+    description: "Poids d'un sac en kg quand l'aliment est saisi en SAC",
+    example: 25,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  bagSizeKg?: number;
+
   @ApiPropertyOptional({ enum: FeedPhase, description: "Phase d'aliment" })
   @IsOptional()
   @IsEnum(FeedPhase)
@@ -63,6 +73,16 @@ export class CreateDailyEntryDto {
   @IsOptional()
   @IsString()
   customFeedPhaseName?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "Achat externe : la consommation d'aliment est enregistrée SANS décrémenter " +
+      "le stock suivi (aucun lot de provende interne). Mutuellement exclusif avec inputLotId.",
+    example: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  skipStockDeduction?: boolean;
 
   @ApiPropertyOptional({ description: 'Lot d\u2019intrant tracé (HACCP) lié' })
   @IsOptional()
@@ -104,6 +124,18 @@ export class CreateDailyEntryDto {
   @IsInt()
   @Min(0)
   eggsSmall?: number;
+
+  @ApiPropertyOptional({ description: 'Œufs double jaune' })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  eggsDoubleYolk?: number;
+
+  @ApiPropertyOptional({ description: 'Œufs sales' })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  eggsDirty?: number;
 
   @ApiPropertyOptional({
     enum: ConsumptionSource,

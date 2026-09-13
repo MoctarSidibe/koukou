@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { AuthUser } from '../../common/decorators/current-user.decorator.js';
 import { AlertKind, AlertLevel } from '../../common/enums/alert-level.enum.js';
 import { BatchType } from '../../common/enums/batch-type.enum.js';
@@ -22,6 +22,11 @@ import { InputLot } from '../inputs/entities/input-lot.entity.js';
 import { SanitaryProtocol } from './entities/sanitary-protocol.entity.js';
 import { ProtocolStep } from './entities/protocol-step.entity.js';
 import { ProphylaxisEvent } from './entities/prophylaxis-event.entity.js';
+
+/** Événement prophylaxie tel qu'exposé à l'API : protocole d'origine résolu. */
+export type ProphylaxisEventWithProtocol = ProphylaxisEvent & {
+  protocolId: string | null;
+};
 import {
   TreatmentRecord,
   computeWithdrawalEndDate,
@@ -44,6 +49,22 @@ function addDays(date: string, days: number): string {
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
+
+const SPECIES_LABELS: Record<Species, string> = {
+  POULET: 'Poulet',
+  DINDE: 'Dinde',
+  PINTADE: 'Pintade',
+  CAILLE: 'Caille',
+  CANARD: 'Canard',
+  OIE: 'Oie',
+  FAISAN: 'Faisan',
+  AUTRE: 'Autre',
+};
+
+const BATCH_TYPE_LABELS: Record<BatchType, string> = {
+  CHAIR: 'Chair',
+  PONDEUSE: 'Pondeuse',
+};
 
 @Injectable()
 export class SanitaryService {
@@ -203,14 +224,50 @@ export class SanitaryService {
     user: AuthUser,
     farmId: string,
     batchId: string,
-  ): Promise<ProphylaxisEvent[]> {
+  ): Promise<ProphylaxisEventWithProtocol[]> {
     await this.farmsService.assertAccessible(user, farmId);
     await this.assertBatchInFarm(farmId, batchId);
-    await this.refreshProphylaxisStatuses(batchId);
-    return this.eventRepo.find({
+    // La lecture réconcilie statuts (EN_RETARD) ET alertes PROPHYLAXIE /
+    // DELAI_ATTENTE : un soin échu par simple passage du temps déclenche la
+    // bascule d'état et l'alerte associée (« badge » cohérent côté mobile).
+    await this.refreshProphylaxis(batchId);
+    const events = await this.eventRepo.find({
       where: { batchId },
       order: { scheduledDate: 'ASC' },
     });
+    return this.decorateProtocolId(events);
+  }
+
+  /**
+   * Renseigne le protocole (programme) d'origine de chaque événement, via
+   * l'étape qu'il référence (`protocol_step_id` → `protocol_steps.protocol_id`).
+   * Permet au mobile d'afficher les « à réaliser » du bon programme (celui qui
+   * a réellement été planifié), pas d'un programme par défaut différent.
+   */
+  private async decorateProtocolId(
+    events: ProphylaxisEvent[],
+  ): Promise<ProphylaxisEventWithProtocol[]> {
+    const stepIds = [
+      ...new Set(
+        events.map((e) => e.protocolStepId).filter((s): s is string => Boolean(s)),
+      ),
+    ];
+    if (stepIds.length === 0) {
+      return events.map((e) => ({ ...e, protocolId: null }));
+    }
+    const steps = await this.stepRepo.find({
+      where: { id: In(stepIds) },
+      select: { id: true, protocolId: true },
+    });
+    const protocolByStep = new Map(
+      steps.map((s) => [s.id, s.protocolId] as const),
+    );
+    return events.map((e) => ({
+      ...e,
+      protocolId: e.protocolStepId
+        ? protocolByStep.get(e.protocolStepId) ?? null
+        : null,
+    }));
   }
 
   async completeEvent(
@@ -406,6 +463,25 @@ export class SanitaryService {
       );
     }
 
+    const lots = await Promise.all(
+      dto.lotIds.map((lotId) => this.assertBatchInFarm(farmId, lotId)),
+    );
+    const mismatched = lots.filter(
+      (lot) =>
+        lot.species !== protocol.species || lot.type !== protocol.type,
+    );
+    if (mismatched.length > 0) {
+      const names = mismatched
+        .map(
+          (l) =>
+            `${l.batchName ?? l.id} (${SPECIES_LABELS[l.species]} ${BATCH_TYPE_LABELS[l.type]})`,
+        )
+        .join(', ');
+      throw new BadRequestException(
+        `Le programme « ${protocol.name} » est destiné aux ${SPECIES_LABELS[protocol.species]} ${BATCH_TYPE_LABELS[protocol.type]}. Il ne peut pas s'appliquer au lot « ${names} » — sélectionnez un lot ${SPECIES_LABELS[protocol.species]} ${BATCH_TYPE_LABELS[protocol.type]} ou le programme adapté à son espèce.`,
+      );
+    }
+
     const today = todayStr();
     const events: ProphylaxisEvent[] = [];
     const perLot: {
@@ -418,8 +494,8 @@ export class SanitaryService {
     let planned = 0;
     let skipped = 0;
 
-    for (const lotId of dto.lotIds) {
-      const lot = await this.assertBatchInFarm(farmId, lotId);
+    for (const lot of lots) {
+      const lotId = lot.id;
       const existing = await this.eventRepo.find({ where: { batchId: lotId } });
       const existingByStep = new Map(
         existing

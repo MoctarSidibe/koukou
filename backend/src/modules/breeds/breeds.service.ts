@@ -47,6 +47,7 @@ export class BreedsService {
     name: string,
     type: BatchType,
     species: Species = Species.POULET,
+    refCode?: string | null,
   ): Promise<Breed> {
     // `name` est en unique en base : on renvoie un 409 explicite au lieu
     // d'un 500 de violation de contrainte.
@@ -56,7 +57,13 @@ export class BreedsService {
         `La souche « ${name} » existe déjà dans le référentiel.`,
       );
     }
-    const breed = this.repo.create({ name, type, species, isCustom: true });
+    const breed = this.repo.create({
+      name,
+      type,
+      species,
+      refCode: refCode?.trim() ? refCode.trim() : null,
+      isCustom: true,
+    });
     return this.repo.save(breed);
   }
 }
