@@ -43,14 +43,29 @@ const DEFAULT_CONSTANTS: SeedConstant[] = [
     description: 'Densité critique (oiseaux/m²)',
   },
   {
-    key: ReferenceKey.MORTALITY_WARN_PCT,
+    key: ReferenceKey.MORTALITY_EXPECTED_WEEK1_PCT,
     value: 1,
-    description: 'Seuil d’alerte mortalité (%)',
+    description: 'Mortalité cumulée attendue à J7 (%) — norme 1re semaine',
   },
   {
-    key: ReferenceKey.MORTALITY_CRITICAL_PCT,
+    key: ReferenceKey.MORTALITY_EXPECTED_GROWTH_WEEK_PCT,
+    value: 0.4,
+    description: 'Croissance attendue de la mortalité cumulée au-delà de la 1re semaine (% / semaine)',
+  },
+  {
+    key: ReferenceKey.MORTALITY_EXPECTED_CAP_PCT,
     value: 5,
-    description: 'Seuil critique mortalité (%)',
+    description: 'Plafond de mortalité attendue (%) — au-delà, la bande dévie durablement',
+  },
+  {
+    key: ReferenceKey.MORTALITY_DEV_WARN_PCT,
+    value: 50,
+    description: 'Écart (%) de mortalité réelle vs attendue déclenchant une alerte',
+  },
+  {
+    key: ReferenceKey.MORTALITY_DEV_CRITICAL_PCT,
+    value: 100,
+    description: 'Écart (%) de mortalité réelle vs attendue à partir duquel c’est critique',
   },
   {
     key: ReferenceKey.WATER_DROP_WARN_PCT,

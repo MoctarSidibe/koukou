@@ -12,6 +12,7 @@ import { ReferenceConstantsService } from '../reference-constants/reference-cons
 import { InputLot } from '../inputs/entities/input-lot.entity.js';
 import { ProductionBatch } from './entities/production-batch.entity.js';
 import { BatchMetrics } from './models/batch-metrics.model.js';
+import { dominantSpecies, speciesDensityFor } from './density-reference.js';
 
 function addDaysIso(date: string, days: number): string {
   const d = new Date(`${date}T12:00:00Z`);
@@ -127,9 +128,14 @@ export class AdvisoryEngine {
       ReferenceKey.BUILDING_DENSITY_CRITICAL,
       18,
     );
+    // Seuils species-aware : l'espèce dominante du bâtiment prime sur la
+    // constante globale (calibrée pour le poulet de chair).
+    const speciesDensity = speciesDensityFor(dominantSpecies(activeLots));
+    const effectiveWarn = speciesDensity?.warnPerM2 ?? warn;
+    const effectiveCrit = speciesDensity?.criticalPerM2 ?? crit;
     const activeBatch = activeLots[0];
 
-    if (density > crit) {
+    if (density > effectiveCrit) {
       await this.alertsService.raise(
         {
           kind: AlertKind.DENSITE_BATIMENT,
@@ -145,7 +151,7 @@ export class AdvisoryEngine {
         },
         { farmId, batchId: activeBatch?.id ?? null, buildingId },
       );
-    } else if (density > warn) {
+    } else if (density > effectiveWarn) {
       await this.alertsService.raise(
         {
           kind: AlertKind.DENSITE_BATIMENT,
@@ -306,35 +312,44 @@ export class AdvisoryEngine {
     farmId: string,
     batchId: string,
   ) {
-    const warnPct = await this.constants.get(
-      ReferenceKey.MORTALITY_WARN_PCT,
-      1,
-    );
-    const critPct = await this.constants.get(
-      ReferenceKey.MORTALITY_CRITICAL_PCT,
-      5,
-    );
-    if (metrics.mortalityPercent > critPct) {
+    const actualPct = metrics.mortalityPercent;
+    const expectedPct = metrics.expectedMortalityPct;
+    const devPct = metrics.mortalityDeviationPct;
+    const devLabel =
+      devPct != null && devPct >= 0
+        ? ` — écart +${devPct.toFixed(0)}% vs attendu`
+        : '';
+    if (metrics.mortalityStatus === 'critical') {
       await this.alertsService.raise(
         {
           kind: AlertKind.MORTALITE,
           level: AlertLevel.ROUGE,
-          message: `Mortalité critique : ${metrics.mortalityPercent.toFixed(1)}% sur le lot ${batch.batchName}.`,
+          message: `Mortalité critique : ${actualPct.toFixed(1)}% sur le lot ${batch.batchName} (attendu ${expectedPct.toFixed(1)}% à J${metrics.ageDays}${devLabel}).`,
           recommendation:
             'Contacter immédiatement le vétérinaire, vérifier la biosécurité et l’hygiène du bâtiment.',
-          context: { mortalityPercent: metrics.mortalityPercent },
+          context: {
+            mortalityPercent: actualPct,
+            expectedMortalityPct: expectedPct,
+            mortalityDeviationPercent: devPct,
+            ageDays: metrics.ageDays,
+          },
         },
         { farmId, batchId },
       );
-    } else if (metrics.mortalityPercent > warnPct) {
+    } else if (metrics.mortalityStatus === 'elevated') {
       await this.alertsService.raise(
         {
           kind: AlertKind.MORTALITE,
           level: AlertLevel.JAUNE,
-          message: `Mortalité en hausse : ${metrics.mortalityPercent.toFixed(1)}% sur le lot ${batch.batchName}.`,
+          message: `Mortalité en hausse : ${actualPct.toFixed(1)}% sur le lot ${batch.batchName} (attendu ${expectedPct.toFixed(1)}% à J${metrics.ageDays}${devLabel}).`,
           recommendation:
             'Surveiller la consommation d’eau et l’état général du lot.',
-          context: { mortalityPercent: metrics.mortalityPercent },
+          context: {
+            mortalityPercent: actualPct,
+            expectedMortalityPct: expectedPct,
+            mortalityDeviationPercent: devPct,
+            ageDays: metrics.ageDays,
+          },
         },
         { farmId, batchId },
       );
@@ -353,8 +368,15 @@ export class AdvisoryEngine {
       await this.alertsService.clearKind(farmId, batchId, AlertKind.SURDENSITE);
       return;
     }
-    const warn = await this.constants.get(ReferenceKey.DENSITY_WARN, 15);
-    const crit = await this.constants.get(ReferenceKey.DENSITY_CRITICAL, 18);
+    // Seuils species-aware : le référentiel par espèce prime sur la constante
+    // globale (15/18, calibrée poulet de chair).
+    const speciesDensity = speciesDensityFor(batch.species);
+    const warn =
+      speciesDensity?.warnPerM2 ??
+      (await this.constants.get(ReferenceKey.DENSITY_WARN, 15));
+    const crit =
+      speciesDensity?.criticalPerM2 ??
+      (await this.constants.get(ReferenceKey.DENSITY_CRITICAL, 18));
     if (metrics.densityPerM2 > crit) {
       await this.alertsService.raise(
         {
@@ -514,9 +536,7 @@ export class AdvisoryEngine {
         20,
       );
       const deviationPct =
-        norm > 0
-          ? (Math.abs(drop.todayPerBird - norm) / norm) * 100
-          : 0;
+        norm > 0 ? (Math.abs(drop.todayPerBird - norm) / norm) * 100 : 0;
       if (deviationPct > normWarnPct) {
         await this.alertsService.raise(
           {
@@ -567,15 +587,9 @@ export class AdvisoryEngine {
       await this.alertsService.clearKind(farmId, batchId, AlertKind.MALADIE);
       return;
     }
-    const mortalityWarn = await this.constants.get(
-      ReferenceKey.MORTALITY_WARN_PCT,
-      1,
-    );
-    const mortalityCrit = await this.constants.get(
-      ReferenceKey.MORTALITY_CRITICAL_PCT,
-      5,
-    );
-    if (metrics.mortalityPercent <= mortalityWarn) {
+    // La mortalité n'est un mauvais signe que si elle dépasse l'attendu à
+    // l'âge du lot (une mortalité cumulée sous la norme n'active pas l'alerte).
+    if (metrics.mortalityStatus === 'normal') {
       await this.alertsService.clearKind(farmId, batchId, AlertKind.MALADIE);
       return;
     }
@@ -585,7 +599,7 @@ export class AdvisoryEngine {
       25,
     );
     const level =
-      drop.dropPct > critPct || metrics.mortalityPercent > mortalityCrit
+      drop.dropPct > critPct || metrics.mortalityStatus === 'critical'
         ? AlertLevel.ROUGE
         : AlertLevel.JAUNE;
     await this.alertsService.raise(
@@ -668,7 +682,8 @@ export class AdvisoryEngine {
       await this.alertsService.clearKind(farmId, batchId, AlertKind.GMQ);
       return;
     }
-    const prevGmq = ((prev.avgWeightKg! - day1WeightKg(batch.species)) * 1000) / prevAge;
+    const prevGmq =
+      ((prev.avgWeightKg! - day1WeightKg(batch.species)) * 1000) / prevAge;
     if (prevGmq <= 0) {
       await this.alertsService.clearKind(farmId, batchId, AlertKind.GMQ);
       return;

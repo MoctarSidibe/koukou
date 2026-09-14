@@ -1,4 +1,5 @@
 import { AlertLevel } from '../../../common/enums/alert-level.enum.js';
+import type { MortalityStatus } from '../mortality-reference.js';
 
 export type ReadyReason =
   | 'READY'
@@ -22,6 +23,12 @@ export interface BatchMetrics {
   ageDays: number;
   totalDeaths: number;
   mortalityPercent: number;
+  /** Mortalité cumulée attendue à l'âge du lot (référentiel de la bande, éprouvé en élevage). */
+  expectedMortalityPct: number;
+  /** Écart relatif (%) de la mortalité réelle vs attendue (null si attendue = 0). */
+  mortalityDeviationPct: number | null;
+  /** Lecture simple de l'écart : normal / en hausse / critique. */
+  mortalityStatus: MortalityStatus;
   viabilityPercent: number;
   liveCount: number;
   totalFeedKg: number;

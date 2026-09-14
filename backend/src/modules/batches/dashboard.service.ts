@@ -41,6 +41,11 @@ import { Sale } from '../finance/entities/sale.entity.js';
 import { ProductionBatch } from './entities/production-batch.entity.js';
 import { BatchesService } from './batches.service.js';
 import { BreedStatus, MetricsService } from './metrics.service.js';
+import {
+  classifyMortality,
+  expectedCumulativeMortalityPct,
+  type MortalityStatus,
+} from './mortality-reference.js';
 import { FarmWeather, WeatherService } from '../weather/weather.service.js';
 
 const DAY1_WEIGHT_KG = 0.045;
@@ -84,6 +89,10 @@ export interface HealthOverviewRow {
   liveCount: number;
   weekDeaths: number;
   mortalityPercent: number;
+  /** Mortalité cumulée attendue à l'âge du lot (référentiel de la bande). */
+  expectedMortalityPct: number;
+  /** normal | elevated | critical — écart de mortalité vs attendu. */
+  mortalityStatus: MortalityStatus;
   alertesRouges: number;
   alertesJaunes: number;
   lastEntryDate: string | null;
@@ -135,6 +144,8 @@ export interface DashboardData {
   batches: { total: number; actif: number; enVente: number; cloture: number };
   mortalityPercent: number | null;
   viabilityPercent: number | null;
+  /** Statut mortalité agrégé de la ferme (le plus dégradé). */
+  mortalityStatus: MortalityStatus;
   feedAutonomyDays: number | null;
   collectedTodayFcfa: number;
   teamCount: number;
@@ -268,6 +279,10 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     }
     const refDate = date ?? todayStr();
     const refDatetime = time ? new Date(`${refDate}T${time}:00`) : undefined;
+    // Mode « as-of » : un date est fourni pour une date strictement passée.
+    // Les agrégats de cheptel/mortalité sont alors reconstitués à cette date
+    // (entrées <= refDate + réconciliation du cheptel) au lieu de l'état courant.
+    const historical = date != null && refDate < todayStr();
 
     const [batches, alerts, employees, feedSummary, collectedToday] =
       await Promise.all([
@@ -304,11 +319,32 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     const activeBatches = batches.filter(
       (b) => b.status !== BatchStatus.CLOTURE,
     );
-    const liveStock = activeBatches.reduce((s, b) => s + b.quantityAlive, 0);
+    let asOfLiveCounts = new Map<string, number>();
+    let liveStock: number;
+    if (historical && activeBatches.length > 0) {
+      // Cheptel reconstitué à refDate (mortalité + cessions + abattages +
+      // réformes sanitaires enregistrés jusqu'à refDate).
+      const asOfCounts = await Promise.all(
+        activeBatches.map((b) =>
+          this.metricsService.compute(b, { asOf: refDate }),
+        ),
+      );
+      asOfLiveCounts = new Map(
+        activeBatches.map((b, i) => [b.id, asOfCounts[i]!.liveCount] as const),
+      );
+    }
+    liveStock = asOfLiveCounts.size > 0
+      ? [...asOfLiveCounts.values()].reduce((s, n) => s + n, 0)
+      : activeBatches.reduce((s, b) => s + b.quantityAlive, 0);
     let entries: DailyEntry[] = [];
     if (batches.length > 0) {
       entries = await this.entryRepo.find({
-        where: { batchId: In(batches.map((b) => b.id)) },
+        where: historical
+          ? {
+              batchId: In(batches.map((b) => b.id)),
+              entryDate: LessThanOrEqual(refDate),
+            }
+          : { batchId: In(batches.map((b) => b.id)) },
       });
       totalDeaths = entries.reduce((s, e) => s + e.deaths, 0);
       totalStart = batches.reduce((s, b) => s + b.quantityAtStart, 0);
@@ -338,14 +374,28 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
 
     const health = this.computeHealth(alerts, missingEntries);
     const deltas = this.computeDeltas(batches, entries, refDate);
-    const leaderboard = await this.computeLeaderboard(user, farmId);
+    const leaderboard = await this.computeLeaderboard(
+      user,
+      farmId,
+      historical ? refDate : undefined,
+    );
     const healthOverview = await this.computeHealthOverview(
       batches,
       entries,
       alerts,
       refDate,
+      historical ? refDate : undefined,
+      asOfLiveCounts,
     );
     const eggStock = await this.evaluateEggStockAlerts(farmId);
+    // Statut mortalité agrégé de la ferme = le plus dégradé parmi les bandes.
+    const mortalityStatus: MortalityStatus = healthOverview.some(
+      (r) => r.mortalityStatus === 'critical',
+    )
+      ? 'critical'
+      : healthOverview.some((r) => r.mortalityStatus === 'elevated')
+        ? 'elevated'
+        : 'normal';
     // La météo ne doit jamais dégrader le dashboard (échec réseau → null).
     const weather = await this.weatherService
       .forecastForFarm(farmId)
@@ -406,6 +456,7 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
       },
       mortalityPercent,
       viabilityPercent,
+      mortalityStatus,
       feedAutonomyDays,
       collectedTodayFcfa: collectedToday ?? 0,
       teamCount: employees,
@@ -607,10 +658,26 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
     entries: DailyEntry[],
     alerts: Alert[],
     refDate: string,
+    asOf?: string,
+    asOfLiveCounts?: Map<string, number>,
   ): Promise<HealthOverviewRow[]> {
     const weekStart = isoWeekStart(refDate);
     const refTime = new Date(`${refDate}T00:00:00`).getTime();
     const rows: HealthOverviewRow[] = [];
+
+    const [mortalityWeek1Pct, mortalityGrowthPct, mortalityCapPct, mortalityDevWarnPct, mortalityDevCriticalPct] =
+      await Promise.all([
+        this.constants.get(ReferenceKey.MORTALITY_EXPECTED_WEEK1_PCT, 1),
+        this.constants.get(ReferenceKey.MORTALITY_EXPECTED_GROWTH_WEEK_PCT, 0.4),
+        this.constants.get(ReferenceKey.MORTALITY_EXPECTED_CAP_PCT, 5),
+        this.constants.get(ReferenceKey.MORTALITY_DEV_WARN_PCT, 50),
+        this.constants.get(ReferenceKey.MORTALITY_DEV_CRITICAL_PCT, 100),
+      ]);
+    const mortalityProfile = {
+      week1Pct: mortalityWeek1Pct,
+      growthPerWeekPct: mortalityGrowthPct,
+      capPct: mortalityCapPct,
+    };
 
     for (const b of batches) {
       const bEntries = entries.filter((e) => e.batchId === b.id);
@@ -636,6 +703,20 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
         else if (a.level === AlertLevel.JAUNE) alertesJaunes += 1;
       }
 
+      const mortalityPct =
+        b.quantityAtStart > 0
+          ? round2((totalDeaths / b.quantityAtStart) * 100)
+          : 0;
+      const expectedMortalityPct = round2(
+        expectedCumulativeMortalityPct(ageDays, mortalityProfile),
+      );
+      const mortalityStatus = classifyMortality(
+        mortalityPct,
+        expectedMortalityPct,
+        mortalityDevWarnPct,
+        mortalityDevCriticalPct,
+      ).status;
+
       rows.push({
         batchId: b.id,
         batchName: b.batchName,
@@ -644,21 +725,21 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
         species: b.species,
         customSpecies: b.species === Species.AUTRE ? b.customSpecies : undefined,
         ageDays,
-        liveCount: Math.max(0, b.quantityAlive),
+        liveCount:
+          asOfLiveCounts?.get(b.id) ?? Math.max(0, b.quantityAlive),
         weekDeaths: bEntries
           .filter((e) => e.entryDate >= weekStart)
           .reduce((s, e) => s + e.deaths, 0),
-        mortalityPercent:
-          b.quantityAtStart > 0
-            ? round2((totalDeaths / b.quantityAtStart) * 100)
-            : 0,
+        mortalityPercent: mortalityPct,
+        expectedMortalityPct,
+        mortalityStatus,
         alertesRouges,
         alertesJaunes,
         lastEntryDate,
         lastEntryLagDays: lastEntryDate
           ? daysBetween(lastEntryDate, refDate)
           : null,
-        breedStatus: await this.metricsService.breedStatus(b),
+        breedStatus: await this.metricsService.breedStatus(b, asOf),
       });
     }
 
@@ -675,8 +756,9 @@ export class DashboardService implements OnModuleInit, OnModuleDestroy {
   private async computeLeaderboard(
     user: AuthUser,
     farmId: string,
+    asOf?: string,
   ): Promise<LeaderboardRow[]> {
-    const batches = await this.batchesService.findAll(user, farmId);
+    const batches = await this.batchesService.findAll(user, farmId, asOf);
     return batches
       .map((b) => {
         const m = b.metrics;

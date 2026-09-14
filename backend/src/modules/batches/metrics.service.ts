@@ -6,10 +6,7 @@ import {
   AlertLevel,
   AlertStatus,
 } from '../../common/enums/alert-level.enum.js';
-import {
-  BatchStatus,
-  BatchType,
-} from '../../common/enums/batch-type.enum.js';
+import { BatchStatus, BatchType } from '../../common/enums/batch-type.enum.js';
 import { ReferenceKey } from '../../common/enums/reference-key.enum.js';
 import { day1WeightKg } from '../../common/utils/species-day1-weight.js';
 import { Alert } from '../alerts/entities/alert.entity.js';
@@ -19,10 +16,13 @@ import { Farm } from '../farms/entities/farm.entity.js';
 import { ReferenceConstantsService } from '../reference-constants/reference-constants.service.js';
 import { ProductionBatch } from './entities/production-batch.entity.js';
 import { FlockReconciliationService } from './flock-reconciliation.service.js';
+import { BatchMetrics, ReadyReason } from './models/batch-metrics.model.js';
 import {
-  BatchMetrics,
-  ReadyReason,
-} from './models/batch-metrics.model.js';
+  classifyMortality,
+  expectedCumulativeMortalityPct,
+  type MortalityStatus,
+} from './mortality-reference.js';
+import { speciesDensityFor } from './density-reference.js';
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
@@ -137,11 +137,16 @@ export class MetricsService {
     const [
       entriesRaw,
       standardModule,
-      densityWarn,
-      densityCritical,
+      densityWarnGlobal,
+      densityCriticalGlobal,
       minVenteAgeDays,
       fcrDeviationMaxPct,
       reformeLayRateFallPct,
+      mortalityWeek1Pct,
+      mortalityGrowthPct,
+      mortalityCapPct,
+      mortalityDevWarnPct,
+      mortalityDevCriticalPct,
       standard,
       alertsCount,
       activeSanitaryAlerts,
@@ -156,6 +161,11 @@ export class MetricsService {
       this.constants.get(ReferenceKey.VENTE_AGE_MIN_DAYS, 35),
       this.constants.get(ReferenceKey.VENTE_FCR_DEV_MAX_PCT, 10),
       this.constants.get(ReferenceKey.REFORME_LAY_RATE_FALL_PCT, 15),
+      this.constants.get(ReferenceKey.MORTALITY_EXPECTED_WEEK1_PCT, 1),
+      this.constants.get(ReferenceKey.MORTALITY_EXPECTED_GROWTH_WEEK_PCT, 0.4),
+      this.constants.get(ReferenceKey.MORTALITY_EXPECTED_CAP_PCT, 5),
+      this.constants.get(ReferenceKey.MORTALITY_DEV_WARN_PCT, 50),
+      this.constants.get(ReferenceKey.MORTALITY_DEV_CRITICAL_PCT, 100),
       this.findStandard(batch, refDate),
       this.alertRepo.count({
         where: { batchId: batch.id, status: AlertStatus.ACTIVE },
@@ -164,10 +174,7 @@ export class MetricsService {
         where: {
           batchId: batch.id,
           status: AlertStatus.ACTIVE,
-          kind: In([
-            AlertKind.DELAI_ATTENTE,
-            AlertKind.PROPHYLAXIE,
-          ]),
+          kind: In([AlertKind.DELAI_ATTENTE, AlertKind.PROPHYLAXIE]),
         },
       }),
     ]);
@@ -211,6 +218,18 @@ export class MetricsService {
       batch.quantityAtStart > 0
         ? (totalDeaths / batch.quantityAtStart) * 100
         : 0;
+    const expectedMortalityPct = expectedCumulativeMortalityPct(ageDays, {
+      week1Pct: mortalityWeek1Pct,
+      growthPerWeekPct: mortalityGrowthPct,
+      capPct: mortalityCapPct,
+    });
+    const { devPct: mortalityDeviationPct, status: mortalityStatus } =
+      classifyMortality(
+        mortalityPercent,
+        expectedMortalityPct,
+        mortalityDevWarnPct,
+        mortalityDevCriticalPct,
+      );
     const viabilityPercent = Math.max(0, 100 - mortalityPercent);
 
     // Convention : feedQuantity est TOUJOURS stocké en kg (conversion sac->kg faite à la saisie).
@@ -289,6 +308,13 @@ export class MetricsService {
         ? liveCount / batch.buildingAreaM2
         : null;
 
+    // Seuils de densité species-aware : le référentiel par espèce prime,
+    // la constante plateforme (15/18 oiseaux/m²) sert de repli.
+    const speciesDensity = speciesDensityFor(batch.species);
+    const densityWarn = speciesDensity?.warnPerM2 ?? densityWarnGlobal;
+    const densityCritical =
+      speciesDensity?.criticalPerM2 ?? densityCriticalGlobal;
+
     const moduleFraction = batch.quantityAtStart / standardModule;
 
     const farm = await this.farmRepo.findOne({ where: { id: batch.farmId } });
@@ -298,7 +324,7 @@ export class MetricsService {
         : null;
 
     const status = this.computeStatus({
-      mortalityPercent,
+      mortalityStatus,
       densityPerM2,
       densityWarn,
       densityCritical,
@@ -326,6 +352,9 @@ export class MetricsService {
       alerts: alertsCount,
       totalDeaths,
       mortalityPercent,
+      expectedMortalityPct,
+      mortalityDeviationPct,
+      mortalityStatus,
       viabilityPercent,
       liveCount,
       totalFeedKg,
@@ -362,7 +391,9 @@ export class MetricsService {
     const ageDays = this.ageDaysOn(batch.integrationDate, refDate);
     const ageWeek = Math.floor(ageDays / 7) + 1;
     const applicable = standards.filter((s) => s.week <= ageWeek);
-    return applicable.length > 0 ? applicable[applicable.length - 1]! : standards[0];
+    return applicable.length > 0
+      ? applicable[applicable.length - 1]!
+      : standards[0];
   }
 
   /**
@@ -371,15 +402,22 @@ export class MetricsService {
    * semaine du référentiel). Retourne null si le lot n'a pas de souche ou que
    * la souche n'a pas de référentiel (souche personnalisée).
    */
-  async breedStatus(batch: ProductionBatch): Promise<BreedStatus | null> {
-    const standard = await this.findStandard(batch, todayIso());
+  async breedStatus(
+    batch: ProductionBatch,
+    asOf?: string,
+  ): Promise<BreedStatus | null> {
+    const refDate = asOf ?? todayIso();
+    const standard = await this.findStandard(batch, refDate);
     if (!standard) return null;
 
-    const metrics = await this.compute(batch);
-    const ageDays = this.ageDaysOn(batch.integrationDate, todayIso());
+    const metrics = await this.compute(batch, asOf ? { asOf } : undefined);
+    const ageDays = this.ageDaysOn(batch.integrationDate, refDate);
     const actualAvgWeightKg =
       metrics.gmqGramsPerDay != null
-        ? round2(day1WeightKg(batch.species) + (metrics.gmqGramsPerDay * ageDays) / 1000)
+        ? round2(
+            day1WeightKg(batch.species) +
+              (metrics.gmqGramsPerDay * ageDays) / 1000,
+          )
         : null;
 
     return {
@@ -414,7 +452,7 @@ export class MetricsService {
   }
 
   private computeStatus(input: {
-    mortalityPercent: number;
+    mortalityStatus: MortalityStatus;
     densityPerM2: number | null;
     densityWarn: number;
     densityCritical: number;
@@ -428,10 +466,10 @@ export class MetricsService {
     if (input.densityPerM2 != null && input.densityPerM2 > input.densityWarn) {
       return AlertLevel.JAUNE;
     }
-    if (input.mortalityPercent > 5) {
+    if (input.mortalityStatus === 'critical') {
       return AlertLevel.ROUGE;
     }
-    if (input.mortalityPercent > 1) {
+    if (input.mortalityStatus === 'elevated') {
       return AlertLevel.JAUNE;
     }
     return AlertLevel.VERT;
