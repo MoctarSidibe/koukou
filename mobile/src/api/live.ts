@@ -13,6 +13,7 @@ import type {
   BatchWithMetrics,
   CaisseSummary,
   CashSession,
+  MortalityStatus,
   EggBreakdown,
   Customer,
   CustomerStats,
@@ -33,6 +34,7 @@ import type {
   OverviewPnl,
   PondageSummary,
   PointOfSale,
+  CarcassTransfer,
   Promotion,
   ProphylaxisEvent,
   ReadyReason,
@@ -126,6 +128,9 @@ interface RawBatchMetrics {
   liveCount?: number;
   mortalityPercent?: number;
   viabilityPercent?: number;
+  expectedMortalityPct?: number;
+  mortalityDeviationPct?: number | null;
+  mortalityStatus?: string;
   totalFeedKg?: number;
   totalWeightGainKg?: number | null;
   fcr?: number | null;
@@ -150,6 +155,7 @@ interface RawBatch {
   id: string;
   farmId: string;
   batchName: string | null;
+  buildingId?: string | null;
   breedId: string | null;
   integrationDate: string;
   quantityAtStart: number;
@@ -177,12 +183,24 @@ const GRADE_TABLE: { min: number; grade: 'EXCELLENT' | 'BON' | 'MOYEN' | 'CRITIQ
   { min: 0, grade: 'CRITIQUE' },
 ];
 
+/** Normalise le statut mortalité. Fallback sur les anciens seuils fixes. */
+function toMortalityStatus(v?: string | null, mortalityPercent?: number): MortalityStatus {
+  if (v === 'normal' || v === 'elevated' || v === 'critical') return v;
+  const pct = mortalityPercent ?? 0;
+  if (pct > 5) return 'critical';
+  if (pct > 1) return 'elevated';
+  return 'normal';
+}
+
 function mapMetrics(m: RawBatchMetrics): BatchMetrics {
   return {
     ageDays: m.ageDays ?? 0,
     totalDeaths: m.totalDeaths ?? 0,
     liveCount: m.liveCount ?? 0,
     mortalityPercent: m.mortalityPercent ?? 0,
+    expectedMortalityPct: m.expectedMortalityPct ?? m.mortalityPercent ?? 0,
+    mortalityDeviationPct: m.mortalityDeviationPct ?? null,
+    mortalityStatus: toMortalityStatus(m.mortalityStatus, m.mortalityPercent),
     viabilityPercent: m.viabilityPercent ?? 0,
     totalFeedKg: m.totalFeedKg ?? m.feedConsumedKg ?? 0,
     totalWeightGainKg: m.totalWeightGainKg ?? null,
@@ -234,6 +252,7 @@ function mapBatch(b: RawBatch): BatchWithMetrics {
     id: b.id,
     farmId: b.farmId,
     batchName: b.batchName,
+    buildingId: b.buildingId ?? null,
     breedCode: b.breedId ? (cached?.refCode ?? null) : null,
     breedName: b.breedId ? (cached?.name ?? null) : (b.customBreed ?? null),
     integrationDate: b.integrationDate,
@@ -388,8 +407,8 @@ export class LiveApi {
     return apiFetch<TreatmentRecord[]>(`/farms/${farmId}/batches/${batchId}/treatments`);
   }
 
-  async fetchBatchHealth(farmId: string, batchId: string): Promise<BatchHealth> {
-    return apiFetch<BatchHealth>(`/farms/${farmId}/batches/${batchId}/health`);
+  async fetchBatchHealth(farmId: string, batchId: string, asOf?: string): Promise<BatchHealth> {
+    return apiFetch<BatchHealth>(`/farms/${farmId}/batches/${batchId}/health${asOf ? `?asOf=${asOf}` : ''}`);
   }
 
   async fetchHealthEvents(farmId: string, batchId: string): Promise<HealthEvent[]> {
@@ -430,6 +449,11 @@ export class LiveApi {
 
   async fetchPointOfSale(farmId: string, pointOfSaleId: string): Promise<PointOfSale> {
     return apiFetch<PointOfSale>(`/farms/${farmId}/points-of-sale/${pointOfSaleId}`);
+  }
+
+  async fetchCarcassTransfers(farmId: string, pointOfSaleId?: string): Promise<CarcassTransfer[]> {
+    const query = pointOfSaleId ? `?pointOfSaleId=${encodeURIComponent(pointOfSaleId)}` : '';
+    return apiFetch<CarcassTransfer[]>(`/farms/${farmId}/carcass-transfers${query}`);
   }
 
   async fetchRentabiliteOverview(farmId: string, from?: string, to?: string): Promise<OverviewPnl> {

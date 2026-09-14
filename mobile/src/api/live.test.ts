@@ -310,6 +310,19 @@ describe('LiveApi — sanitaire, abattage, clients, rentabilité', () => {
     expect(readCall(fetchMock).url).toBe('http://10.0.0.5:3000/farms/f-1/sales');
   });
 
+  it('fetchCarcassTransfers liste les transferts (boutique en query optionnelle)', async () => {
+    const fetchMock = stubFetch(async () => jsonResponse(200, [{ id: 't-1', status: 'TRANSFERRED', quantity: 12, quantitySold: 4 }]));
+    const transfers = await new LiveApi().fetchCarcassTransfers('f-1');
+    expect(transfers[0].status).toBe('TRANSFERRED');
+    expect(readCall(fetchMock).url).toBe('http://10.0.0.5:3000/farms/f-1/carcass-transfers');
+  });
+
+  it('fetchCarcassTransfers filtre par boutique', async () => {
+    const fetchMock = stubFetch(async () => jsonResponse(200, []));
+    await new LiveApi().fetchCarcassTransfers('f-1', 'pdv-boutique-1');
+    expect(readCall(fetchMock).url).toBe('http://10.0.0.5:3000/farms/f-1/carcass-transfers?pointOfSaleId=pdv-boutique-1');
+  });
+
   it('fetchExpenses liste les dépenses (période en query optionnelle)', async () => {
     const fetchMock = stubFetch(async () => jsonResponse(200, [{ id: 'e-1', category: 'ALIMENTS', amountFcfa: 420000 }]));
     const expenses = await new LiveApi().fetchExpenses('f-1', '2026-08-01', '2026-08-28');

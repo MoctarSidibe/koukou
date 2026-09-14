@@ -6,6 +6,8 @@ export interface PosLine {
   product: PosProduct;
   batchId?: string;
   slaughterOrderId?: string;
+  /** Transfert de carcasses ferme → boutique (source d'une ligne ABATTU en boutique). */
+  transferId?: string;
   qty: number;
   unitPriceFcfa: number;
   label: string;

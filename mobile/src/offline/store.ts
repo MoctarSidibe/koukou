@@ -11,7 +11,9 @@ export type OfflineKind =
   | 'order-cancel'
   | 'pdv-create'
   | 'pdv-update'
-  | 'pdv-delete';
+  | 'pdv-delete'
+  | 'carcass-transfer-create'
+  | 'carcass-transfer-cancel';
 
 export interface OfflineOp {
   id: string;

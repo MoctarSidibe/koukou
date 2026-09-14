@@ -12,51 +12,45 @@ import { Sheet } from '../ui/Sheet';
 import { SPECIES_ICONS, speciesLabel } from '@/api/format';
 import type { PosProduct } from '@/api/mutations';
 import { DEFAULT_AVG_WEIGHT_KG } from '@/api/mutations';
-import type { BatchWithMetrics, SlaughterOrder } from '@/api/types';
+import type { BatchWithMetrics, CarcassTransfer, PointOfSaleKind, SlaughterOrder } from '@/api/types';
 import { color, palette, radii, spacing, fmt } from '@/constants/theme';
 
 import { lineAmount } from './helpers';
+import { posCatalog, productMeta, transferRemaining } from './catalog';
 import type { PosLine } from './types';
 
 interface PosLineSheetProps {
   visible: boolean;
   lots: BatchWithMetrics[];
   pools: SlaughterOrder[];
+  /** Transferts de carcasses ferme → boutique (exclusif au PDV BOUTIQUE). */
+  transfers?: CarcassTransfer[];
+  /** Type du point de vente sélectionné (FERME par défaut). */
+  posKind?: PointOfSaleKind;
   committed?: PosLine[];
   initial?: PosLine;
   presetBatchId?: string;
+  /** Réserve de carcasses présélectionnée (boutique, mode transfert). */
+  presetTransferId?: string;
   onSave: (line: PosLine) => void;
   onClose: () => void;
 }
 
-type AbattuMode = 'direct' | 'pool';
+type AbattuMode = 'direct' | 'pool' | 'transfer';
 
-const PRODUCTS: {
-  key: PosProduct;
-  label: string;
-  unit: string;
-  priceUnit: string;
-  unitPrice: number;
-  kind?: 'CHAIR' | 'PONDEUSE';
-}[] = [
-  { key: 'PIECE', label: 'Sur pied (pièce)', unit: 'pcs', priceUnit: 'pièce', unitPrice: 2500, kind: 'CHAIR' },
-  { key: 'KG', label: 'Sur pied (kg)', unit: 'oiseaux', priceUnit: 'kg', unitPrice: 2200, kind: 'CHAIR' },
-  { key: 'ABATTU_PIECE', label: 'Abattu (pièce)', unit: 'pcs', priceUnit: 'pièce', unitPrice: 2900, kind: 'CHAIR' },
-  { key: 'ABATTU_KG', label: 'Abattu (kg)', unit: 'oiseaux', priceUnit: 'kg', unitPrice: 2550, kind: 'CHAIR' },
-  { key: 'OEUF', label: 'Œufs (alvéole)', unit: 'alv.', priceUnit: 'alvéole', unitPrice: 2500, kind: 'PONDEUSE' },
-  { key: 'AUTRE', label: 'Autre', unit: 'u', priceUnit: 'unité', unitPrice: 1000 },
-];
-
-function lotTitle(b: BatchWithMetrics): string {
-  const species = b.customSpecies ?? speciesLabel(b.species);
-  return `${SPECIES_ICONS[b.species] ?? ''} ${b.batchName ?? species}`;
-}
-
-function productMeta(key: PosProduct) {
-  return PRODUCTS.find((p) => p.key === key) ?? PRODUCTS[0];
-}
-
-export function PosLineSheet({ visible, lots, pools, committed, initial, presetBatchId, onSave, onClose }: PosLineSheetProps) {
+export function PosLineSheet({
+  visible,
+  lots,
+  pools,
+  transfers = [],
+  posKind,
+  committed,
+  initial,
+  presetBatchId,
+  presetTransferId,
+  onSave,
+  onClose,
+}: PosLineSheetProps) {
   const [product, setProduct] = useState<PosProduct>('PIECE');
   const [abattuMode, setAbattuMode] = useState<AbattuMode>('direct');
   const [lotId, setLotId] = useState('');
@@ -65,62 +59,95 @@ export function PosLineSheet({ visible, lots, pools, committed, initial, presetB
   const [price, setPrice] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
+  const isBoutique = posKind === 'BOUTIQUE';
+  const products = posCatalog(posKind);
+
   useEffect(() => {
     if (!visible) return;
     if (initial) {
       const isAbattu = initial.product === 'ABATTU_PIECE' || initial.product === 'ABATTU_KG';
       setProduct(initial.product);
-      setAbattuMode(isAbattu && initial.slaughterOrderId ? 'pool' : 'direct');
+      setAbattuMode(
+        isAbattu && initial.transferId ? 'transfer' : isAbattu && initial.slaughterOrderId ? 'pool' : 'direct',
+      );
       setLotId(initial.batchId ?? '');
-      setPoolId(initial.slaughterOrderId ?? '');
+      setPoolId(initial.transferId ?? initial.slaughterOrderId ?? '');
       setQty(initial.qty);
       setPrice(initial.unitPriceFcfa);
     } else {
       const preset = lots.find((b) => b.id === presetBatchId);
-      setProduct(preset?.type === 'PONDEUSE' ? 'OEUF' : 'PIECE');
-      setAbattuMode('direct');
-      setLotId(preset ? preset.id : '');
-      setPoolId('');
+      const presetKey: PosProduct = preset
+        ? preset.type === 'PONDEUSE'
+          ? 'OEUF'
+          : 'PIECE'
+        : isBoutique
+          ? 'ABATTU_PIECE'
+          : 'PIECE';
+      setProduct(presetKey);
+      setAbattuMode(isBoutique ? 'transfer' : 'direct');
+      setLotId(isBoutique ? '' : preset ? preset.id : '');
+      setPoolId(isBoutique && presetTransferId ? presetTransferId : '');
       setQty(0);
-      setPrice(productMeta(preset?.type === 'PONDEUSE' ? 'OEUF' : 'PIECE').unitPrice);
+      setPrice(productMeta(posKind, presetKey).unitPrice);
     }
     setError(null);
-  }, [visible, initial, presetBatchId, lots]);
+  }, [visible, initial, presetBatchId, presetTransferId, lots, isBoutique, posKind]);
 
   const isAbattu = product === 'ABATTU_PIECE' || product === 'ABATTU_KG';
   const isKg = product === 'KG' || product === 'ABATTU_KG';
+  const meta = productMeta(posKind, product);
 
   const sellable = lots.filter(
     (b) => b.quantityAlive > 0 && (b.status === 'EN_VENTE' || b.status === 'ACTIF'),
   );
   const poolList = pools.filter((p) => p.status === 'PROCESSED' && p.slaughterType === 'ABATTU' && (p.carcassesAvailable ?? 0) > 0);
+  const transferList = transfers.filter(
+    (t) => t.status === 'TRANSFERRED' && transferRemaining(t.quantity, t.quantitySold) > 0,
+  );
 
   const pool = poolList.find((p) => p.id === poolId);
   const lot = sellable.find((b) => b.id === lotId);
+  const transfer = transferList.find((t) => t.id === poolId);
 
   const flockUsed = (committed ?? [])
     .filter((l) => l.uid !== initial?.uid && l.batchId === lotId && l.slaughterOrderId == null)
     .reduce((a, l) => a + l.qty, 0);
   const poolUsed = (committed ?? [])
-    .filter((l) => l.uid !== initial?.uid && l.slaughterOrderId === poolId)
+    .filter((l) => l.uid !== initial?.uid && l.slaughterOrderId === poolId && l.transferId == null)
+    .reduce((a, l) => a + l.qty, 0);
+  const transferUsed = (committed ?? [])
+    .filter((l) => l.uid !== initial?.uid && l.transferId === poolId)
     .reduce((a, l) => a + l.qty, 0);
 
   const maxQty =
     product === 'OEUF' ? 200 :
     product === 'AUTRE' ? 1000 :
-    abattuMode === 'pool' ? Math.max((poolList.find((p) => p.id === poolId)?.carcassesAvailable ?? 0) - poolUsed, 0) :
-    lot != null ? Math.max(lot.quantityAlive - flockUsed, 0) :
-    (product === 'KG' || product === 'ABATTU_KG' ? 1000 : 200);
+    abattuMode === 'transfer' && transfer
+      ? Math.max(transferRemaining(transfer.quantity, transfer.quantitySold) - transferUsed, 0)
+      : abattuMode === 'pool'
+        ? Math.max((pool?.carcassesAvailable ?? 0) - poolUsed, 0)
+        : lot != null
+          ? Math.max(lot.quantityAlive - flockUsed, 0)
+          : (product === 'KG' || product === 'ABATTU_KG' ? 1000 : 200);
 
   const preview = (() => {
     const previewLine: PosLine = {
       uid: initial?.uid ?? 'preview',
       product,
-      batchId: abattuMode === 'pool' ? (pool?.batchId ?? lotId) : lotId || undefined,
-      slaughterOrderId: abattuMode === 'pool' ? poolId : undefined,
+      batchId:
+        abattuMode === 'transfer'
+          ? transfer?.batchId
+          : abattuMode === 'pool'
+            ? (pool?.batchId ?? lotId)
+            : lotId || undefined,
+      slaughterOrderId:
+        abattuMode === 'transfer'
+          ? (transfer?.slaughterOrderId ?? undefined)
+          : (pool?.id ?? undefined),
+      transferId: abattuMode === 'transfer' ? transfer?.id : undefined,
       qty,
       unitPriceFcfa: price,
-      label: productMeta(product).label,
+      label: meta.label,
     };
     return lineAmount(previewLine);
   })();
@@ -128,6 +155,15 @@ export function PosLineSheet({ visible, lots, pools, committed, initial, presetB
   const selectProduct = (key: PosProduct) => {
     setProduct(key);
     setError(null);
+    setPrice(productMeta(posKind, key).unitPrice);
+    if (isBoutique) {
+      if (key === 'ABATTU_PIECE' || key === 'ABATTU_KG') {
+        setAbattuMode('transfer');
+      } else {
+        setPoolId('');
+      }
+      return;
+    }
     if (key === 'ABATTU_PIECE' || key === 'ABATTU_KG') {
       setAbattuMode(poolList.length > 0 ? 'pool' : 'direct');
       return;
@@ -148,6 +184,10 @@ export function PosLineSheet({ visible, lots, pools, committed, initial, presetB
       setError('Indiquez un prix unitaire.');
       return;
     }
+    if (isAbattu && abattuMode === 'transfer' && !transfer) {
+      setError('Sélectionnez une réserve de carcasses (transfert ferme → boutique).');
+      return;
+    }
     if (isAbattu && abattuMode === 'pool' && !pool) {
       setError('Sélectionnez un lot de carcasses (abattoir).');
       return;
@@ -163,23 +203,152 @@ export function PosLineSheet({ visible, lots, pools, committed, initial, presetB
     onSave({
       uid: initial?.uid ?? `new-${Date.now()}-${qty}`,
       product,
-      batchId: abattuMode === 'pool' ? (pool?.batchId ?? lotId) : lotId || undefined,
-      slaughterOrderId: abattuMode === 'pool' ? poolId : undefined,
+      batchId:
+        abattuMode === 'transfer'
+          ? (transfer?.batchId ?? transfer?.slaughterOrder.batchId)
+          : abattuMode === 'pool'
+            ? (pool?.batchId ?? lotId)
+            : lotId || undefined,
+      slaughterOrderId:
+        abattuMode === 'transfer'
+          ? (transfer?.slaughterOrderId ?? undefined)
+          : (pool?.id ?? undefined),
+      transferId: abattuMode === 'transfer' ? transfer?.id : undefined,
       qty,
       unitPriceFcfa: price,
-      label: productMeta(product).label,
+      label: meta.label,
     });
     onClose();
   };
 
-  const meta = productMeta(product);
+  const sourceSelector = isBoutique ? (
+    <View>
+      <AppText size="label" color="muted">
+        RÉSERVE EN BOUTIQUE
+      </AppText>
+      <View style={styles.rowWrap}>
+        {transferList.map((t) => (
+          <Pressable
+            key={t.id}
+            onPress={() => {
+              setPoolId(t.id);
+              setError(null);
+            }}
+            accessibilityRole="button">
+            <Chip
+              label={`${t.slaughterOrder.batch.batchName ?? t.batchId} · ${fmt(transferRemaining(t.quantity, t.quantitySold))} carc.`}
+              tone="accent"
+              selected={t.id === poolId}
+              style={styles.chip}
+            />
+          </Pressable>
+        ))}
+        {transferList.length === 0 ? (
+          <AppText size="caption" color="muted">
+            Aucune carcasse en boutique : transférez-en depuis la ferme pour vendre de l’abattu ici.
+          </AppText>
+        ) : null}
+      </View>
+      {transfer ? (
+        <AppText size="caption" color="faint">
+          {transfer.slaughterOrder.referenceNumber} · {SPECIES_ICONS[transfer.slaughterOrder.batch.species] ?? ''}{' '}
+          {speciesLabel(transfer.slaughterOrder.batch.species)} · reçu le {transfer.createdAt.slice(0, 10)}
+        </AppText>
+      ) : null}
+    </View>
+  ) : isAbattu && poolList.length > 0 ? (
+    <View>
+      <AppText size="label" color="muted">
+        SOURCE
+      </AppText>
+      <View style={{ marginTop: 6 }}>
+        <Segmented<AbattuMode>
+          value={abattuMode}
+          onChange={(m) => {
+            setAbattuMode(m);
+            setError(null);
+          }}
+          options={[
+            { key: 'direct', label: 'Abattage direct', tint: palette.accent[600] },
+            { key: 'pool', label: `Carcasses · ${fmt(poolList.reduce((a, p) => a + (p.carcassesAvailable ?? 0), 0))}`, tint: palette.brand[600] },
+          ]}
+        />
+      </View>
+    </View>
+  ) : null;
+
+  const poolSelector =
+    abattuMode === 'pool' ? (
+      <View>
+        <AppText size="label" color="muted">
+          LOT DE CARCASSES (ABATTOIR)
+        </AppText>
+        <View style={styles.rowWrap}>
+          {poolList.map((p) => (
+            <Pressable
+              key={p.id}
+              onPress={() => {
+                setPoolId(p.id);
+                setError(null);
+              }}
+              accessibilityRole="button">
+              <Chip
+                label={`${p.batch.batchName ?? p.batch.id} · ${fmt(p.carcassesAvailable ?? 0)} carc.`}
+                tone={isBoutique ? 'accent' : 'brand'}
+                selected={p.id === poolId}
+                style={styles.chip}
+              />
+            </Pressable>
+          ))}
+          {poolList.length === 0 ? (
+            <AppText size="caption" color="muted">
+              Aucune carcasse disponible en ce moment.
+            </AppText>
+          ) : null}
+        </View>
+        {pool ? (
+          <AppText size="caption" color="faint">
+            {pool.batch.batchName} · {SPECIES_ICONS[pool.batch.species] ?? ''} {speciesLabel(pool.batch.species)} · {pool.referenceNumber}
+          </AppText>
+        ) : null}
+      </View>
+    ) : abattuMode === 'direct' ? (
+      <View>
+        <AppText size="label" color="muted">
+          LOT
+        </AppText>
+        <View style={styles.rowWrap}>
+          {sellable.map((b) => (
+            <Pressable
+              key={b.id}
+              onPress={() => {
+                setLotId(b.id);
+                setError(null);
+              }}
+              accessibilityRole="button">
+              <Chip
+                label={`${SPECIES_ICONS[b.species] ?? ''} ${b.customSpecies ?? speciesLabel(b.species)} · ${fmt(b.quantityAlive)}`}
+                tone={b.status === 'EN_VENTE' ? 'green' : 'brand'}
+                selected={b.id === lotId}
+                style={styles.chip}
+              />
+            </Pressable>
+          ))}
+          {sellable.length === 0 ? (
+            <AppText size="caption" color="muted">
+              Aucun lot à vendre.
+            </AppText>
+          ) : null}
+        </View>
+      </View>
+    ) : null;
 
   return (
     <Sheet
       visible={visible}
       onClose={onClose}
       title={initial ? 'Modifier l’article' : 'Ajouter un article'}
-      subtitle="Produit, lot et quantité"
+      subtitle={isBoutique ? 'Produit boutique, réserve et quantité' : 'Produit, lot et quantité'}
       icon={<CreditCard size={22} color={color.accent[600]} />}
       accentColor={color.accent[400]}>
       <View style={{ gap: spacing.lg }}>
@@ -188,104 +357,27 @@ export function PosLineSheet({ visible, lots, pools, committed, initial, presetB
             PRODUIT
           </AppText>
           <View style={styles.rowWrap}>
-            {PRODUCTS.map((p) => (
+            {products.map((p) => (
               <Pressable key={p.key} onPress={() => selectProduct(p.key)} accessibilityRole="button">
                 <Chip label={p.label} tone={isAbattu ? 'amber' : 'accent'} selected={p.key === product} style={styles.chip} />
               </Pressable>
             ))}
           </View>
+          {isBoutique ? (
+            <AppText size="caption" color="faint" style={{ marginTop: 4 }}>
+              Boutique : carcasses transférées + œufs uniquement (pas de volaille sur pied).
+            </AppText>
+          ) : null}
         </View>
 
-        {isAbattu && poolList.length > 0 ? (
-          <View>
-            <AppText size="label" color="muted">
-              SOURCE
-            </AppText>
-            <View style={{ marginTop: 6 }}>
-              <Segmented<AbattuMode>
-                value={abattuMode}
-                onChange={(m) => {
-                  setAbattuMode(m);
-                  setError(null);
-                }}
-                options={[
-                  { key: 'direct', label: 'Abattage direct', tint: palette.accent[600] },
-                  { key: 'pool', label: `Carcasses · ${fmt(poolList.reduce((a, p) => a + (p.carcassesAvailable ?? 0), 0))}`, tint: palette.brand[600] },
-                ]}
-              />
-            </View>
-          </View>
-        ) : null}
+        {isAbattu ? sourceSelector : null}
 
-        {abattuMode === 'pool' ? (
-          <View>
-            <AppText size="label" color="muted">
-              LOT DE CARCASSES (ABATTOIR)
-            </AppText>
-            <View style={styles.rowWrap}>
-              {poolList.map((p) => (
-                <Pressable
-                  key={p.id}
-                  onPress={() => {
-                    setPoolId(p.id);
-                    setError(null);
-                  }}
-                  accessibilityRole="button">
-                  <Chip
-                    label={`${p.batch.batchName ?? p.batch.id} · ${fmt(p.carcassesAvailable ?? 0)} carc.`}
-                    tone="brand"
-                    selected={p.id === poolId}
-                    style={styles.chip}
-                  />
-                </Pressable>
-              ))}
-              {poolList.length === 0 ? (
-                <AppText size="caption" color="muted">
-                  Aucune carcasse disponible en ce moment.
-                </AppText>
-              ) : null}
-            </View>
-            {pool ? (
-              <AppText size="caption" color="faint">
-                {pool.batch.batchName} · {SPECIES_ICONS[pool.batch.species] ?? ''} {speciesLabel(pool.batch.species)} · {pool.referenceNumber}
-              </AppText>
-            ) : null}
-          </View>
-        ) : (
-          <View>
-            <AppText size="label" color="muted">
-              LOT
-            </AppText>
-            <View style={styles.rowWrap}>
-              {sellable.map((b) => (
-                <Pressable
-                  key={b.id}
-                  onPress={() => {
-                    setLotId(b.id);
-                    setError(null);
-                  }}
-                  accessibilityRole="button">
-                  <Chip
-                    label={`${lotTitle(b)} · ${fmt(b.quantityAlive)}`}
-                    tone={b.status === 'EN_VENTE' ? 'green' : 'brand'}
-                    selected={b.id === lotId}
-                    style={styles.chip}
-                  />
-                </Pressable>
-              ))}
-              {sellable.length === 0 ? (
-                <AppText size="caption" color="muted">
-                  Aucun lot à vendre.
-                </AppText>
-              ) : null}
-            </View>
-          </View>
-        )}
+        {isAbattu ? poolSelector : null}
 
         <Card tone="default" style={{ gap: spacing.sm }}>
           <View style={styles.priceRow}>
             <AppText size="caption" color="muted">
-              PRIX UNITAIRE
+              PRIX UNITAIRE · CONSEILLÉ {fmt(meta.unitPrice)} FCFA
             </AppText>
             <View style={styles.priceInputWrap}>
               <TextInput
@@ -319,6 +411,11 @@ export function PosLineSheet({ visible, lots, pools, committed, initial, presetB
             suffix={meta.unit}
             placeholder="0"
           />
+          {abattuMode === 'transfer' && transfer ? (
+            <AppText size="caption" color="muted">
+              {fmt(transferRemaining(transfer.quantity, transfer.quantitySold))} carcasse(s) restante(s) sur cette réserve
+            </AppText>
+          ) : null}
         </Card>
 
         {error ? (

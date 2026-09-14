@@ -4,10 +4,12 @@ import {
   acknowledgeAlert,
   buildDailyEntryPayload,
   buildSaleItem,
+  cancelCarcassTransfer,
   cancelProphylaxis,
   cancelSlaughterOrder,
   closeCaisse,
   completeProphylaxis,
+  createCarcassTransfer,
   createCustomer,
   createDailyEntry,
   createFarmMember,
@@ -245,6 +247,41 @@ describe('buildSaleItem', () => {
       expect(r.item.batchId).toBeUndefined();
     } else {
       throw new Error('AUTRE doit réussir');
+    }
+  });
+
+  it('ABATTU_PIECE : source abattoir ou transfert boutique', () => {
+    const pool = buildSaleItem('ABATTU_PIECE', 4, 3200, 'lot-1', { sourceSlaughterOrderId: 'ab-1' });
+    if ('item' in pool) {
+      expect(pool.item).toMatchObject({ productType: 'ABATTU_PIECE', sourceSlaughterOrderId: 'ab-1' });
+      expect(pool.item.carcassTransferId).toBeUndefined();
+    } else {
+      throw new Error('ABATTU pool doit réussir');
+    }
+    const transfer = buildSaleItem('ABATTU_PIECE', 4, 3200, 'lot-1', { carcassTransferId: 'tr-1' });
+    if ('item' in transfer) {
+      expect(transfer.item).toMatchObject({ productType: 'ABATTU_PIECE', carcassTransferId: 'tr-1' });
+      expect(transfer.item.sourceSlaughterOrderId).toBeUndefined();
+    } else {
+      throw new Error('ABATTU transfert doit réussir');
+    }
+  });
+
+  it('ABATTU_KG : pièces comptées, transfert boutique porté', () => {
+    const r = buildSaleItem('ABATTU_KG', 6, 2800, 'lot-1', {
+      avgWeightKg: 1.8,
+      carcassTransferId: 'tr-9',
+    });
+    if ('item' in r) {
+      expect(r.item).toMatchObject({
+        productType: 'ABATTU_KG',
+        unit: 'KG',
+        quantity: 10.8,
+        pieceCount: 6,
+        carcassTransferId: 'tr-9',
+      });
+    } else {
+      throw new Error('ABATTU_KG transfert doit réussir');
     }
   });
 });
@@ -598,5 +635,24 @@ describe('createInput', () => {
       numberOfBags: 10,
       kind: 'ALIMENT',
     });
+  });
+});
+
+describe('transferts de carcasses ferme → boutique', () => {
+  it('createCarcassTransfer POSTe le transfert', async () => {
+    const fetchMock = stubFetch(async () => jsonResponse(201, { id: 'tr-1' }));
+    await createCarcassTransfer('f-1', { slaughterOrderId: 'ab-1', pointOfSaleId: 'pdv-2', quantity: 12 });
+    const call = readCall(fetchMock);
+    expect(call.url).toBe('http://10.0.0.5:3000/farms/f-1/carcass-transfers');
+    expect(call.init.method).toBe('POST');
+    expect(JSON.parse(call.init.body as string)).toEqual({ slaughterOrderId: 'ab-1', pointOfSaleId: 'pdv-2', quantity: 12 });
+  });
+
+  it('cancelCarcassTransfer POSTe l’annulation sur le transfert', async () => {
+    const fetchMock = stubFetch(async () => jsonResponse(200, { id: 'tr-1', status: 'CANCELLED' }));
+    await cancelCarcassTransfer('f-1', 'tr-1');
+    const call = readCall(fetchMock);
+    expect(call.url).toBe('http://10.0.0.5:3000/farms/f-1/carcass-transfers/tr-1/cancel');
+    expect(call.init.method).toBe('POST');
   });
 });

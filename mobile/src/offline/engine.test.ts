@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { jsonResponse, readCall, stubFetch, stubFetchSequence } from '@/api/test-utils';
 import { clearSession } from '@/api/token';
 
-import { createDailyEntryQueued, createSaleQueued, flushQueue } from './engine';
+import { cancelCarcassTransferQueued, createCarcassTransferQueued, createDailyEntryQueued, createSaleQueued, flushQueue } from './engine';
 import { clearQueue, enqueueOp, getQueueVersion, loadOps, removeOp, subscribeQueue } from './store';
 
 vi.mock('expo-constants', () => ({
@@ -169,6 +169,32 @@ describe('capture hors-ligne — enfile et rejette', () => {
     expect(res).toEqual({ status: 'sent', reference: 'VTE-20260828-000001' });
     expect(loadOps()).toEqual([]);
   });
+
+  it('createCarcassTransferQueued : réseau → mis en attente avec le bon kind', async () => {
+    stubFetch(networkError);
+    const res = await createCarcassTransferQueued('f-1', { slaughterOrderId: 'ab-1', pointOfSaleId: 'pdv-2', quantity: 12 });
+    expect(res).toEqual({ status: 'queued' });
+    const [op] = loadOps();
+    expect(op.kind).toBe('carcass-transfer-create');
+    expect(op.payload).toEqual({ slaughterOrderId: 'ab-1', pointOfSaleId: 'pdv-2', quantity: 12 });
+  });
+
+  it('cancelCarcassTransferQueued : réseau → mis en attente', async () => {
+    stubFetch(networkError);
+    const res = await cancelCarcassTransferQueued('f-1', 'tr-1');
+    expect(res).toEqual({ status: 'queued' });
+    const [op] = loadOps();
+    expect(op.kind).toBe('carcass-transfer-cancel');
+    expect(op.payload).toEqual({ transferId: 'tr-1' });
+  });
+
+  it('createCarcassTransferQueued : en ligne → envoyé, file vide', async () => {
+    const fetchMock = stubFetch(async () => jsonResponse(201, { id: 'tr-1' }));
+    const res = await createCarcassTransferQueued('f-1', { slaughterOrderId: 'ab-1', pointOfSaleId: 'pdv-2', quantity: 12 });
+    expect(res).toEqual({ status: 'sent' });
+    expect(loadOps()).toEqual([]);
+    expect(readCall(fetchMock).url).toContain('/farms/f-1/carcass-transfers');
+  });
 });
 
 describe('flushQueue — synchronisation FIFO', () => {
@@ -191,6 +217,17 @@ describe('flushQueue — synchronisation FIFO', () => {
     expect(url(0)).toContain('/caisse/current');
     expect(url(1)).toContain('/sales');
     expect(url(2)).toContain('/daily-entries');
+  });
+
+  it('remonte un transfert de carcasses mis en attente', async () => {
+    stubFetch(networkError);
+    await createCarcassTransferQueued('f-1', { slaughterOrderId: 'ab-1', pointOfSaleId: 'pdv-2', quantity: 6 });
+
+    const fetchMock = stubFetch(async () => jsonResponse(201, { id: 'tr-1' }));
+    const summary = await flushQueue();
+    expect(summary).toEqual({ synced: 1, dropped: 0, remaining: 0 });
+    expect(loadOps()).toEqual([]);
+    expect(readCall(fetchMock).url).toBe('http://192.168.1.10:3000/farms/f-1/carcass-transfers');
   });
 
   it('s’arrête à la première erreur réseau, ops conservées', async () => {

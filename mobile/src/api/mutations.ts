@@ -118,6 +118,8 @@ export interface BuildSaleItemOptions {
   avgWeightKg?: number;
   /** Source carcasse (abattage) pour ABATTU_PIECE/ABATTU_KG. */
   sourceSlaughterOrderId?: string;
+  /** Transfert de carcasses ferme → boutique pour ABATTU_PIECE/ABATTU_KG. */
+  carcassTransferId?: string;
 }
 
 /** Poids moyen retenu faute de pesée (poulet de chair, Gabon). */
@@ -141,6 +143,7 @@ export function buildSaleItem(
         unitPriceFcfa,
         batchId,
         ...(opts?.sourceSlaughterOrderId ? { sourceSlaughterOrderId: opts.sourceSlaughterOrderId } : {}),
+        ...(opts?.carcassTransferId ? { carcassTransferId: opts.carcassTransferId } : {}),
       },
     };
   }
@@ -158,6 +161,7 @@ export function buildSaleItem(
         batchId,
         pieceCount: quantity,
         ...(opts?.sourceSlaughterOrderId ? { sourceSlaughterOrderId: opts.sourceSlaughterOrderId } : {}),
+        ...(opts?.carcassTransferId ? { carcassTransferId: opts.carcassTransferId } : {}),
       },
     };
   }
@@ -229,6 +233,8 @@ export interface SaleItemPayload {
   pieceCount?: number;
   /** Carcasse pool (abattage) — requise pour ABATTU_PIECE/ABATTU_KG. */
   sourceSlaughterOrderId?: string;
+  /** Transfert de carcasses (vente ABATTU depuis une boutique). */
+  carcassTransferId?: string;
 }
 
 export interface SalePayload {
@@ -699,6 +705,27 @@ export function updatePointOfSale(farmId: string, pointOfSaleId: string, input: 
 export function deletePointOfSale(farmId: string, pointOfSaleId: string): Promise<unknown> {
   return apiFetch(`/farms/${farmId}/points-of-sale/${pointOfSaleId}`, {
     method: 'DELETE',
+  });
+}
+
+// ── Transferts de carcasses ferme → boutique ─────────────────
+
+export interface CarcassTransferInput {
+  slaughterOrderId: string;
+  pointOfSaleId: string;
+  quantity: number;
+}
+
+export function createCarcassTransfer(farmId: string, input: CarcassTransferInput): Promise<unknown> {
+  return apiFetch(`/farms/${farmId}/carcass-transfers`, {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export function cancelCarcassTransfer(farmId: string, transferId: string): Promise<unknown> {
+  return apiFetch(`/farms/${farmId}/carcass-transfers/${transferId}/cancel`, {
+    method: 'POST',
   });
 }
 

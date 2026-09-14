@@ -46,6 +46,7 @@ export function buildPosSaleItems(lines: PosLine[]): SaleItemPayload[] {
     const built = buildSaleItem(line.product, line.qty, line.unitPriceFcfa, line.batchId ?? null, {
       avgWeightKg: DEFAULT_AVG_WEIGHT_KG,
       ...(line.slaughterOrderId ? { sourceSlaughterOrderId: line.slaughterOrderId } : {}),
+      ...(line.transferId ? { carcassTransferId: line.transferId } : {}),
     });
     if ('item' in built) {
       items.push(built.item);

@@ -1,6 +1,8 @@
 import { ApiError } from '@/api/client';
 import {
   cancelOrder,
+  cancelCarcassTransfer,
+  createCarcassTransfer,
   createDailyEntry,
   createInput,
   createOrder,
@@ -12,6 +14,7 @@ import {
   recordFeedLoss,
   recordOrderPayment,
   updatePointOfSale,
+  type CarcassTransferInput,
   type CreateInputLotInput,
   type CreateOrderInput,
   type DailyEntryPayload,
@@ -314,6 +317,54 @@ export async function deletePointOfSaleQueued(farmId: string, pointOfSaleId: str
   }
 }
 
+// ── Transferts de carcasses ferme → boutique ─────────────────
+
+export async function createCarcassTransferQueued(
+  farmId: string,
+  input: CarcassTransferInput,
+): Promise<SendResult> {
+  try {
+    await createCarcassTransfer(farmId, input);
+    void flushQueue();
+    return { status: 'sent' };
+  } catch (e) {
+    if (shouldQueue(e)) {
+      enqueueOp({
+        id: nextId('carcass-transfer-create'),
+        kind: 'carcass-transfer-create',
+        farmId,
+        payload: input,
+        createdAt: new Date().toISOString(),
+      });
+      return { status: 'queued' };
+    }
+    throw e;
+  }
+}
+
+export async function cancelCarcassTransferQueued(
+  farmId: string,
+  transferId: string,
+): Promise<SendResult> {
+  try {
+    await cancelCarcassTransfer(farmId, transferId);
+    void flushQueue();
+    return { status: 'sent' };
+  } catch (e) {
+    if (shouldQueue(e)) {
+      enqueueOp({
+        id: nextId('carcass-transfer-cancel'),
+        kind: 'carcass-transfer-cancel',
+        farmId,
+        payload: { transferId },
+        createdAt: new Date().toISOString(),
+      });
+      return { status: 'queued' };
+    }
+    throw e;
+  }
+}
+
 async function processOne(op: OfflineOp): Promise<'ok' | 'retry' | 'dropped'> {
   try {
     if (op.kind === 'daily-entry') {
@@ -340,6 +391,10 @@ async function processOne(op: OfflineOp): Promise<'ok' | 'retry' | 'dropped'> {
       await updatePointOfSale(op.farmId, p.pointOfSaleId, p.input);
     } else if (op.kind === 'pdv-delete') {
       await deletePointOfSale(op.farmId, (op.payload as { pointOfSaleId: string }).pointOfSaleId);
+    } else if (op.kind === 'carcass-transfer-create') {
+      await createCarcassTransfer(op.farmId, op.payload as CarcassTransferInput);
+    } else if (op.kind === 'carcass-transfer-cancel') {
+      await cancelCarcassTransfer(op.farmId, (op.payload as { transferId: string }).transferId);
     } else {
       await ensureCashOpenOrRetry(op.farmId);
       await createSale(op.farmId, op.payload as SalePayload);

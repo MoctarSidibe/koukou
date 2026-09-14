@@ -25,6 +25,7 @@ import type {
   OverviewPnl,
   PondageSummary,
   PointOfSale,
+  CarcassTransfer,
   Promotion,
   ProphylaxisEvent,
   ReferenceConstant,
@@ -114,8 +115,8 @@ export function fetchTreatments(farmId: string, batchId: string): Promise<Treatm
   return live.fetchTreatments(farmId, batchId);
 }
 
-export function fetchBatchHealth(farmId: string, batchId: string): Promise<BatchHealth> {
-  return live.fetchBatchHealth(farmId, batchId);
+export function fetchBatchHealth(farmId: string, batchId: string, asOf?: string): Promise<BatchHealth> {
+  return live.fetchBatchHealth(farmId, batchId, asOf);
 }
 
 export function fetchHealthEvents(farmId: string, batchId: string): Promise<HealthEvent[]> {
@@ -152,6 +153,13 @@ export function fetchPointsOfSale(farmId: string): Promise<PointOfSale[]> {
 
 export function fetchPointOfSale(farmId: string, pointOfSaleId: string): Promise<PointOfSale> {
   return live.fetchPointOfSale(farmId, pointOfSaleId);
+}
+
+export function fetchCarcassTransfers(
+  farmId: string,
+  pointOfSaleId?: string,
+): Promise<CarcassTransfer[]> {
+  return live.fetchCarcassTransfers(farmId, pointOfSaleId);
 }
 
 export function fetchRentabiliteOverview(farmId: string, from?: string, to?: string): Promise<OverviewPnl> {
