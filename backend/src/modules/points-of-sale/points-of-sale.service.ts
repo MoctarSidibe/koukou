@@ -87,6 +87,18 @@ export class PointsOfSaleService {
     return pos.id;
   }
 
+  /** Retourne l'entité point de vente active (ou null) pour comprendre son type. */
+  async resolveEntity(
+    farmId: string,
+    pointOfSaleId: string,
+  ): Promise<PointOfSale | null> {
+    const pos = await this.repo.findOne({
+      where: { id: pointOfSaleId, farmId },
+    });
+    if (!pos || pos.isActive === false) return null;
+    return pos;
+  }
+
   async create(
     user: AuthUser,
     farmId: string,

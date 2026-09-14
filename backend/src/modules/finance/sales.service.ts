@@ -32,6 +32,9 @@ import { BatchStatus } from '../../common/enums/batch-type.enum.js';
 import { SlaughterOrder } from '../slaughter/entities/slaughter-order.entity.js';
 import { SlaughterStatus } from '../../common/enums/slaughter-status.enum.js';
 import { SlaughterType } from '../../common/enums/slaughter-type.enum.js';
+import { CarcassTransfer } from '../points-of-sale/entities/carcass-transfer.entity.js';
+import { CarcassTransferStatus } from '../../common/enums/carcass-transfer-status.enum.js';
+import { PointOfSaleKind } from '../../common/enums/point-of-sale-kind.enum.js';
 import { DailyEntry } from '../daily-entries/entities/daily-entry.entity.js';
 import { Customer } from './entities/customer.entity.js';
 import { CashSession } from './entities/cash-session.entity.js';
@@ -167,6 +170,12 @@ export class SalesService {
         farmId,
         dto.pointOfSaleId,
       );
+      const resolvedPointOfSale = resolvedPointOfSaleId
+        ? await this.pointsOfSaleService.resolveEntity(
+            farmId,
+            resolvedPointOfSaleId,
+          )
+        : null;
 
       if (dto.batchId) {
         await this.assertBatchInFarm(em, farmId, dto.batchId);
@@ -196,6 +205,9 @@ export class SalesService {
           sale.id,
           user,
           itemDto as any,
+          resolvedPointOfSale
+            ? { id: resolvedPointOfSale.id, kind: resolvedPointOfSale.kind }
+            : null,
         );
         total += item.amountFcfa;
         items.push(item);
@@ -336,18 +348,20 @@ export class SalesService {
     farmId: string,
     saleId: string,
     user: AuthUser,
-    dto: {
-      productType: SaleItemProductType;
-      label?: string;
-      quantity: number;
-      unit?: SaleItemUnit;
-      pieceCount?: number;
-      unitPriceFcfa: number;
-      batchId?: string;
-      inputLotId?: string;
-      sourceSlaughterOrderId?: string;
-    },
-  ): Promise<SaleItem> {
+dto: {
+        productType: SaleItemProductType;
+        label?: string;
+        quantity: number;
+        unit?: SaleItemUnit;
+        pieceCount?: number;
+        unitPriceFcfa: number;
+        batchId?: string;
+        inputLotId?: string;
+        sourceSlaughterOrderId?: string;
+        carcassTransferId?: string;
+      },
+      pos?: { id: string; kind: PointOfSaleKind } | null,
+    ): Promise<SaleItem> {
     const itemRepo = em.getRepository(SaleItem);
     const batchRepo = em.getRepository(ProductionBatch);
     const productType = dto.productType;
@@ -360,12 +374,20 @@ export class SalesService {
     let inputLotId: string | null = null;
     let sourceSlaughterOrderId: string | null =
       dto.sourceSlaughterOrderId ?? null;
+    let carcassTransferId: string | null = dto.carcassTransferId ?? null;
     let batchValidated = false;
 
     const isAbattu =
       productType === SaleItemProductType.ABATTU_PIECE ||
       productType === SaleItemProductType.ABATTU_KG;
     const fromCarcassPool = isAbattu && sourceSlaughterOrderId != null;
+    const isBoutiqueSale = pos?.kind === PointOfSaleKind.BOUTIQUE;
+
+    if (isBoutiqueSale && carcassTransferId && !fromCarcassPool) {
+      throw new BadRequestException(
+        'Une vente de carcasses en boutique doit référencer un ordre d’abattage source (sourceSlaughterOrderId).',
+      );
+    }
 
     if (productType === SaleItemProductType.POULET_PIECE ||
         productType === SaleItemProductType.ABATTU_PIECE) {
@@ -389,13 +411,29 @@ export class SalesService {
       }
       const birds = Math.ceil(quantity);
       if (fromCarcassPool) {
-        const order = await this.decrementCarcassPool(
-          em,
-          farmId,
-          sourceSlaughterOrderId!,
-          birds,
-        );
-        sourceSlaughterOrderId = order.id;
+        if (isBoutiqueSale) {
+          const transfer = await this.decrementCarcassTransfer(
+            em,
+            farmId,
+            dto.carcassTransferId,
+            pos?.id ?? '',
+            birds,
+          );
+          carcassTransferId = transfer.id;
+        } else {
+          if (carcassTransferId) {
+            throw new BadRequestException(
+              'Le transfert de carcasses ne s’applique qu’aux ventes réalisées dans une boutique.',
+            );
+          }
+          const order = await this.decrementCarcassPool(
+            em,
+            farmId,
+            sourceSlaughterOrderId!,
+            birds,
+          );
+          sourceSlaughterOrderId = order.id;
+        }
         pieceCount = birds;
       } else {
         const batch = await this.loadBatch(batchRepo, farmId, batchId);
@@ -431,13 +469,29 @@ export class SalesService {
         );
       }
       if (fromCarcassPool) {
-        const order = await this.decrementCarcassPool(
-          em,
-          farmId,
-          sourceSlaughterOrderId!,
-          dto.pieceCount,
-        );
-        sourceSlaughterOrderId = order.id;
+        if (isBoutiqueSale) {
+          const transfer = await this.decrementCarcassTransfer(
+            em,
+            farmId,
+            dto.carcassTransferId,
+            pos?.id ?? '',
+            dto.pieceCount,
+          );
+          carcassTransferId = transfer.id;
+        } else {
+          if (carcassTransferId) {
+            throw new BadRequestException(
+              'Le transfert de carcasses ne s’applique qu’aux ventes réalisées dans une boutique.',
+            );
+          }
+          const order = await this.decrementCarcassPool(
+            em,
+            farmId,
+            sourceSlaughterOrderId!,
+            dto.pieceCount,
+          );
+          sourceSlaughterOrderId = order.id;
+        }
         pieceCount = dto.pieceCount;
       } else {
         const batch = await this.loadBatch(batchRepo, farmId, batchId);
@@ -508,6 +562,7 @@ export class SalesService {
         batchId,
         inputLotId,
         sourceSlaughterOrderId,
+        carcassTransferId,
       }),
     );
 
@@ -651,6 +706,69 @@ export class SalesService {
     }
     order.carcassesAvailable -= birds;
     return em.getRepository(SlaughterOrder).save(order);
+  }
+
+  /** Décrémente le pool d’une boutique : consomme un transfert ferme → boutique. */
+  private async decrementCarcassTransfer(
+    em: EntityManager,
+    farmId: string,
+    transferId: string | undefined,
+    pointOfSaleId: string,
+    birds: number,
+  ): Promise<CarcassTransfer> {
+    if (!transferId) {
+      throw new BadRequestException(
+        'Vente en boutique : indiquer le transfert de carcasses (carcassTransferId).',
+      );
+    }
+    const transfer = await em
+      .getRepository(CarcassTransfer)
+      .createQueryBuilder('t')
+      .setLock('pessimistic_write')
+      .where('t.id = :id', { id: transferId })
+      .andWhere('t.farm_id = :farmId', { farmId })
+      .andWhere('t.point_of_sale_id = :pointOfSaleId', { pointOfSaleId })
+      .getOne();
+    if (!transfer) {
+      throw new BadRequestException(
+        'Transfert de carcasses introuvable pour ce point de vente.',
+      );
+    }
+    if (transfer.status !== CarcassTransferStatus.TRANSFERRED) {
+      throw new BadRequestException(
+        'Ce transfert de carcasses est annulé.',
+      );
+    }
+    const remaining = transfer.quantity - transfer.quantitySold;
+    if (remaining < birds) {
+      throw new BadRequestException(
+        `Carcasses insuffisantes en boutique : ${remaining} carcasse(s) restante(s) sur ce transfert, vente demandée ${birds}.`,
+      );
+    }
+    transfer.quantitySold += birds;
+    return em.getRepository(CarcassTransfer).save(transfer);
+  }
+
+  /** Réintègre les carcasses vendues à un transfert boutique (annulation vente). */
+  private async restoreCarcassTransfer(
+    em: EntityManager,
+    farmId: string,
+    transferId: string,
+    birds: number,
+  ): Promise<void> {
+    if (birds <= 0) return;
+    const transfer = await em
+      .getRepository(CarcassTransfer)
+      .createQueryBuilder('t')
+      .setLock('pessimistic_write')
+      .where('t.id = :id', { id: transferId })
+      .andWhere('t.farm_id = :farmId', { farmId })
+      .getOne();
+    if (!transfer || transfer.status !== CarcassTransferStatus.TRANSFERRED) {
+      return;
+    }
+    transfer.quantitySold = Math.max(0, transfer.quantitySold - birds);
+    await em.getRepository(CarcassTransfer).save(transfer);
   }
 
   /** Réintègre des carcasses sur l’ordre d’abattage (annulation de vente traçable). */
@@ -906,7 +1024,15 @@ export class SalesService {
       for (const item of items) {
         if (item.productType === SaleItemProductType.ABATTU_PIECE ||
             item.productType === SaleItemProductType.ABATTU_KG) {
-          if (!skipStockRestore && item.sourceSlaughterOrderId) {
+          if (!skipStockRestore && item.carcassTransferId) {
+            // Vente « boutique » : on réintègre au transfert (pas au pool ferme).
+            await this.restoreCarcassTransfer(
+              em,
+              farmId,
+              item.carcassTransferId,
+              item.pieceCount ?? 0,
+            );
+          } else if (!skipStockRestore && item.sourceSlaughterOrderId) {
             await this.restoreCarcassPool(
               em,
               farmId,

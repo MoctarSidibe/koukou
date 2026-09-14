@@ -79,6 +79,11 @@ export class SaleItem {
   @Index()
   sourceSlaughterOrderId: string | null;
 
+  /** Transfert de carcasses ferme → boutique (vente ABATTU dans une boutique). */
+  @Column({ name: 'carcass_transfer_id', type: 'uuid', nullable: true })
+  @Index()
+  carcassTransferId: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

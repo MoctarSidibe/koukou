@@ -62,6 +62,11 @@ export class CreateSaleItemDto {
   @IsOptional()
   @IsUUID('4', { message: 'Identifiant d’ordre d’abattage invalide.' })
   sourceSlaughterOrderId?: string;
+
+  /** Transfert de carcasses (vente ABATTU dans une boutique receveuse). */
+  @IsOptional()
+  @IsUUID('4', { message: 'Identifiant de transfert de carcasses invalide.' })
+  carcassTransferId?: string;
 }
 
 export class PaymentInputDto {
