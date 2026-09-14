@@ -63,12 +63,18 @@ export class HealthService {
     private readonly dataSource: DataSource,
   ) {}
 
-  async getHealth(user: AuthUser, farmId: string, batchId: string) {
+  async getHealth(user: AuthUser, farmId: string, batchId: string, asOf?: string) {
     await this.farmsService.assertAccessible(user, farmId);
+    if (asOf != null && !/^\d{4}-\d{2}-\d{2}$/.test(asOf)) {
+      throw new BadRequestException(
+        'Le paramètre asOf doit être au format YYYY-MM-DD.',
+      );
+    }
     const batch = await this.assertBatchInFarm(farmId, batchId);
+    const opts = asOf ? { asOf } : undefined;
     const [m, breed, entries] = await Promise.all([
-      this.metrics.compute(batch),
-      this.metrics.breedStatus(batch),
+      this.metrics.compute(batch, opts),
+      this.metrics.breedStatus(batch, asOf),
       this.entriesRepo.find({
         where: { batchId: batch.id },
         order: { entryDate: 'ASC' },
@@ -92,7 +98,7 @@ export class HealthService {
       batchType: batch.type,
     });
 
-      const trends = this.buildTrends(entries);
+      const trends = this.buildTrends(entries, asOf);
 
     return {
       farmId,
@@ -105,6 +111,8 @@ export class HealthService {
       liveCount: m.liveCount,
       totalDeaths: m.totalDeaths,
       mortalityPercent: round2(m.mortalityPercent),
+      expectedMortalityPct: round2(m.expectedMortalityPct),
+      mortalityStatus: m.mortalityStatus,
       viabilityPercent: round2(m.viabilityPercent),
       fcr: m.fcr != null ? round2(m.fcr) : null,
       gmq: m.gmqGramsPerDay != null ? round2(m.gmqGramsPerDay) : null,
@@ -311,7 +319,6 @@ export class HealthService {
   }): TipItem[] {
     const tips: TipItem[] = [];
     const m = input.metrics;
-    const mortality = m.mortalityPercent;
     const waterLPerBird = m.waterLPerBird;
     const fcr = m.fcr;
 
@@ -321,15 +328,15 @@ export class HealthService {
         text: `Consommation d'eau faible (${round2(waterLPerBird)} L/oiseau/j vs ${input.waterNormL} L/j attendu) : vérifier les abreuvoirs et surveiller la mortalité.`,
       });
     }
-    if (mortality > 5) {
+    if (m.mortalityStatus === 'critical') {
       tips.push({
         level: AlertLevel.ROUGE,
-        text: `Mortalité élevée (${round2(mortality)} %) : contacter un vétérinaire rapidement.`,
+        text: `Mortalité élevée (${round2(m.mortalityPercent)} % vs ${round2(m.expectedMortalityPct)} % attendu à J${m.ageDays}) : contacter un vétérinaire rapidement.`,
       });
-    } else if (mortality > 1) {
+    } else if (m.mortalityStatus === 'elevated') {
       tips.push({
         level: AlertLevel.JAUNE,
-        text: `Mortalité au-dessus de la normale (${round2(mortality)} %) : observer les sujets et l'ambiance du bâtiment.`,
+        text: `Mortalité au-dessus de la norme (${round2(m.mortalityPercent)} % vs ${round2(m.expectedMortalityPct)} % attendu à J${m.ageDays}) : observer les sujets et l'ambiance du bâtiment.`,
       });
     }
     if (fcr != null && fcr > 2) {
@@ -361,6 +368,7 @@ export class HealthService {
 
   private buildTrends(
     entries: DailyEntry[],
+    asOf?: string,
   ): {
     dates: string[];
     mortality: number[];
@@ -369,7 +377,7 @@ export class HealthService {
     const dates: string[] = [];
     const mortality: number[] = [];
     const eggs: number[] = [];
-    const start = addDaysIso(todayIso(), -6);
+    const start = addDaysIso(asOf ?? todayIso(), -6);
     for (let i = 0; i < 7; i++) {
       const day = addDaysIso(start, i);
       const e = entries.find((x) => x.entryDate === day);
@@ -433,13 +441,12 @@ export class HealthService {
   }): string[] {
     const advice: string[] = [];
     const m = input.metrics;
-    const mortality = m.mortalityPercent;
 
-    if (mortality > 5) {
+    if (m.mortalityStatus === 'critical') {
       advice.push(
         'Planifier une visite vétérinaire en urgence et isoler les sujets malades.',
       );
-    } else if (mortality > 1) {
+    } else if (m.mortalityStatus === 'elevated') {
       advice.push('Renforcer la surveillance de la santé dans les prochains jours.');
     }
     if (input.breed?.actualAvgWeightKg != null && input.breed.targetAvgWeightKg != null) {

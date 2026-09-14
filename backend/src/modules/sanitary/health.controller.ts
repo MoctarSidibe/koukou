@@ -6,8 +6,9 @@ import {
   Param,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
 import type { AuthUser } from '../../common/decorators/current-user.decorator.js';
 import { Roles } from '../../common/decorators/roles.decorator.js';
@@ -28,12 +29,19 @@ export class HealthController {
   })
   @ApiParam({ name: 'farmId' })
   @ApiParam({ name: 'batchId' })
+  @ApiQuery({
+    name: 'asOf',
+    required: false,
+    description:
+      "Date de référence (YYYY-MM-DD). Omettez pour l'état actuel du lot. Les métriques et tendances sont calculées relativement à cette date.",
+  })
   getHealth(
     @CurrentUser() user: AuthUser,
     @Param('farmId') farmId: string,
     @Param('batchId') batchId: string,
+    @Query('asOf') asOf?: string,
   ) {
-    return this.healthService.getHealth(user, farmId, batchId);
+    return this.healthService.getHealth(user, farmId, batchId, asOf);
   }
 
   @Get('health-events')
