@@ -24,7 +24,7 @@ import { MetricInfoSheet } from '@/components/MetricInfoSheet';
 import type { MetricKey } from '@/components/MetricInfoSheet';
 import { CheptelModal } from '@/components/CheptelModal';
 import { PeriodBar, periodWindow, toDateStr, type PeriodWindow } from '@/components/ui/PeriodBar';
-import type { FarmWeather, HealthGrade } from '@/api/types';
+import type { BatchWithMetrics, FarmWeather, HealthGrade } from '@/api/types';
 
 function weatherHint(w: FarmWeather): string {
   const t = w.temperatureC ?? 0;
@@ -75,7 +75,7 @@ export default function AccueilScreen() {
     queryFn: () => fetchDashboard(farmId, queryDateStr, queryTimeStr),
   });
   const advisory = useQuery({ queryKey: ['advisory', farmId], queryFn: () => fetchAdvisory(farmId) });
-  const batchesQuery = useQuery({ queryKey: ['batches', farmId], queryFn: () => fetchBatches(farmId) });
+  const batchesQuery = useQuery({ queryKey: ['batches', farmId], queryFn: () => fetchBatches(farmId), refetchInterval: !window.isFiltered ? 60_000 : undefined });
   const slaughterQuery = useQuery({ queryKey: ['slaughter-orders', farmId], queryFn: () => fetchSlaughterOrders(farmId) });
   const slaughterOrders = slaughterQuery.data ?? [];
   const slaughterProcessed = slaughterOrders.filter((o) => o.status === 'PROCESSED');
@@ -96,15 +96,21 @@ export default function AccueilScreen() {
   const batches = batchesQuery.data ?? [];
   const activeBatches = batches.filter((b) => b.status !== 'CLOTURE');
   const totalLive = activeBatches.reduce((s, b) => s + b.metrics.liveCount, 0);
-  const avgFcr = totalLive > 0
-    ? activeBatches.reduce((s, b) => s + (b.metrics.fcr ?? 0) * b.metrics.liveCount, 0) / totalLive
-    : null;
-  const avgGmq = totalLive > 0
-    ? activeBatches.reduce((s, b) => s + (b.metrics.gmqGramsPerDay ?? 0) * b.metrics.liveCount, 0) / totalLive
-    : null;
-  const avgIpe = totalLive > 0
-    ? activeBatches.reduce((s, b) => s + (b.metrics.ipe ?? 0) * b.metrics.liveCount, 0) / totalLive
-    : null;
+  // Pondérés par effectif, en ignorant les lots sans valeur (fcr/gmq/ipe null).
+  const weightedAvg = (picker: (b: BatchWithMetrics) => number | null | undefined): number | null => {
+    let sum = 0;
+    let live = 0;
+    for (const b of activeBatches) {
+      const v = picker(b);
+      if (v == null) continue;
+      sum += v * b.metrics.liveCount;
+      live += b.metrics.liveCount;
+    }
+    return live > 0 ? sum / live : null;
+  };
+  const avgFcr = weightedAvg((b) => b.metrics.fcr);
+  const avgGmq = weightedAvg((b) => b.metrics.gmqGramsPerDay);
+  const avgIpe = weightedAvg((b) => b.metrics.ipe);
   // Taux de ponte only for laying batches
   const layerBatches = activeBatches.filter((b) => b.type === 'PONDEUSE' && b.metrics.layRatePercent != null);
   const layerLive = layerBatches.reduce((s, b) => s + b.metrics.liveCount, 0);
@@ -378,9 +384,9 @@ export default function AccueilScreen() {
             />
             <MetricTile
               label='GMQ (g/j)'
-              value={avgGmq != null && avgGmq > 0 ? `${Math.round(avgGmq)}` : '—'}
-              sub={avgGmq != null && avgGmq > 55 ? 'Croissance rapide' : avgGmq != null ? 'Croissance normale' : undefined}
-              tone={avgGmq != null && avgGmq > 55 ? 'green' : 'default'}
+              value={avgGmq != null ? `${avgGmq.toLocaleString('fr-FR', { maximumFractionDigits: 1 })}` : '—'}
+              sub={avgGmq != null && avgGmq > 55 ? 'Croissance rapide' : avgGmq != null && avgGmq < 0 ? 'Perte de poids' : avgGmq != null ? 'Croissance normale' : undefined}
+              tone={avgGmq != null && avgGmq > 55 ? 'green' : avgGmq != null && avgGmq < 0 ? 'amber' : 'default'}
               icon={TrendingUp}
               onPress={() => setMetricInfo('GMQ')}
               threeCol

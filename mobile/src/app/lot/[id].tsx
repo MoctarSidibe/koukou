@@ -644,11 +644,11 @@ export default function LotDetailScreen() {
         <View style={styles.overviewStack}>
           {/* Metric tiles */}
           <View style={styles.metricGrid}>
-            <MetricTile label="GMQ" value={m?.gmqGramsPerDay ? `${m.gmqGramsPerDay} g` : '—'} icon={TrendingUp} tone="brand" threeCol />
+            <MetricTile label="GMQ" value={m?.gmqGramsPerDay ? `${m.gmqGramsPerDay.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} g` : '—'} icon={TrendingUp} tone="brand" threeCol />
             <MetricTile label="IPE" value={(m?.ipe ?? 0).toLocaleString('fr-FR')} icon={Activity} tone="accent" threeCol />
             <MetricTile label="Viabilité" value={`${(m?.viabilityPercent ?? 100).toLocaleString('fr-FR')} %`} icon={HeartPulse} tone={(m?.viabilityPercent ?? 100) >= 95 ? 'green' : 'amber'} threeCol />
             <MetricTile label="Poids moyen" value={avgWeightKg != null ? `${avgWeightKg.toFixed(1)} kg` : '—'} icon={Weight} tone="brand" threeCol labelLines={2} />
-            <MetricTile label="Aliment" value={m?.totalFeedKg ? `${m.totalFeedKg.toLocaleString('fr-FR')} kg` : '—'} icon={Wheat} tone="default" threeCol />
+            <MetricTile label="Aliment/bird" value={healthQ.data?.feedPerBirdGrams != null && healthQ.data.feedPerBirdGrams > 0 ? `${Math.round(healthQ.data.feedPerBirdGrams)} g/j` : '—'} icon={Wheat} tone="default" threeCol labelLines={2} />
             <MetricTile label="Densité" value={m?.densityPerM2 ? `${m.densityPerM2.toFixed(1)}/m²` : '—'} icon={Layers} tone="default" threeCol />
           </View>
 
@@ -920,7 +920,7 @@ export default function LotDetailScreen() {
           <Card padding={false} style={styles.legend}>
             {LEGEND.filter((l) => !(!isLayer && l.key === 'ponte')).map((l, i, arr) => {
               const value = l.key === 'ic' ? (m?.fcr ?? 0).toLocaleString('fr-FR')
-                : l.key === 'gmq' ? (m?.gmqGramsPerDay ? `${m.gmqGramsPerDay} g/j` : '—')
+                : l.key === 'gmq' ? (m?.gmqGramsPerDay ? `${m.gmqGramsPerDay.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} g/j` : '—')
                 : l.key === 'ipe' ? (m?.ipe ?? 0).toLocaleString('fr-FR')
                 : l.key === 'viab' ? `${(m?.viabilityPercent ?? 100).toLocaleString('fr-FR')} %`
                 : m?.layRatePercent != null ? `${m.layRatePercent} %` : '—';

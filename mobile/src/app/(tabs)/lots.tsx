@@ -1210,9 +1210,9 @@ function LotCard({ batch, health, prophylaxis, treatments, program, onPress, onC
 
       {/* ── SECONDARY METRICS (petites) ── */}
       <View style={styles.miniMetricRow}>
-        <MiniMetric label="IC" value={m.fcr != null && m.fcr > 0 ? m.fcr.toLocaleString('fr-FR') : '—'} icon={Scale} />
-        <MiniMetric label="Alim/oiseau" value={health && health.feedPerBirdGrams > 0 ? `${health.feedPerBirdGrams} g/j` : '—'} icon={Wheat} />
-        <MiniMetric label="GMQ" value={m.gmqGramsPerDay ? `${m.gmqGramsPerDay} g` : '—'} icon={TrendingUp} />
+        <MiniMetric label="IC" value={m.fcr != null && m.fcr > 0 ? m.fcr.toLocaleString('fr-FR', { maximumFractionDigits: 2 }) : '—'} icon={Scale} />
+        <MiniMetric label="Alim/oiseau" value={health && health.feedPerBirdGrams > 0 ? `${Math.round(health.feedPerBirdGrams)} g/j` : '—'} icon={Wheat} />
+        <MiniMetric label="GMQ" value={m.gmqGramsPerDay ? `${m.gmqGramsPerDay.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} g` : '—'} icon={TrendingUp} />
       </View>
 
       {/* ── BOTTOM: Détails (bottom sheet) + density + feed ── */}
@@ -1627,7 +1627,7 @@ function OverviewSheet({ visible, summary, lots, farmId, filterLabel, revenueFcf
           tone={summary.avgFcr != null ? (summary.avgFcr > 2.5 ? 'red' : summary.avgFcr > 2.0 ? 'amber' : 'green') : 'muted'}
         />
         <PanelCell
-          value={summary.avgGmq != null ? `${summary.avgGmq} g` : '—'}
+          value={summary.avgGmq != null ? `${summary.avgGmq.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} g` : '—'}
           label="GMQ moyen"
           icon={TrendingUp}
           tone={summary.avgGmq != null ? 'brand' : 'muted'}
@@ -1946,8 +1946,8 @@ function MiniMetric({ label, value, icon: Icon }: { label: string; value: string
   return (
     <View style={styles.miniMetric}>
       <Icon size={11} color={color.ink[400]} />
-      <AppText size="caption" color="muted" numberOfLines={1} ellipsizeMode="tail" style={{ flexShrink: 1 }}>{label}</AppText>
-      <AppText size="small" weight="bold" color="text" numberOfLines={1} ellipsizeMode="tail" style={{ flexShrink: 1 }}>{value}</AppText>
+      <AppText size="caption" color="muted" style={{ flexShrink: 1 }}>{label}</AppText>
+      <AppText size="small" weight="bold" color="text" style={{ flexShrink: 1 }}>{value}</AppText>
     </View>
   );
 }
@@ -2485,12 +2485,12 @@ function LotExpandedDetail({ batch, health, pnl, prophylaxis, treatments, progra
       {/* ── INDICATEURS ── */}
       <DetailSectionTitle label="Indicateurs" icon={Gauge} color={palette.brand[600]} />
       <View style={styles.secondaryGrid}>
-        <SecondaryMetric label="IPE" value={m.ipe != null ? m.ipe.toLocaleString('fr-FR') : '—'} icon={Activity} />
-        <SecondaryMetric label="Viabilité" value={`${m.viabilityPercent.toLocaleString('fr-FR')} %`} icon={HeartPulse} />
-        <SecondaryMetric label="IC" value={m.fcr != null && m.fcr > 0 ? m.fcr.toLocaleString('fr-FR') : '—'} icon={Scale} />
-        <SecondaryMetric label="GMQ" value={m.gmqGramsPerDay ? `${m.gmqGramsPerDay} g` : '—'} icon={TrendingUp} />
+        <SecondaryMetric label="IPE" value={m.ipe != null ? m.ipe.toLocaleString('fr-FR', { maximumFractionDigits: 1 }) : '—'} icon={Activity} />
+        <SecondaryMetric label="Viabilité" value={`${m.viabilityPercent.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %`} icon={HeartPulse} />
+        <SecondaryMetric label="IC" value={m.fcr != null && m.fcr > 0 ? m.fcr.toLocaleString('fr-FR', { maximumFractionDigits: 2 }) : '—'} icon={Scale} />
+        <SecondaryMetric label="GMQ" value={m.gmqGramsPerDay ? `${m.gmqGramsPerDay.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} g` : '—'} icon={TrendingUp} />
         <SecondaryMetric label="Aliment" value={m.totalFeedKg > 0 ? `${m.totalFeedKg.toLocaleString('fr-FR')} kg` : '—'} icon={Wheat} />
-        <SecondaryMetric label="Alim/oiseau" value={health && health.feedPerBirdGrams > 0 ? `${health.feedPerBirdGrams} g/j` : '—'} icon={Droplets} />
+        <SecondaryMetric label="Alim/oiseau" value={health && health.feedPerBirdGrams > 0 ? `${Math.round(health.feedPerBirdGrams)} g/j` : '—'} icon={Droplets} />
         <SecondaryMetric label="Densité" value={m.densityPerM2 ? `${m.densityPerM2.toFixed(1)}/m²` : '—'} icon={Layers} />
       </View>
 
@@ -2726,7 +2726,7 @@ const styles = StyleSheet.create({
   ovSanRowBordered: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.border },
   ovSanIcon: { width: 30, height: 30, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
   ovSanIdent: { flex: 1, gap: 1, minWidth: 0 },
-  ovSanRight: { alignItems: 'flex-end', gap: 1, flexShrink: 1, maxWidth: '58%' },
+  ovSanRight: { alignItems: 'flex-end', gap: 1, flexShrink: 1, minWidth: 0 },
   readyBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 10, borderRadius: radii.lg, borderWidth: 1 },
   readyBannerOn: { backgroundColor: palette.green[50], borderColor: palette.green[200] },
   readyBannerOff: { backgroundColor: palette.surfaceAlt, borderColor: palette.border },
@@ -2860,7 +2860,7 @@ const styles = StyleSheet.create({
   eggRowBarFill: { height: 4, borderRadius: radii.pill },
   eggRowDot: { width: 10, height: 10, borderRadius: radii.pill },
   eggRowPct: { width: 40, textAlign: 'right' },
-  miniMetricRow: { flexDirection: 'row', gap: 10, paddingHorizontal: 2 },
+  miniMetricRow: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 10, rowGap: 6, paddingHorizontal: 2 },
   miniMetric: { flexDirection: 'row', alignItems: 'center', gap: 4, flex: 1, minWidth: 0 },
   expandPill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: radii.pill },
 
