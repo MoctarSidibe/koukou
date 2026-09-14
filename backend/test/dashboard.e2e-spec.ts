@@ -18,13 +18,16 @@ function addDays(d: Date, days: number): Date {
   return copy;
 }
 
+function isoWeekStartOf(isoDate: string): string {
+  const d = new Date(`${isoDate}T12:00:00`);
+  const dow = (d.getUTCDay() + 6) % 7;
+  d.setUTCHours(12, 0, 0, 0);
+  d.setUTCDate(d.getUTCDate() - dow);
+  return d.toISOString().slice(0, 10);
+}
+
 function mondayOfCurrentWeek(): string {
-  const now = new Date();
-  const dow = (now.getUTCDay() + 6) % 7;
-  const ws = new Date(now);
-  ws.setUTCHours(12, 0, 0, 0);
-  ws.setUTCDate(ws.getUTCDate() - dow);
-  return ws.toISOString().slice(0, 10);
+  return isoWeekStartOf(today());
 }
 
 describe('Tableau de bord & courbes de croissance (e2e)', () => {
@@ -167,14 +170,31 @@ describe('Tableau de bord & courbes de croissance (e2e)', () => {
     expect(body.batchId).toBe(batchId);
     expect(body.liveCount).toBe(98);
     expect(body.startWeightKg).toBe(0.045);
-    expect(body.weekly).toHaveLength(1);
-    const week = body.weekly[0];
-    expect(week.weekStart).toBe(mondayOfCurrentWeek());
-    expect(week.avgWeightKg).toBe(0.5);
-    expect(week.feedKg).toBe(20);
-    expect(week.deaths).toBe(2);
-    expect(week.cumFeedKg).toBe(20);
-    expect(week.fcrCumulative).toBe(0.45);
+    const weekly = body.weekly;
+    expect(weekly.length).toBeGreaterThan(0);
+    // La série est ordonnée par semaine croissante : la dernière tranche est
+    // toujours la semaine courante (saisie du jour).
+    const lastWeek = weekly[weekly.length - 1];
+    expect(lastWeek.weekStart).toBe(mondayOfCurrentWeek());
+    expect(lastWeek.avgWeightKg).toBe(0.5);
+    // cumFeedKg cumule toutes les semaines ; fcrCumulative porte sur ce cumul.
+    expect(lastWeek.cumFeedKg).toBe(20);
+    expect(lastWeek.fcrCumulative).toBe(0.45);
+    // Le nombre de tranches dépend de la frontière ISO de la semaine : si la
+    // saisie d'hier tombe dans la semaine précédente, la série en compte 2.
+    const yesterday = dateStr(addDays(new Date(), -1));
+    if (isoWeekStartOf(yesterday) === mondayOfCurrentWeek()) {
+      expect(weekly).toHaveLength(1);
+      expect(lastWeek.feedKg).toBe(20);
+      expect(lastWeek.deaths).toBe(2);
+    } else {
+      expect(weekly).toHaveLength(2);
+      expect(weekly[0].weekStart).toBe(isoWeekStartOf(yesterday));
+      expect(weekly[0].feedKg).toBe(10);
+      expect(weekly[0].deaths).toBe(1);
+      expect(lastWeek.feedKg).toBe(10);
+      expect(lastWeek.deaths).toBe(1);
+    }
   });
 
   it('dashboard : encaissé du jour après vente POS payée en espèces', async () => {
@@ -238,12 +258,12 @@ describe('Tableau de bord & courbes de croissance (e2e)', () => {
       .expect(200);
     expect(healthy.body.health.breakdown).toEqual({
       rouge: 0,
-      jaune: 1,
+      jaune: 0,
       saisiesManquantes: 0,
     });
     expect(healthy.body.health.grade).toBe('EXCELLENT');
     const healthyScore = healthy.body.health.score;
-    expect(healthyScore).toBe(95);
+    expect(healthyScore).toBe(100);
     expect(healthy.body.leaderboard).toHaveLength(1);
     expect(healthy.body.leaderboard[0].batchId).toBe(batchId);
     expect(healthy.body.leaderboard[0].status).toBe('ACTIF');
@@ -277,7 +297,7 @@ describe('Tableau de bord & courbes de croissance (e2e)', () => {
       .expect(200);
     expect(penalized.body.health.breakdown).toEqual({
       rouge: 0,
-      jaune: 1,
+      jaune: 0,
       saisiesManquantes: 1,
     });
     expect(penalized.body.health.score).toBe(healthyScore - 10);

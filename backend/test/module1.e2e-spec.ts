@@ -135,9 +135,14 @@ describe('Module 1 — Gestion des Lots (e2e)', () => {
     // FCR = aliments kg / gain de poids (1.2 - 0.045) * 2350
     const expectedFcr = 1000 / ((1.2 - 0.045) * 2350);
     expect(m.fcr).toBeCloseTo(expectedFcr, 2);
-    // GMQ = (1.2 - 0.045) * 1000 / âge(jours)
+    // GMQ = (1.2 - 0.045) * 1000 / âge(jours). Âge calculé sur des dates UTC
+    // (comme MetricsService.ageDaysOn) — pas avec Date.now() local, qui décale
+    // d'un jour selon le fuseau horaire.
+    const utcToday = new Date().toISOString().slice(0, 10);
     const ageDays = Math.floor(
-      (Date.now() - new Date(daysAgo(30) + 'T00:00:00').getTime()) / 86400000,
+      (new Date(`${utcToday}T00:00:00`).getTime() -
+        new Date(`${daysAgo(30)}T00:00:00`).getTime()) /
+        86400000,
     );
     expect(m.gmqGramsPerDay).toBeCloseTo(((1.2 - 0.045) * 1000) / ageDays, 2);
 
