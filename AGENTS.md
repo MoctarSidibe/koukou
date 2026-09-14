@@ -6,7 +6,7 @@ Poultry farm management app (**offline-first**) for Gabon (SaaS), now multi-spec
 
 - `npm run start:dev` — dev watch · `npm run build` — compile (**serves as typecheck**, no dedicated script) · `npm run lint` — **oxlint** · `npm run format` — prettier on `src/**/*.ts` and `test/**/*.ts`
 - `npm run test` — unit tests (`**/*.spec.ts`) · `npm run test:e2e` — e2e (`**/*.e2e-spec.ts`)
-- **e2e requires a local PostgreSQL.** Config via `backend/.env` (gitignored, **no `.env.example`**). Defaults: `localhost:5432`, user `postgres`, password `postgres`, database `koukou_ferme`
+- **e2e requires a local PostgreSQL.** Config via `backend/.env` (gitignored, **no `.env.example` committed**). Code defaults: `localhost:5432`, user `postgres`, password `postgres`, database `koukou_ferme`. A fresh clone must write its own `backend/.env`; a committed `backend/.env.example` WOULD still be tracked (`.gitignore` whitelists `!.env.example`)
 - **e2e runs sequentially** (`fileParallelism:false`, `maxWorkers:1`) — specs share the same DB and boot `AppModule` with `synchronize:true`
 
 ## Critical backend conventions
