@@ -202,12 +202,15 @@ export class SlaughterService {
 
     await this.assertLotEligibleForSend(order);
 
-    if (order.destination === SlaughterDestination.INTERNE) {
-      order.internalBatchCode =
-        dto.internalBatchCode ??
-        order.internalBatchCode ??
-        (await this.nextInternalCode());
-    } else if (dto.abattoirLotCode !== undefined) {
+    // Traçabilité : la ferme génère toujours un code de suivi interne à
+    // l'envoi — marqueur -I pour l'abattoir propre, -E pour un partenaire
+    // externe (le bordereau emporté avec les volailles porte ce code).
+    const marker = order.destination === SlaughterDestination.INTERNE ? 'I' : 'E';
+    order.internalBatchCode =
+      dto.internalBatchCode ??
+      order.internalBatchCode ??
+      (await this.nextInternalCode(marker));
+    if (dto.abattoirLotCode !== undefined) {
       order.abattoirLotCode = dto.abattoirLotCode;
     }
     if (dto.abattoirNotes !== undefined)
@@ -532,15 +535,15 @@ export class SlaughterService {
     return `${SLAUGHTER_PREFIX}-${date}-${suffix}`;
   }
 
-  private makeInternalCode(): string {
+  private makeInternalCode(marker: 'I' | 'E'): string {
     const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const suffix = Math.floor(100000 + Math.random() * 900000);
-    return `${SLAUGHTER_PREFIX}-${date}-${suffix}-I`;
+    return `${SLAUGHTER_PREFIX}-${date}-${suffix}-${marker}`;
   }
 
-  private async nextInternalCode(): Promise<string> {
+  private async nextInternalCode(marker: 'I' | 'E'): Promise<string> {
     for (let attempt = 0; attempt < 5; attempt++) {
-      const candidate = this.makeInternalCode();
+      const candidate = this.makeInternalCode(marker);
       const existing = await this.orderRepo.findOne({
         where: { internalBatchCode: candidate },
       });

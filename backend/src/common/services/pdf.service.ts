@@ -306,7 +306,7 @@ export class PdfService {
                     : '')
                 : '') +
               (data.internalBatchCode
-                ? `\nCode interne (abattoir propre) : ${data.internalBatchCode}`
+                ? `\nCode de suivi interne : ${data.internalBatchCode}`
                 : ''),
           ],
           style: 'meta',

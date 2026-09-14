@@ -180,6 +180,8 @@ describe('Module 5 — Abattage & Traçabilité (+ passeport sanitaire, e2e)', (
       .expect(201);
     expect(sent.body.status).toBe('SENT');
     expect(sent.body.abattoirLotCode).toBe('ABT-EXT-0001');
+    // Traçabilité : la ferme génère aussi un code de suivi pour l'envoi externe.
+    expect(sent.body.internalBatchCode).toMatch(/^ABT-\d{8}-\d{6}-E$/);
 
     const processed = await request(server)
       .post(`/farms/${farmId}/slaughter-orders/${externalOrderId}/process`)
