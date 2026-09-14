@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useRouter, type Href } from 'expo-router';
 import {
+  Activity,
   Bird,
   ClipboardList,
   Coins,
@@ -10,6 +11,7 @@ import {
   ListTodo,
   MapPin,
   Stethoscope,
+  Store,
   User,
   Wheat,
 } from 'lucide-react-native';
@@ -33,6 +35,8 @@ export default function MenuScreen() {
 
   const items = [
     { key: 'profil', label: 'Profil', sub: 'Compte & paramètres', icon: <User size={24} color={color.brand[600]} />, bg: color.brand[50], fg: color.brand[600], href: '/reglages' },
+    { key: 'activites', label: 'Activités', sub: 'Journal & opérations', icon: <Activity size={24} color={color.brand[600]} />, bg: color.brand[50], fg: color.brand[600], href: '/activites' },
+    { key: 'marche', label: 'Marché', sub: 'Vitrine clients (bientôt)', icon: <Store size={24} color={color.green[600]} />, bg: color.green[50], fg: color.green[600], href: '/marche' },
     { key: 'sanitaire', label: 'Sanitaire', sub: 'Protocoles & soins', icon: <Stethoscope size={24} color={color.brand[600]} />, bg: color.brand[50], fg: color.brand[600], href: '/sanitary' },
     { key: 'stock', label: 'Stock & provendes', sub: 'Inventaire, pertes, mouvements', icon: <Wheat size={24} color={color.amber[600]} />, bg: color.amber[50], fg: color.amber[600], href: '/provende' },
     { key: 'abattage', label: 'Abattage', sub: 'Ordres & passeport', icon: <Bird size={24} color={color.brand[600]} />, bg: color.brand[50], fg: color.brand[600], href: '/slaughter' },
