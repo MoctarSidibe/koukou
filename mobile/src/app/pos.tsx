@@ -408,6 +408,20 @@ export default function PosScreen() {
 
             {isBoutique ? (
               <View style={{ gap: spacing.sm }}>
+                <Card tone="accent" onPress={() => openNew()} style={styles.ctaCard}>
+                  <View style={styles.ctaIcon}>
+                    <Plus size={20} color={color.accent[700]} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <AppText size="body" weight="bold" color="text">
+                      Article
+                    </AppText>
+                    <AppText size="small" color="muted">
+                      Nouvelle ligne de vente
+                    </AppText>
+                  </View>
+                  <ChevronRight size={18} color={color.ink[300]} />
+                </Card>
                 <Card tone="accent" onPress={() => setTransferOpen(true)} style={styles.ctaCard}>
                   <View style={styles.ctaIcon}>
                     <ArrowRightLeft size={20} color={color.accent[700]} />
@@ -612,12 +626,20 @@ export default function PosScreen() {
             </View>
           </View>
 
-          {!loading ? (
-            <Pressable style={[styles.fab, isBoutique ? styles.fabBoutique : null]} onPress={() => openNew()} accessibilityRole="button">
-              <Plus size={22} color={color.surface} />
-              <AppText size="body" weight="bold" color="surface">
-                Article
-              </AppText>
+          {!loading && !isBoutique ? (
+            <Pressable style={styles.fab} onPress={() => openNew()} accessibilityRole="button">
+              <View style={styles.fabIcon}>
+                <Plus size={18} color={color.brand[700]} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <AppText size="body" weight="bold" color="text">
+                  Article
+                </AppText>
+                <AppText size="caption" color="muted">
+                  Nouvelle ligne de vente
+                </AppText>
+              </View>
+              <ChevronRight size={18} color={color.ink[300]} />
             </Pressable>
           ) : null}
         </>
@@ -842,8 +864,12 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 5 },
     elevation: 6,
   },
-  fabBoutique: {
-    backgroundColor: color.accent[600],
-    shadowColor: palette.accent[900],
+  fabIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: color.brand[50],
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
