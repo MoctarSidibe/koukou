@@ -34,7 +34,8 @@ import type {
   OverviewPnl,
   PondageSummary,
   PointOfSale,
-  CarcassTransfer,
+  StockTransfer,
+  StockTransferProductType,
   Promotion,
   ProphylaxisEvent,
   ReadyReason,
@@ -451,9 +452,16 @@ export class LiveApi {
     return apiFetch<PointOfSale>(`/farms/${farmId}/points-of-sale/${pointOfSaleId}`);
   }
 
-  async fetchCarcassTransfers(farmId: string, pointOfSaleId?: string): Promise<CarcassTransfer[]> {
-    const query = pointOfSaleId ? `?pointOfSaleId=${encodeURIComponent(pointOfSaleId)}` : '';
-    return apiFetch<CarcassTransfer[]>(`/farms/${farmId}/carcass-transfers${query}`);
+  async fetchStockTransfers(
+    farmId: string,
+    pointOfSaleId?: string,
+    productType?: StockTransferProductType,
+  ): Promise<StockTransfer[]> {
+    const qs = new URLSearchParams();
+    if (pointOfSaleId) qs.set('pointOfSaleId', pointOfSaleId);
+    if (productType) qs.set('productType', productType);
+    const query = qs.toString();
+    return apiFetch<StockTransfer[]>(`/farms/${farmId}/stock-transfers${query ? `?${query}` : ''}`);
   }
 
   async fetchRentabiliteOverview(farmId: string, from?: string, to?: string): Promise<OverviewPnl> {

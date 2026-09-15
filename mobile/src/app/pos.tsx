@@ -32,7 +32,9 @@ import type { PosLine } from '@/components/pos/types';
 import { useAuth } from '@/auth/AuthContext';
 import {
   fetchBatches,
-  fetchCarcassTransfers,
+  fetchStockTransfers,
+  fetchDashboard,
+  fetchFeedStock,
   fetchPointsOfSale,
   fetchPromotions,
   fetchSales,
@@ -41,7 +43,7 @@ import {
 import { invalidateFarmQueries } from '@/api/invalidate';
 import { SPECIES_ICONS, speciesLabel } from '@/api/format';
 import { todayStr, type InvoiceFields } from '@/api/mutations';
-import type { BatchWithMetrics } from '@/api/types';
+import type { BatchWithMetrics, StockTransfer } from '@/api/types';
 import { queueSale, useOfflineQueue } from '@/offline';
 import { color, palette, radii, spacing, fmt, fmtFcfa } from '@/constants/theme';
 
@@ -51,7 +53,7 @@ function lotTitle(b: BatchWithMetrics): string {
 
 export default function PosScreen() {
   const router = useRouter();
-  const { farmId } = useAuth();
+  const { farmId, farms } = useAuth();
   const queryClient = useQueryClient();
   const { batch } = useLocalSearchParams<{ batch?: string }>();
   const autoOpenDone = useRef(false);
@@ -61,8 +63,10 @@ export default function PosScreen() {
   const pdvQuery = useQuery({ queryKey: ['points-of-sale', farmId], queryFn: () => fetchPointsOfSale(farmId) });
   const slaughterQuery = useQuery({ queryKey: ['slaughter-orders', farmId], queryFn: () => fetchSlaughterOrders(farmId) });
   const promotionsQuery = useQuery({ queryKey: ['promotions', farmId], queryFn: () => fetchPromotions(farmId) });
-  const transfersQuery = useQuery({ queryKey: ['carcass-transfers', farmId], queryFn: () => fetchCarcassTransfers(farmId) });
+  const transfersQuery = useQuery({ queryKey: ['stock-transfers', farmId], queryFn: () => fetchStockTransfers(farmId) });
   const salesQuery = useQuery({ queryKey: ['sales', farmId, today, today], queryFn: () => fetchSales(farmId, today, today) });
+  const dashboardQuery = useQuery({ queryKey: ['dashboard', farmId], queryFn: () => fetchDashboard(farmId), staleTime: 30_000 });
+  const feedStockQuery = useQuery({ queryKey: ['feed-stock', farmId], queryFn: () => fetchFeedStock(farmId) });
   const queue = useOfflineQueue(farmId);
 
   const [pdvId, setPdvId] = useState('');
@@ -71,6 +75,7 @@ export default function PosScreen() {
   const [editing, setEditing] = useState<PosLine | undefined>(undefined);
   const [presetBatchId, setPresetBatchId] = useState<string | undefined>(undefined);
   const [presetTransferId, setPresetTransferId] = useState<string | undefined>(undefined);
+  const [presetTransferProductType, setPresetTransferProductType] = useState<StockTransfer['productType'] | undefined>(undefined);
   const [registerOpen, setRegisterOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
 
@@ -86,11 +91,18 @@ export default function PosScreen() {
   );
   const poolTotal = pools.reduce((a, p) => a + (p.carcassesAvailable ?? 0), 0);
   const transfers = transfersQuery.data ?? [];
-  const activeTransfers = transfers
+  const activeReserves = transfers
     .filter((t) => t.status === 'TRANSFERRED')
     .map((t) => ({ ...t, remaining: transferRemaining(t.quantity, t.quantitySold) }))
     .filter((t) => t.remaining > 0);
-  const transferTotal = activeTransfers.reduce((a, t) => a + t.remaining, 0);
+  const abattuReserves = activeReserves.filter((t) => t.productType === 'ABATTU');
+  const eggReserves = activeReserves.filter((t) => t.productType === 'OEUFS');
+  const feedReserves = activeReserves.filter((t) => t.productType === 'PROVENDE');
+  const transferTotal = abattuReserves.reduce((a, t) => a + t.remaining, 0);
+  const otherReserves = feedReserves.reduce((a, t) => a + t.remaining, 0) + eggReserves.reduce((a, t) => a + t.remaining, 0);
+  const feedLots = feedStockQuery.data?.lots ?? [];
+  const activeFarm = farms.find((f) => f.id === farmId);
+  const sacKg = activeFarm?.defaultSacKg ?? 50;
   const loading = batchesQuery.isLoading || pdvQuery.isLoading;
 
   const statsByPdv = useMemo(() => {
@@ -120,10 +132,11 @@ export default function PosScreen() {
     openNew(target);
   }, [batch, lots, loading]);
 
-  const openNew = (batch?: BatchWithMetrics, transfer?: { id: string }) => {
+  const openNew = (batch?: BatchWithMetrics, transfer?: Pick<StockTransfer, 'id' | 'productType'>) => {
     setEditing(undefined);
     setPresetBatchId(batch?.id);
     setPresetTransferId(transfer?.id);
+    setPresetTransferProductType(transfer?.productType);
     setLineSheetOpen(true);
   };
 
@@ -131,6 +144,7 @@ export default function PosScreen() {
     setEditing(line);
     setPresetBatchId(undefined);
     setPresetTransferId(undefined);
+    setPresetTransferProductType(undefined);
     setLineSheetOpen(true);
   };
 
@@ -203,9 +217,9 @@ export default function PosScreen() {
           </AppText>
         </View>
       </View>
-      <AppText size="caption" color="faint">
-        💡 Insight boutique : focus sur les carcasses transférées (marge détail) puis les œufs.
-      </AppText>
+<AppText size="caption" color="faint">
+          💡 Insight boutique : focus sur le stock transféré (carcasses puis œufs & provende), marge détail.
+        </AppText>
     </Card>
   ) : (
     <Card tone="brand" style={styles.insightsCard}>
@@ -267,7 +281,7 @@ export default function PosScreen() {
                 <AppText size="small" color="muted" numberOfLines={2}>
                   {isFerm
                     ? 'Vente à la ferme · volaille vivante, œufs, carcasses abattoir'
-                    : 'Boutique externe · carcasses transférées + œufs'}
+                    : 'Boutique externe · stock transféré (carcasses, œufs, provende)'}
                 </AppText>
                 <AppText size="caption" color={isFerm ? 'brand' : 'accent'} style={{ marginTop: 4 }}>
                   {fmt(stat.revenue)} FCFA · {fmt(stat.count)} ticket(s) aujourd’hui
@@ -323,7 +337,7 @@ export default function PosScreen() {
                 {pdv.name}
               </AppText>
               <AppText size="caption" color="muted">
-                {pdv.kind === 'BOUTIQUE' ? 'Boutique · carcasses + œufs' : 'Ferme · volaille vivante + abattoir'}
+                {pdv.kind === 'BOUTIQUE' ? 'Boutique · stock transféré depuis la ferme' : 'Ferme · volaille vivante + abattoir'}
               </AppText>
             </View>
             <Pressable onPress={() => setPdvId('')} hitSlop={8} accessibilityRole="button">
@@ -356,9 +370,12 @@ export default function PosScreen() {
             {isBoutique ? (
               <View style={[styles.sectionTitle, { marginTop: spacing.lg }]}>
                 <AppText size="label" color="muted">
-                  CARCASSES EN BOUTIQUE
+                  RÉSERVES EN BOUTIQUE
                 </AppText>
-                {transferTotal > 0 ? <Chip label={`${fmt(transferTotal)} carc.`} tone="accent" /> : null}
+                <View style={styles.sectionChips}>
+                  {otherReserves > 0 ? <Chip label={`+ ${fmt(otherReserves)} œufs/provende`} tone="green" /> : null}
+                  {transferTotal > 0 ? <Chip label={`${fmt(transferTotal)} carc.`} tone="accent" /> : null}
+                </View>
               </View>
             ) : (
               <View style={[styles.sectionTitle, { marginTop: spacing.lg }]}>
@@ -371,32 +388,51 @@ export default function PosScreen() {
 
             {isBoutique ? (
               <View style={{ gap: spacing.sm }}>
-                {activeTransfers.map((t) => (
-                  <Card key={t.id} tone="warn" onPress={() => openNew(undefined, t)} style={styles.reserveCard}>
-                    <View style={{ flex: 1 }}>
-                      <AppText size="body" weight="semibold" color="text" numberOfLines={1}>
-                        {t.slaughterOrder.batch.batchName ?? t.batchId}
-                      </AppText>
-                      <AppText size="small" color="muted" numberOfLines={1}>
-                        {SPECIES_ICONS[t.slaughterOrder.batch.species] ?? ''} {speciesLabel(t.slaughterOrder.batch.species)} ·{' '}
-                        {t.slaughterOrder.referenceNumber} · {fmt(t.remaining)}/{fmt(t.quantity)} carc.
-                      </AppText>
-                    </View>
-                    <View style={{ alignItems: 'flex-end', gap: 6 }}>
-                      <AppText size="body" weight="bold" color="accent">
-                        {fmt(t.remaining)} restantes
-                      </AppText>
-                      <Chip label="Vendre" tone="accent" />
-                    </View>
-                    <ChevronRight size={18} color={color.ink[300]} />
-                  </Card>
-                ))}
-                {activeTransfers.length === 0 ? (
+                {activeReserves.map((t) => {
+                  const unit =
+                    t.productType === 'OEUFS'
+                      ? 'alv.'
+                      : t.productType === 'PROVENDE'
+                        ? t.unit === 'KG'
+                          ? 'kg'
+                          : 'sac'
+                        : 'carc.';
+                  const title =
+                    t.productType === 'PROVENDE'
+                      ? (t.inputLot?.productName ?? 'Provende')
+                      : (t.slaughterOrder?.batch?.batchName ?? t.batch?.batchName ?? t.batchId ?? 'Lot');
+                  const detail =
+                    t.productType === 'OEUFS'
+                      ? `${SPECIES_ICONS[(t.batch?.species ?? 'POULET')] ?? ''} ${speciesLabel(t.batch?.species)} · reçu le ${t.createdAt.slice(0, 10)}`
+                      : t.productType === 'PROVENDE'
+                        ? `${t.unit === 'KG' ? fmt(t.quantity) + ' kg' : fmt(t.quantity) + ' sac(s)'} transférés · reçu le ${t.createdAt.slice(0, 10)}`
+                        : `${SPECIES_ICONS[(t.slaughterOrder?.batch?.species ?? 'POULET')] ?? ''} ${speciesLabel(t.slaughterOrder?.batch?.species)} · ${(t.slaughterOrder?.referenceNumber ?? '')} · reçu le ${t.createdAt.slice(0, 10)}`;
+                  return (
+                    <Card key={t.id} tone="warn" onPress={() => openNew(undefined, t)} style={styles.reserveCard}>
+                      <View style={{ flex: 1 }}>
+                        <AppText size="body" weight="semibold" color="text" numberOfLines={1}>
+                          {title}
+                        </AppText>
+                        <AppText size="small" color="muted" numberOfLines={1}>
+                          {detail}
+                        </AppText>
+                      </View>
+                      <View style={{ alignItems: 'flex-end', gap: 6 }}>
+                        <AppText size="body" weight="bold" color="accent">
+                          {fmt(t.remaining)} {unit}
+                        </AppText>
+                        <Chip label="Vendre" tone="accent" />
+                      </View>
+                      <ChevronRight size={18} color={color.ink[300]} />
+                    </Card>
+                  );
+                })}
+                {activeReserves.length === 0 ? (
                   <Card tone="default">
                     <EmptyState
                       emoji="📦"
-                      title="Aucune carcasse en boutique"
-                      description="Réapprovisionnez depuis la ferme pour vendre de l’abattu ici."
+                      title="Aucun stock en boutique"
+                      description="Réapprovisionnez des carcasses, œufs ou provende depuis la ferme."
                     />
                   </Card>
                 ) : null}
@@ -407,10 +443,10 @@ export default function PosScreen() {
                   </View>
                   <View style={{ flex: 1 }}>
                     <AppText size="body" weight="bold" color="text">
-                      Réapprovisionner (transférer depuis la ferme)
+                      Réapprovisionner cette boutique
                     </AppText>
                     <AppText size="small" color="muted">
-                      Depuis le pool de l’abattoir vers cette boutique
+                      Carcasses, œufs ou provende depuis la ferme
                     </AppText>
                   </View>
                   <ChevronRight size={18} color={color.ink[300]} />
@@ -490,10 +526,10 @@ export default function PosScreen() {
                   </View>
                   <View style={{ flex: 1 }}>
                     <AppText size="body" weight="bold" color="text">
-                      Envoyer des carcasses à une boutique
+                      Envoyer du stock à une boutique
                     </AppText>
                     <AppText size="small" color="muted">
-                      Réapprovisionnez vos points de vente externes depuis l’abattoir
+                      Carcasses, œufs ou provende vers vos points de vente
                     </AppText>
                   </View>
                   <ChevronRight size={18} color={color.ink[300]} />
@@ -575,6 +611,7 @@ export default function PosScreen() {
         initial={editing}
         presetBatchId={presetBatchId}
         presetTransferId={presetTransferId}
+        presetTransferProductType={presetTransferProductType}
         onSave={saveLine}
         onClose={closeLineSheet}
       />
@@ -592,6 +629,10 @@ export default function PosScreen() {
         visible={transferOpen}
         farmId={farmId}
         pools={pools}
+        lots={lots}
+        feedLots={feedLots}
+        eggStock={dashboardQuery.data?.eggStock ?? null}
+        sacKg={sacKg}
         boutiques={activePdvs.filter((p) => p.kind === 'BOUTIQUE')}
         transfers={transfers}
         onChanged={() => invalidateFarmQueries(queryClient, { farmId })}
@@ -681,6 +722,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: spacing.sm,
+  },
+  sectionChips: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   lotGrid: {
     flexDirection: 'row',

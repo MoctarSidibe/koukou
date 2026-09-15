@@ -10,6 +10,7 @@ export interface PointOfSale {
   name: string;
   address: string | null;
   city: string | null;
+  province: string | null;
   latitude: number | null;
   longitude: number | null;
   isActive: boolean;
@@ -19,23 +20,31 @@ export interface PointOfSale {
   updatedAt: string;
 }
 
-export type CarcassTransferStatus = 'TRANSFERRED' | 'CANCELLED';
+export type StockTransferProductType = 'ABATTU' | 'OEUFS' | 'PROVENDE';
+export type StockTransferStatus = 'TRANSFERRED' | 'CANCELLED';
 
-/** Transfert de carcasses ferme → boutique (stock réparti sur un PDV externe). */
-export interface CarcassTransfer {
+/** Transfert de stock ferme → boutique (abattu, œufs, provende répartis sur un PDV externe). */
+export interface StockTransfer {
   id: string;
   farmId: string;
-  slaughterOrderId: string;
+  productType: StockTransferProductType;
+  sourcePosId: string;
   pointOfSaleId: string;
-  batchId: string;
+  slaughterOrderId: string | null;
+  batchId: string | null;
+  inputLotId: string | null;
+  unit: string | null;
   quantity: number;
   quantitySold: number;
-  status: CarcassTransferStatus;
+  status: StockTransferStatus;
   cancelledAt: string | null;
   createdById: string | null;
   createdAt: string;
   updatedAt: string;
-  slaughterOrder: SlaughterOrder;
+  slaughterOrder: SlaughterOrder | null;
+  batch: ProductionBatch | null;
+  inputLot: any | null;
+  sourcePos: PointOfSale;
   pointOfSale: PointOfSale;
 }
 export type AlertLevel = 'ROUGE' | 'JAUNE' | 'VERT';
@@ -843,7 +852,7 @@ export interface SaleFull {
   updatedAt: string;
 }
 
-/** Vente sans articles/paiements (GET /farms/:farmId/sales). */
+/** Vente liste (GET /farms/:farmId/sales) — le serveur renvoie les articles. */
 export interface SaleSummary {
   id: string;
   farmId: string;
@@ -862,6 +871,7 @@ export interface SaleSummary {
   createdById: string | null;
   createdAt: string;
   updatedAt: string;
+  items: SaleItemFull[];
 }
 
 export type ExpenseCategory =

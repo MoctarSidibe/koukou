@@ -25,7 +25,8 @@ import type {
   OverviewPnl,
   PondageSummary,
   PointOfSale,
-  CarcassTransfer,
+  StockTransfer,
+  StockTransferProductType,
   Promotion,
   ProphylaxisEvent,
   ReferenceConstant,
@@ -155,11 +156,12 @@ export function fetchPointOfSale(farmId: string, pointOfSaleId: string): Promise
   return live.fetchPointOfSale(farmId, pointOfSaleId);
 }
 
-export function fetchCarcassTransfers(
+export function fetchStockTransfers(
   farmId: string,
   pointOfSaleId?: string,
-): Promise<CarcassTransfer[]> {
-  return live.fetchCarcassTransfers(farmId, pointOfSaleId);
+  productType?: StockTransferProductType,
+): Promise<StockTransfer[]> {
+  return live.fetchStockTransfers(farmId, pointOfSaleId, productType);
 }
 
 export function fetchRentabiliteOverview(farmId: string, from?: string, to?: string): Promise<OverviewPnl> {

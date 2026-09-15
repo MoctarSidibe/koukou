@@ -310,17 +310,23 @@ describe('LiveApi — sanitaire, abattage, clients, rentabilité', () => {
     expect(readCall(fetchMock).url).toBe('http://10.0.0.5:3000/farms/f-1/sales');
   });
 
-  it('fetchCarcassTransfers liste les transferts (boutique en query optionnelle)', async () => {
+  it('fetchStockTransfers liste les transferts (boutique en query optionnelle)', async () => {
     const fetchMock = stubFetch(async () => jsonResponse(200, [{ id: 't-1', status: 'TRANSFERRED', quantity: 12, quantitySold: 4 }]));
-    const transfers = await new LiveApi().fetchCarcassTransfers('f-1');
+    const transfers = await new LiveApi().fetchStockTransfers('f-1');
     expect(transfers[0].status).toBe('TRANSFERRED');
-    expect(readCall(fetchMock).url).toBe('http://10.0.0.5:3000/farms/f-1/carcass-transfers');
+    expect(readCall(fetchMock).url).toBe('http://10.0.0.5:3000/farms/f-1/stock-transfers');
   });
 
-  it('fetchCarcassTransfers filtre par boutique', async () => {
+  it('fetchStockTransfers filtre par boutique', async () => {
     const fetchMock = stubFetch(async () => jsonResponse(200, []));
-    await new LiveApi().fetchCarcassTransfers('f-1', 'pdv-boutique-1');
-    expect(readCall(fetchMock).url).toBe('http://10.0.0.5:3000/farms/f-1/carcass-transfers?pointOfSaleId=pdv-boutique-1');
+    await new LiveApi().fetchStockTransfers('f-1', 'pdv-boutique-1');
+    expect(readCall(fetchMock).url).toBe('http://10.0.0.5:3000/farms/f-1/stock-transfers?pointOfSaleId=pdv-boutique-1');
+  });
+
+  it('fetchStockTransfers filtre par type de produit', async () => {
+    const fetchMock = stubFetch(async () => jsonResponse(200, []));
+    await new LiveApi().fetchStockTransfers('f-1', undefined, 'OEUFS');
+    expect(readCall(fetchMock).url).toBe('http://10.0.0.5:3000/farms/f-1/stock-transfers?productType=OEUFS');
   });
 
   it('fetchExpenses liste les dépenses (période en query optionnelle)', async () => {

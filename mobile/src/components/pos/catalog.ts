@@ -30,6 +30,7 @@ const CATALOG: Record<PointOfSaleKind, PosProductDef[]> = {
     { key: 'ABATTU_PIECE', label: 'Abattu (pièce)', unit: 'pcs', priceUnit: 'pièce', unitPrice: 3200, kind: 'CHAIR' },
     { key: 'ABATTU_KG', label: 'Abattu (kg)', unit: 'oiseaux', priceUnit: 'kg', unitPrice: 2800, kind: 'CHAIR' },
     { key: 'OEUF', label: 'Œufs (alvéole)', unit: 'alv.', priceUnit: 'alvéole', unitPrice: 3000, kind: 'PONDEUSE' },
+    { key: 'PROVENDE', label: 'Provende', unit: 'sac', priceUnit: 'sac', unitPrice: 4500 },
     { key: 'AUTRE', label: 'Autre', unit: 'u', priceUnit: 'unité', unitPrice: 1000 },
   ],
 };

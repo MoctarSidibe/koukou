@@ -5,9 +5,9 @@ import { invalidateFarmQueries } from '@/api/invalidate';
 import type { DailyEntryPayload, InvoiceFields, SaleItemPayload } from '@/api/mutations';
 
 import {
-  cancelCarcassTransferQueued,
   cancelOrderQueued,
-  createCarcassTransferQueued,
+  cancelStockTransferQueued,
+  createStockTransferQueued,
   createDailyEntryQueued,
   createFeedInputQueued,
   createOrderQueued,
@@ -28,9 +28,9 @@ export { clearQueue, flushQueue };
 export type { FlushSummary, OfflineOp, SendResult };
 
 export {
-  cancelCarcassTransferQueued,
   cancelOrderQueued,
-  createCarcassTransferQueued,
+  cancelStockTransferQueued,
+  createStockTransferQueued,
   createDailyEntryQueued,
   createFeedInputQueued,
   createOrderQueued,

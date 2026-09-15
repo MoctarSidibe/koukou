@@ -43,7 +43,7 @@ export default function MenuScreen() {
     { key: 'caisse', label: 'Caisse', sub: 'Ouverture & encaisses', icon: <Coins size={24} color={color.green[600]} />, bg: color.green[50], fg: color.green[600], href: '/caisse' },
     { key: 'commandes', label: 'Commandes', sub: 'Bons & précommandes', icon: <ClipboardList size={24} color={color.accent[600]} />, bg: color.accent[50], fg: color.accent[600], href: '/commandes' },
     { key: 'taches', label: 'Tâches', sub: 'Travail de l\'équipe', icon: <ListTodo size={24} color={color.amber[600]} />, bg: color.amber[50], fg: color.amber[600], href: '/tasks' },
-    { key: 'pointsvente', label: 'Points de vente', sub: 'Boutiques, adresses', icon: <MapPin size={24} color={color.brand[600]} />, bg: color.brand[50], fg: color.brand[600], href: '/points-vente' },
+    { key: 'pointsvente', label: 'Points de vente', sub: 'Ferme & points de vente', icon: <MapPin size={24} color={color.brand[600]} />, bg: color.brand[50], fg: color.brand[600], href: '/points-vente' },
     { key: 'clients', label: 'Clients', sub: 'Profils, soldes', icon: <Handshake size={24} color={color.accent[600]} />, bg: color.accent[50], fg: color.accent[600], href: '/clients' },
     { key: 'rapports', label: 'Rentabilité', sub: 'P&L & exports PDF', icon: <FileBarChart2 size={24} color={color.green[600]} />, bg: color.green[50], fg: color.green[600], href: '/rapports' },
   ] satisfies GridItem[];
