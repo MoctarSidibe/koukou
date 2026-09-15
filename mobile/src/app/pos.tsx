@@ -330,20 +330,40 @@ export default function PosScreen() {
         </View>
 
         {pdv ? (
-          <View style={styles.pdvRow}>
-            <MapPin size={14} color={pdv.kind === 'BOUTIQUE' ? color.accent[600] : color.brand[600]} />
-            <View style={{ flex: 1 }}>
-              <AppText size="body" weight="bold" color="text" numberOfLines={1}>
-                {pdv.name}
-              </AppText>
-              <AppText size="caption" color="muted">
-                {pdv.kind === 'BOUTIQUE' ? 'Boutique · stock transféré depuis la ferme' : 'Ferme · volaille vivante + abattoir'}
-              </AppText>
+          <>
+            <View style={styles.pdvRow}>
+              <MapPin size={14} color={pdv.kind === 'BOUTIQUE' ? color.accent[600] : color.brand[600]} />
+              <View style={{ flex: 1 }}>
+                <AppText size="body" weight="bold" color="text" numberOfLines={1}>
+                  {pdv.name}
+                </AppText>
+                <AppText size="caption" color="muted">
+                  {pdv.kind === 'BOUTIQUE' ? 'Boutique · stock transféré depuis la ferme' : 'Ferme · volaille vivante + abattoir'}
+                </AppText>
+              </View>
             </View>
-            <Pressable onPress={() => setPdvId('')} hitSlop={8} accessibilityRole="button">
-              <Chip label="Changer" tone={pdv.kind === 'BOUTIQUE' ? 'accent' : 'brand'} />
-            </Pressable>
-          </View>
+            <View style={styles.pdvSwitchRow}>
+              {activePdvs.map((p) => {
+                const isActive = p.id === pdvId;
+                return (
+                  <Pressable key={p.id} onPress={() => selectPdv(p.id)} hitSlop={6} accessibilityRole="button">
+                    <Chip
+                      label={`${p.name}`}
+                      tone={
+                        isActive
+                          ? p.kind === 'BOUTIQUE'
+                            ? 'accent'
+                            : 'brand'
+                          : 'neutral'
+                      }
+                      selected={isActive}
+                      style={styles.chip}
+                    />
+                  </Pressable>
+                );
+              })}
+            </View>
+          </>
         ) : (
           <View style={styles.pdvRow}>
             <MapPin size={14} color={color.ink[400]} />
@@ -388,6 +408,20 @@ export default function PosScreen() {
 
             {isBoutique ? (
               <View style={{ gap: spacing.sm }}>
+                <Card tone="accent" onPress={() => setTransferOpen(true)} style={styles.ctaCard}>
+                  <View style={styles.ctaIcon}>
+                    <ArrowRightLeft size={20} color={color.accent[700]} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <AppText size="body" weight="bold" color="text">
+                      Réapprovisionner cette boutique
+                    </AppText>
+                    <AppText size="small" color="muted">
+                      Carcasses, œufs ou provende depuis la ferme
+                    </AppText>
+                  </View>
+                  <ChevronRight size={18} color={color.ink[300]} />
+                </Card>
                 {activeReserves.map((t) => {
                   const unit =
                     t.productType === 'OEUFS'
@@ -436,21 +470,6 @@ export default function PosScreen() {
                     />
                   </Card>
                 ) : null}
-
-                <Card tone="accent" onPress={() => setTransferOpen(true)} style={styles.ctaCard}>
-                  <View style={styles.ctaIcon}>
-                    <ArrowRightLeft size={20} color={color.accent[700]} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <AppText size="body" weight="bold" color="text">
-                      Réapprovisionner cette boutique
-                    </AppText>
-                    <AppText size="small" color="muted">
-                      Carcasses, œufs ou provende depuis la ferme
-                    </AppText>
-                  </View>
-                  <ChevronRight size={18} color={color.ink[300]} />
-                </Card>
               </View>
             ) : (
               <>
@@ -594,8 +613,11 @@ export default function PosScreen() {
           </View>
 
           {!loading ? (
-            <Pressable style={styles.fab} onPress={() => openNew()} accessibilityRole="button">
-              <Plus size={26} color={color.surface} />
+            <Pressable style={[styles.fab, isBoutique ? styles.fabBoutique : null]} onPress={() => openNew()} accessibilityRole="button">
+              <Plus size={22} color={color.surface} />
+              <AppText size="body" weight="bold" color="surface">
+                Article
+              </AppText>
             </Pressable>
           ) : null}
         </>
@@ -672,6 +694,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  pdvSwitchRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 6,
+  },
+  chip: {
+    marginBottom: 2,
   },
   landing: {
     flex: 1,
@@ -796,16 +827,23 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: spacing.lg,
     top: 128,
-    width: 52,
+    minWidth: 120,
+    paddingHorizontal: spacing.md,
     height: 52,
     borderRadius: 26,
     backgroundColor: color.brand[600],
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 8,
     shadowColor: palette.brand[950],
     shadowOpacity: 0.3,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 5 },
     elevation: 6,
+  },
+  fabBoutique: {
+    backgroundColor: color.accent[600],
+    shadowColor: palette.accent[900],
   },
 });
